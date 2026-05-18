@@ -178,6 +178,35 @@ DRAM BW utilization MAPE:
 | 4 | 1008 | 6.478 | 6.574 | 84.18 | 85.50 | 77.26 | 77.33 |
 | 8 | 504 | 6.360 | 6.574 | 82.58 | 85.50 | 68.42 | 69.60 |
 
+### Scheduler Readiness
+
+Active warp occupancy is the percentage of resident active warps on the SM, including stalled warps. Eligible warps are active warps that are ready to issue an instruction at the scheduler. Long scoreboard stall is the fraction of warp issue stall attributed to long-latency dependencies, commonly global-memory dependencies.
+
+In the compute sweep, active occupancy stays high while eligible warps rise as `compute_iters` increases. This means the SM has many resident warps even at low `compute_iters`, but most of them are not ready to issue because long scoreboard stalls dominate. In the memory sweep, changing `memory_iters` changes CTA count and register pressure, so active occupancy and eligible readiness move together with the amount of per-thread batching.
+
+![Compute sweep active vs eligible warps](assets/compute_iters_active_eligible_scoreboard.png)
+
+| compute_iters | GFLOP/s | active occ % | eligible % | eligible warps/SMSP cycle | long scoreboard % |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 137.3 | 84.88 | 0.85 | 0.10 | 95.88 |
+| 1 | 544.4 | 84.98 | 1.17 | 0.14 | 91.43 |
+| 2 | 954.7 | 84.63 | 1.38 | 0.17 | 92.91 |
+| 4 | 1769.3 | 85.74 | 1.91 | 0.23 | 89.66 |
+| 8 | 3353.0 | 84.97 | 2.37 | 0.28 | 86.62 |
+| 16 | 6613.2 | 85.76 | 3.47 | 0.42 | 86.17 |
+| 32 | 13064.0 | 84.73 | 6.15 | 0.74 | 82.22 |
+| 64 | 25255.2 | 83.57 | 22.90 | 2.75 | 56.84 |
+| 128 | 38507.2 | 83.72 | 50.06 | 6.01 | 23.00 |
+
+![Memory sweep active vs eligible warps](assets/memory_iters_active_eligible_scoreboard.png)
+
+| memory_iters | GFLOP/s | active occ % | eligible % | eligible warps/SMSP cycle | long scoreboard % |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 6669.0 | 85.00 | 3.41 | 0.41 | 86.86 |
+| 2 | 6490.9 | 85.84 | 3.13 | 0.38 | 89.42 |
+| 4 | 6531.2 | 78.43 | 2.79 | 0.33 | 84.88 |
+| 8 | 6386.0 | 68.30 | 3.73 | 0.45 | 50.57 |
+
 The model performs well across memory-bound settings because it captures the effective DRAM traffic and streaming bandwidth. The peak roofline is less accurate: it is pessimistic in the memory-bound region because it uses algorithm bytes, and optimistic at high `compute_iters` because it assumes ideal scalar FMA throughput. The weakest model points are the smallest problem sizes, where launch and wave-drain effects dominate, and the largest problem sizes, where measured DRAM bandwidth rises above the single calibrated bandwidth.
 
 ## 4. Architecture Insight

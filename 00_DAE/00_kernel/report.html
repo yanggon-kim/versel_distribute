@@ -123,6 +123,32 @@ bottleneck = compute if compute_time &gt;= dram_time else dram</code></pre>
 <tr><td>4</td><td>1008</td><td>6.478</td><td>6.574</td><td>84.18</td><td>85.50</td><td>77.26</td><td>77.33</td></tr>
 <tr><td>8</td><td>504</td><td>6.360</td><td>6.574</td><td>82.58</td><td>85.50</td><td>68.42</td><td>69.60</td></tr>
 </tbody></table>
+<h3>Scheduler Readiness</h3>
+<p>Active warp occupancy is the percentage of resident active warps on the SM, including stalled warps. Eligible warps are active warps that are ready to issue an instruction at the scheduler. Long scoreboard stall is the fraction of warp issue stall attributed to long-latency dependencies, commonly global-memory dependencies.</p>
+<p>In the compute sweep, active occupancy stays high while eligible warps rise as <code>compute_iters</code> increases. This means the SM has many resident warps even at low <code>compute_iters</code>, but most of them are not ready to issue because long scoreboard stalls dominate. In the memory sweep, changing <code>memory_iters</code> changes CTA count and register pressure, so active occupancy and eligible readiness move together with the amount of per-thread batching.</p>
+<figure><img src="assets/compute_iters_active_eligible_scoreboard.png" alt="Compute sweep active vs eligible warps"><figcaption>Compute sweep active vs eligible warps</figcaption></figure>
+<table>
+<thead><tr><th>compute_iters</th><th>GFLOP/s</th><th>active occ %</th><th>eligible %</th><th>eligible warps/SMSP cycle</th><th>long scoreboard %</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>137.3</td><td>84.88</td><td>0.85</td><td>0.10</td><td>95.88</td></tr>
+<tr><td>1</td><td>544.4</td><td>84.98</td><td>1.17</td><td>0.14</td><td>91.43</td></tr>
+<tr><td>2</td><td>954.7</td><td>84.63</td><td>1.38</td><td>0.17</td><td>92.91</td></tr>
+<tr><td>4</td><td>1769.3</td><td>85.74</td><td>1.91</td><td>0.23</td><td>89.66</td></tr>
+<tr><td>8</td><td>3353.0</td><td>84.97</td><td>2.37</td><td>0.28</td><td>86.62</td></tr>
+<tr><td>16</td><td>6613.2</td><td>85.76</td><td>3.47</td><td>0.42</td><td>86.17</td></tr>
+<tr><td>32</td><td>13064.0</td><td>84.73</td><td>6.15</td><td>0.74</td><td>82.22</td></tr>
+<tr><td>64</td><td>25255.2</td><td>83.57</td><td>22.90</td><td>2.75</td><td>56.84</td></tr>
+<tr><td>128</td><td>38507.2</td><td>83.72</td><td>50.06</td><td>6.01</td><td>23.00</td></tr>
+</tbody></table>
+<figure><img src="assets/memory_iters_active_eligible_scoreboard.png" alt="Memory sweep active vs eligible warps"><figcaption>Memory sweep active vs eligible warps</figcaption></figure>
+<table>
+<thead><tr><th>memory_iters</th><th>GFLOP/s</th><th>active occ %</th><th>eligible %</th><th>eligible warps/SMSP cycle</th><th>long scoreboard %</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>6669.0</td><td>85.00</td><td>3.41</td><td>0.41</td><td>86.86</td></tr>
+<tr><td>2</td><td>6490.9</td><td>85.84</td><td>3.13</td><td>0.38</td><td>89.42</td></tr>
+<tr><td>4</td><td>6531.2</td><td>78.43</td><td>2.79</td><td>0.33</td><td>84.88</td></tr>
+<tr><td>8</td><td>6386.0</td><td>68.30</td><td>3.73</td><td>0.45</td><td>50.57</td></tr>
+</tbody></table>
 <p>The model performs well across memory-bound settings because it captures the effective DRAM traffic and streaming bandwidth. The peak roofline is less accurate: it is pessimistic in the memory-bound region because it uses algorithm bytes, and optimistic at high <code>compute_iters</code> because it assumes ideal scalar FMA throughput. The weakest model points are the smallest problem sizes, where launch and wave-drain effects dominate, and the largest problem sizes, where measured DRAM bandwidth rises above the single calibrated bandwidth.</p>
 <h2>4. Architecture Insight</h2>
 <p>The sensitivity analysis scales hardware parameters around the measured configuration for <code>n=1032192</code>, <code>compute_iters=16</code>, <code>memory_iters=4</code>.</p>
