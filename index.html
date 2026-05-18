@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Basic Style Page</title>
+  <title>HTML Page Index</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f5f7fb;
+      --bg: #f4f6f8;
       --surface: #ffffff;
-      --text: #182033;
-      --muted: #5d667a;
-      --accent: #2f6fed;
-      --border: #dde3ee;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
     }
 
     * {
@@ -25,59 +25,100 @@
       font-family: Arial, Helvetica, sans-serif;
       color: var(--text);
       background: var(--bg);
-      display: grid;
-      place-items: center;
-      padding: 32px;
+      padding: 40px 24px;
     }
 
     main {
-      width: min(100%, 720px);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 16px 40px rgba(24, 32, 51, 0.08);
-      padding: 40px;
+      width: min(100%, 880px);
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 28px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin: 0;
     }
 
     h1 {
-      margin: 0 0 16px;
       font-size: clamp(2rem, 5vw, 3rem);
       line-height: 1.1;
     }
 
-    p {
-      margin: 0 0 24px;
+    header p {
+      margin-top: 12px;
       color: var(--muted);
       font-size: 1.05rem;
-      line-height: 1.7;
+      line-height: 1.6;
+    }
+
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.08);
+      padding: 24px;
+    }
+
+    section h2 {
+      margin-bottom: 16px;
+      font-size: 1.3rem;
+    }
+
+    ul {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
     }
 
     a {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      min-height: 44px;
-      padding: 0 18px;
+      justify-content: space-between;
+      min-height: 52px;
+      padding: 0 16px;
+      border: 1px solid var(--border);
       border-radius: 6px;
-      background: var(--accent);
-      color: #ffffff;
+      color: var(--accent);
+      background: #fbfcff;
       font-weight: 700;
       text-decoration: none;
     }
 
+    a::after {
+      content: "Open";
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
     a:hover,
     a:focus-visible {
-      background: #245bc4;
+      border-color: var(--accent);
+      background: #eef5ff;
     }
   </style>
 </head>
 <body>
   <main>
-    <h1>Clean, Basic HTML</h1>
-    <p>
-      This starter page includes a simple responsive layout, readable typography,
-      and a small set of reusable style variables.
-    </p>
-    <a href="#">Get Started</a>
+    <header>
+      <h1>HTML Page Index</h1>
+      <p>Links to HTML files organized by project directory.</p>
+    </header>
+
+    <section aria-labelledby="dae-heading">
+      <h2 id="dae-heading">DAE</h2>
+      <ul>
+        <li>
+          <a href="00_DAE/00_kernel/kernel_model.html">Kernel Model</a>
+        </li>
+      </ul>
+    </section>
   </main>
 </body>
 </html>
