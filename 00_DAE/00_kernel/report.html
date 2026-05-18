@@ -15,10 +15,7 @@ ul { margin-top: 0; }
 @media print { body { margin: 18mm; } h2 { page-break-after: avoid; } }
 </style></head><body><h1>GPU Kernel Performance Model Report</h1>
 <h2>1. Kernel Explanation</h2>
-<p>The kernel is a streaming FMA microbenchmark. Each CTA owns a contiguous tile of</p>
-<p><code>blockDim.x * memory_iters</code> elements. Each thread loads <code>memory_iters</code> elements</p>
-<p>from three input arrays, performs a repeated scalar FMA chain, and stores</p>
-<p><code>memory_iters</code> output values.</p>
+<p>The kernel is a streaming FMA microbenchmark. Each CTA owns a contiguous tile of <code>blockDim.x * memory_iters</code> elements. Each thread loads <code>memory_iters</code> elements from three input arrays, performs a repeated scalar FMA chain, and stores <code>memory_iters</code> output values.</p>
 <p>The core indexing is:</p>
 <pre><code>block_base = blockIdx.x * blockDim.x * MemoryIters;
 idx[m] = block_base + m * blockDim.x + threadIdx.x;</code></pre>
@@ -30,12 +27,9 @@ idx[m] = block_base + m * blockDim.x + threadIdx.x;</code></pre>
     y[m]   = fmaf(y[m],   1.0003f, acc[m]);
   }
 }</code></pre>
-<p><code>compute_iters</code> controls arithmetic intensity. <code>memory_iters</code> controls elements</p>
-<p>per thread and therefore CTA count. The full-tile rule is</p>
-<p><code>n % (threads_per_cta * memory_iters) == 0</code>.</p>
+<p><code>compute_iters</code> controls arithmetic intensity. <code>memory_iters</code> controls elements per thread and therefore CTA count. The full-tile rule is <code>n % (threads_per_cta * memory_iters) == 0</code>.</p>
 <h2>2. Model</h2>
-<p>Inputs are <code>n</code>, <code>compute_iters</code>, <code>memory_iters</code>, <code>threads_per_cta</code>, FP32 TOPS,</p>
-<p>DRAM bandwidth, SM count, register-file size, and warp/CTA limits.</p>
+<p>Inputs are <code>n</code>, <code>compute_iters</code>, <code>memory_iters</code>, <code>threads_per_cta</code>, FP32 TOPS, DRAM bandwidth, SM count, register-file size, and warp/CTA limits.</p>
 <pre><code>elements_per_cta = threads_per_cta * memory_iters
 ctas = n / elements_per_cta
 ops = n * (6 * compute_iters + 2)
@@ -44,77 +38,64 @@ OI = ops / algorithm_bytes
 compute_time = ops / effective_fpu_ops_per_s
 dram_time = modeled_dram_bytes / effective_dram_bytes_per_s
 time = max(compute_time, dram_time)
-TOPS = ops / time / 1e12</code></pre>
+TOPS = ops / time / 1e12
+predicted_dram_gbps = modeled_dram_bytes / time / 1e9
+dram_utilization_pct = predicted_dram_gbps / peak_dram_gbps * 100</code></pre>
 <p>Example for <code>n=1032192</code>, <code>compute_iters=16</code>, <code>memory_iters=4</code>:</p>
 <pre><code>ctas = 1032192 / (256 * 4) = 1008
 OI = (6 * 16 + 2) / 16 = 6.125 ops/byte</code></pre>
-<p>The occupancy submodel estimates resident CTAs/SM from warp, CTA, register, and</p>
-<p>shared-memory limits. Register counts come from <code>cuobjdump</code>: 12, 20, 36, and 40</p>
-<p>registers/thread for <code>memory_iters=1,2,4,8</code>.</p>
-<p>Tuned constants are small and physical. Scalar-FMA efficiency captures that this</p>
-<p>kernel does not reach the ideal CUDA-core peak. The model uses 12 DRAM bytes per</p>
-<p>element because NCU reports mostly read DRAM traffic for this kernel. DRAM</p>
-<p>efficiency captures sustained streaming bandwidth. A wave-drain factor accounts</p>
-<p>for reduced average occupancy when the grid exposes fewer CTA waves.</p>
-<p>The main challenge is that algorithm bytes are 16 B/element, but NCU DRAM bytes</p>
-<p>are closer to 12 B/element. I address this by reporting algorithm OI separately</p>
-<p>from the NCU-like modeled DRAM traffic.</p>
+<p>The occupancy submodel estimates resident CTAs/SM from warp, CTA, register, and shared-memory limits. Register counts come from <code>cuobjdump</code>: 12, 20, 36, and 40 registers/thread for <code>memory_iters=1,2,4,8</code>.</p>
+<p>Tuned constants are small and physical. Scalar-FMA efficiency captures that this kernel does not reach the ideal CUDA-core peak. The model uses 12 DRAM bytes per element because NCU reports mostly read DRAM traffic for this kernel. DRAM efficiency captures sustained streaming bandwidth. A wave-drain factor accounts for reduced average occupancy when the grid exposes fewer CTA waves.</p>
+<p>The main challenge is that algorithm bytes are 16 B/element, but NCU DRAM bytes are closer to 12 B/element. I address this by reporting algorithm OI separately from the NCU-like modeled DRAM traffic. The DRAM utilization submodel uses the same predicted runtime as the bottleneck model, so utilization falls naturally when the kernel becomes compute-bound.</p>
 <h2>3. Validation</h2>
-<p>Validation used actual NCU measurements on the RTX 5080. The model remains</p>
-<p>parameterized, so TitanV values can be substituted later.</p>
+<p>Validation used actual NCU measurements on the RTX 5080. The model remains parameterized, so TitanV values can be substituted later.</p>
 <p>Parameter sweeps:</p>
 <ul><li>Problem size sweep: `n=[258048, 516096, 1032192, 2064384, 4128768]`, `compute_iters=16`, `memory_iters=4`.</li></ul>
 <ul><li>Tile size sweep: `n=1032192`, `compute_iters=16`, `memory_iters=1,2,4,8`.</li></ul>
 <ul><li>Compute sweep: `n=1032192`, `memory_iters=1`, `compute_iters=0..128`.</li></ul>
+<p>MAPE means Mean Absolute Percentage Error. It is computed as <code>(100 / N) * sum(abs((predicted_i - measured_i) / measured_i))</code>; lower is better. Rows with zero or invalid measured values are excluded.</p>
 <p>Problem-size runtime MAPE:</p>
-<ul><li>Model: `9.10%`</li></ul>
-<ul><li>Peak roofline: `15.58%`</li></ul>
+<ul><li>Model: `8.23%`</li></ul>
+<ul><li>Peak roofline: `14.43%`</li></ul>
 <p>Tile-size runtime MAPE:</p>
-<ul><li>Model: `1.35%`</li></ul>
-<ul><li>Peak roofline: `12.46%`</li></ul>
+<ul><li>Model: `1.47%`</li></ul>
+<ul><li>Peak roofline: `11.44%`</li></ul>
+<p>DRAM BW utilization MAPE:</p>
+<ul><li>Problem-size sweep: `9.35%`</li></ul>
+<ul><li>Tile-size sweep: `1.60%`</li></ul>
 <figure><img src="assets/error_vs_problem_size.png" alt="Error vs problem size"><figcaption>Error vs problem size</figcaption></figure>
 <figure><img src="assets/error_vs_tile_size.png" alt="Error vs tile size"><figcaption>Error vs tile size</figcaption></figure>
+<figure><img src="assets/dram_utilization_problem_size.png" alt="Problem-size DRAM utilization"><figcaption>Problem-size DRAM utilization</figcaption></figure>
 <figure><img src="assets/model_vs_ncu_compute_iters.png" alt="Model vs NCU over compute_iters"><figcaption>Model vs NCU over compute_iters</figcaption></figure>
 <figure><img src="assets/model_vs_ncu_memory_iters.png" alt="Model vs NCU over memory_iters"><figcaption>Model vs NCU over memory_iters</figcaption></figure>
 <figure><img src="assets/occupancy_vs_ncu_memory_iters.png" alt="Occupancy model"><figcaption>Occupancy model</figcaption></figure>
+<figure><img src="assets/dram_bw_utilization_vs_ncu.png" alt="DRAM utilization model"><figcaption>DRAM utilization model</figcaption></figure>
 <h3>Problem Size Results</h3>
 <table>
-<thead><tr><th>n</th><th>CTAs</th><th>measured TOPS</th><th>model TOPS</th><th>roofline TOPS</th><th>model error %</th><th>roofline error %</th></tr></thead>
+<thead><tr><th>n</th><th>CTAs</th><th>measured TOPS</th><th>model TOPS</th><th>NCU DRAM peak %</th><th>model DRAM peak %</th><th>model error %</th><th>roofline error %</th></tr></thead>
 <tbody>
-<tr><td>258048</td><td>252</td><td>4.676</td><td>5.719</td><td>5.766</td><td>-18.24</td><td>-18.91</td></tr>
-<tr><td>516096</td><td>504</td><td>5.706</td><td>6.574</td><td>5.766</td><td>-13.20</td><td>-1.05</td></tr>
-<tr><td>1032192</td><td>1008</td><td>6.572</td><td>6.574</td><td>5.766</td><td>-0.03</td><td>13.97</td></tr>
-<tr><td>2064384</td><td>2016</td><td>6.917</td><td>6.574</td><td>5.766</td><td>5.22</td><td>19.96</td></tr>
-<tr><td>4128768</td><td>4032</td><td>7.152</td><td>6.574</td><td>5.766</td><td>8.80</td><td>24.03</td></tr>
+<tr><td>258048</td><td>252</td><td>4.909</td><td>5.719</td><td>63.99</td><td>74.39</td><td>-14.17</td><td>-14.88</td></tr>
+<tr><td>516096</td><td>504</td><td>5.727</td><td>6.574</td><td>74.56</td><td>85.50</td><td>-12.88</td><td>-0.69</td></tr>
+<tr><td>1032192</td><td>1008</td><td>6.531</td><td>6.574</td><td>84.80</td><td>85.50</td><td>-0.65</td><td>13.26</td></tr>
+<tr><td>2064384</td><td>2016</td><td>6.940</td><td>6.574</td><td>90.02</td><td>85.50</td><td>5.57</td><td>20.35</td></tr>
+<tr><td>4128768</td><td>4032</td><td>7.092</td><td>6.574</td><td>94.97</td><td>85.50</td><td>7.88</td><td>22.98</td></tr>
 </tbody></table>
 <h3>Tile Size Results</h3>
 <table>
-<thead><tr><th>memory_iters</th><th>CTAs</th><th>measured TOPS</th><th>model TOPS</th><th>roofline TOPS</th><th>measured occ %</th><th>model occ %</th></tr></thead>
+<thead><tr><th>memory_iters</th><th>CTAs</th><th>measured TOPS</th><th>model TOPS</th><th>NCU DRAM peak %</th><th>model DRAM peak %</th><th>measured occ %</th><th>model occ %</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>4032</td><td>6.558</td><td>6.574</td><td>5.766</td><td>85.42</td><td>84.36</td></tr>
-<tr><td>2</td><td>2016</td><td>6.425</td><td>6.574</td><td>5.766</td><td>85.32</td><td>81.88</td></tr>
-<tr><td>4</td><td>1008</td><td>6.545</td><td>6.574</td><td>5.766</td><td>78.43</td><td>77.33</td></tr>
-<tr><td>8</td><td>504</td><td>6.412</td><td>6.574</td><td>5.766</td><td>68.57</td><td>69.60</td></tr>
+<tr><td>1</td><td>4032</td><td>6.572</td><td>6.574</td><td>85.22</td><td>85.50</td><td>84.81</td><td>84.36</td></tr>
+<tr><td>2</td><td>2016</td><td>6.641</td><td>6.574</td><td>86.34</td><td>85.50</td><td>85.55</td><td>81.88</td></tr>
+<tr><td>4</td><td>1008</td><td>6.478</td><td>6.574</td><td>84.18</td><td>85.50</td><td>77.26</td><td>77.33</td></tr>
+<tr><td>8</td><td>504</td><td>6.360</td><td>6.574</td><td>82.58</td><td>85.50</td><td>68.42</td><td>69.60</td></tr>
 </tbody></table>
-<p>The model performs well across memory-bound settings because it captures the</p>
-<p>effective DRAM traffic and streaming bandwidth. The peak roofline is less</p>
-<p>accurate: it is pessimistic in the memory-bound region because it uses algorithm</p>
-<p>bytes, and optimistic at high <code>compute_iters</code> because it assumes ideal scalar</p>
-<p>FMA throughput. The weakest model points are the smallest problem sizes, where</p>
-<p>launch and wave-drain effects dominate, and the largest problem sizes, where</p>
-<p>measured DRAM bandwidth rises above the single calibrated bandwidth.</p>
+<p>The model performs well across memory-bound settings because it captures the effective DRAM traffic and streaming bandwidth. The peak roofline is less accurate: it is pessimistic in the memory-bound region because it uses algorithm bytes, and optimistic at high <code>compute_iters</code> because it assumes ideal scalar FMA throughput. The weakest model points are the smallest problem sizes, where launch and wave-drain effects dominate, and the largest problem sizes, where measured DRAM bandwidth rises above the single calibrated bandwidth.</p>
 <h2>4. Architecture Insight</h2>
-<p>The sensitivity analysis scales hardware parameters around the measured</p>
-<p>configuration for <code>n=1032192</code>, <code>compute_iters=16</code>, <code>memory_iters=4</code>.</p>
+<p>The sensitivity analysis scales hardware parameters around the measured configuration for <code>n=1032192</code>, <code>compute_iters=16</code>, <code>memory_iters=4</code>.</p>
 <figure><img src="assets/sensitivity_analysis.png" alt="Sensitivity analysis"><figcaption>Sensitivity analysis</figcaption></figure>
-<p>This kernel is primarily a streaming memory-service workload until</p>
-<p><code>compute_iters</code> becomes very large. Future GPUs or DAE/WASP-like architectures</p>
-<p>should improve:</p>
+<p>This kernel is primarily a streaming memory-service workload until <code>compute_iters</code> becomes very large. Future GPUs or DAE/WASP-like architectures should improve:</p>
 <ul><li>effective DRAM bandwidth and memory-service efficiency;</li></ul>
 <ul><li>load scheduling that reduces long scoreboard stalls;</li></ul>
 <ul><li>enough resident warps to hide memory latency;</li></ul>
 <ul><li>register capacity only when larger per-thread batching reduces occupancy.</li></ul>
-<p>Increasing FPU TOPS helps mostly after the kernel reaches the compute-bound</p>
-<p>region. For the DAE/WASP direction, the most useful feature is better overlap of</p>
-<p>loads with scalar FMA work, because the workload has simple coalesced streams</p>
-<p>and little algorithmic L1/L2 reuse.</p></body></html>
+<p>Increasing FPU TOPS helps mostly after the kernel reaches the compute-bound region. For the DAE/WASP direction, the most useful feature is better overlap of loads with scalar FMA work, because the workload has simple coalesced streams and little algorithmic L1/L2 reuse.</p></body></html>
