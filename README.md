@@ -14,7 +14,7 @@ from the published site.
 
 - `index.html`: the main landing page and link index.
 - `00_DAE/`: section directory for DAE-related pages.
-- `00_DAE/00_kernel/kernel_model.html`: DAE kernel model page.
+- `00_DAE/00_kernel/report.html`: GPU kernel performance model report.
 
 ## Editing Rules
 
