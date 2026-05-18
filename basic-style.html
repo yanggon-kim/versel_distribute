@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basic Style Page</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --text: #182033;
+      --muted: #5d667a;
+      --accent: #2f6fed;
+      --border: #dde3ee;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 32px;
+    }
+
+    main {
+      width: min(100%, 720px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 16px 40px rgba(24, 32, 51, 0.08);
+      padding: 40px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: clamp(2rem, 5vw, 3rem);
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1.7;
+    }
+
+    a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    a:hover,
+    a:focus-visible {
+      background: #245bc4;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Clean, Basic HTML</h1>
+    <p>
+      This starter page includes a simple responsive layout, readable typography,
+      and a small set of reusable style variables.
+    </p>
+    <a href="#">Get Started</a>
+  </main>
+</body>
+</html>
