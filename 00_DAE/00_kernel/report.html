@@ -15,11 +15,22 @@ ul { margin-top: 0; }
 @media print { body { margin: 18mm; } h2 { page-break-after: avoid; } }
 </style></head><body><h1>GPU Kernel Performance Model Report</h1>
 <h2>1. Kernel Explanation</h2>
-<p>The kernel is a streaming FMA microbenchmark. Each CTA owns a contiguous tile of <code>blockDim.x * memory_iters</code> elements. Each thread loads <code>memory_iters</code> elements from three input arrays, performs a repeated scalar FMA chain, and stores <code>memory_iters</code> output values.</p>
+<h3>Streaming FMA Kernel</h3>
+<p>The kernel is a streaming FMA microbenchmark. FMA means fused multiply-add: <code>fmaf(a, b, c)</code> computes <code>a * b + c</code> as one fused FP32 instruction. In this report, one FMA instruction is counted as 2 floating-point operations because it performs one multiply and one add.</p>
+<p>Each CTA owns a contiguous tile of <code>blockDim.x * memory_iters</code> elements. Each thread loads <code>memory_iters</code> elements from three input arrays, applies a repeated FMA chain, and stores <code>memory_iters</code> output values. This creates a simple load-compute-store structure that is useful for studying how streaming DRAM traffic overlaps with scalar FP32 execution.</p>
 <p>The core indexing is:</p>
 <pre><code>block_base = blockIdx.x * blockDim.x * MemoryIters;
 idx[m] = block_base + m * blockDim.x + threadIdx.x;</code></pre>
-<p>This layout keeps each <code>m</code> load coalesced across warp lanes. The compute phase is:</p>
+<h3>Load Phase</h3>
+<p>The load phase computes one global index per element handled by the thread. For each <code>m</code>, all lanes in a warp access consecutive locations, so the loads from <code>a[idx[m]]</code>, <code>b[idx[m]]</code>, and <code>c[idx[m]]</code> are coalesced. The loaded values are kept in per-thread registers as <code>acc[m]</code>, <code>x[m]</code>, and <code>y[m]</code>.</p>
+<pre><code>for (int m = 0; m &lt; MemoryIters; ++m) {
+  idx[m] = block_base + m * blockDim.x + threadIdx.x;
+  acc[m] = a[idx[m]];
+  x[m]   = b[idx[m]];
+  y[m]   = c[idx[m]];
+}</code></pre>
+<h3>Compute Phase</h3>
+<p>The compute phase repeatedly updates the loaded register values. For each element and each <code>compute_iters</code> step, the kernel executes 3 FMA instructions, or 6 FP32 operations. This phase does not load more global data, so increasing <code>compute_iters</code> increases arithmetic intensity while keeping the same logical element stream.</p>
 <pre><code>for (int r = 0; r &lt; compute_iters; ++r) {
   for (int m = 0; m &lt; MemoryIters; ++m) {
     acc[m] = fmaf(acc[m], 1.0001f, x[m]);
@@ -27,25 +38,48 @@ idx[m] = block_base + m * blockDim.x + threadIdx.x;</code></pre>
     y[m]   = fmaf(y[m],   1.0003f, acc[m]);
   }
 }</code></pre>
-<p><code>compute_iters</code> controls arithmetic intensity. <code>memory_iters</code> controls elements per thread and therefore CTA count. The full-tile rule is <code>n % (threads_per_cta * memory_iters) == 0</code>.</p>
+<h3>Store Phase</h3>
+<p>The store phase writes one output value for every element loaded by the thread. The output combines the final accumulator streams, so each logical element has 3 input loads and 1 output store at the algorithm level.</p>
+<pre><code>for (int m = 0; m &lt; MemoryIters; ++m) {
+  out[idx[m]] = acc[m] + x[m] + y[m];
+}</code></pre>
+<h3>Parameter Meaning</h3>
+<p><code>compute_iters</code> is the main arithmetic-intensity knob. Larger values add more FMA work per loaded element, push the kernel toward the compute-bound region, and reduce the fraction of runtime explained by DRAM bandwidth.</p>
+<p><code>memory_iters</code> is the per-thread batching knob. Larger values make each thread load, compute, and store more elements, which reduces CTA count for a fixed <code>n</code>, increases register pressure, and changes achieved occupancy and latency hiding. The full-tile rule is <code>n % (threads_per_cta * memory_iters) == 0</code>, so every launched thread has valid work.</p>
 <h2>2. Model</h2>
 <p>Inputs are <code>n</code>, <code>compute_iters</code>, <code>memory_iters</code>, <code>threads_per_cta</code>, FP32 TOPS, DRAM bandwidth, SM count, register-file size, and warp/CTA limits.</p>
+<h3>Basic Outputs Required by Mini-Project</h3>
+<p>The required model outputs are performance in TOPS and achieved operational intensity. TOPS means tera-operations per second. Operational intensity means operations per byte.</p>
 <pre><code>elements_per_cta = threads_per_cta * memory_iters
 ctas = n / elements_per_cta
 ops = n * (6 * compute_iters + 2)
 algorithm_bytes = n * 16
-OI = ops / algorithm_bytes
+OI_algorithm = ops / algorithm_bytes
+modeled_dram_bytes = n * dram_bytes_per_element
+OI_dram = ops / modeled_dram_bytes
 compute_time = ops / effective_fpu_ops_per_s
 dram_time = modeled_dram_bytes / effective_dram_bytes_per_s
 time = max(compute_time, dram_time)
-TOPS = ops / time / 1e12
-predicted_dram_gbps = modeled_dram_bytes / time / 1e9
-dram_utilization_pct = predicted_dram_gbps / peak_dram_gbps * 100</code></pre>
+TOPS = ops / time / 1e12</code></pre>
+<p><code>ops</code> is the total FP32 operation count. The term <code>6 * compute_iters</code> comes from 3 FMA instructions per element per compute iteration, with 2 operations per FMA. The <code>+ 2</code> term is the final output add chain, <code>acc + x + y</code>.</p>
+<p><code>algorithm_bytes</code> is the logical traffic from the CUDA source: 3 FP32 loads and 1 FP32 store per element, or 16 B/element. <code>modeled_dram_bytes</code> is the NCU-calibrated DRAM traffic used by the bottleneck model. It is lower here because NCU reports this kernel as mostly read-dominated DRAM traffic.</p>
 <p>Example for <code>n=1032192</code>, <code>compute_iters=16</code>, <code>memory_iters=4</code>:</p>
 <pre><code>ctas = 1032192 / (256 * 4) = 1008
-OI = (6 * 16 + 2) / 16 = 6.125 ops/byte</code></pre>
-<p>The occupancy submodel estimates resident CTAs/SM from warp, CTA, register, and shared-memory limits. Register counts come from <code>cuobjdump</code>: 12, 20, 36, and 40 registers/thread for <code>memory_iters=1,2,4,8</code>.</p>
+OI_algorithm = (6 * 16 + 2) / 16 = 6.125 ops/byte</code></pre>
+<h3>Extended Outputs</h3>
+<p>The extended outputs explain why the kernel reaches a particular TOPS value. They are not required by the mini-project statement, but they make the model useful for architecture analysis.</p>
+<pre><code>resident_ctas_per_sm = min(CTA limit, warp limit, register limit, shared-memory limit)
+resident_warps_per_sm = resident_ctas_per_sm * warps_per_cta
+estimated_achieved_occupancy = estimated_active_warps_per_sm / max_warps_per_sm
+predicted_dram_gbps = modeled_dram_bytes / time / 1e9
+dram_utilization_pct = predicted_dram_gbps / peak_dram_gbps * 100
+bottleneck = compute if compute_time &gt;= dram_time else dram</code></pre>
+<p>Warp occupancy estimates how many warps are active on each SM relative to the hardware maximum. The model first computes the theoretical resident warps from CTA, warp, register, and shared-memory limits, then applies a wave-drain factor for small grids. Register counts come from <code>cuobjdump</code>: 12, 20, 36, and 40 registers/thread for <code>memory_iters=1,2,4,8</code>.</p>
+<p>DRAM utilization predicts how much of peak DRAM bandwidth the kernel uses. It is computed from the modeled DRAM bytes divided by the predicted runtime, then normalized by the hardware peak DRAM bandwidth.</p>
+<h3>Definitions and Calibrated Terms</h3>
 <p>Tuned constants are small and physical. Scalar-FMA efficiency captures that this kernel does not reach the ideal CUDA-core peak. The model uses 12 DRAM bytes per element because NCU reports mostly read DRAM traffic for this kernel. DRAM efficiency captures sustained streaming bandwidth. A wave-drain factor accounts for reduced average occupancy when the grid exposes fewer CTA waves.</p>
+<p><code>effective_fpu_ops_per_s</code> is <code>fpu_tops * compute_efficiency * 1e12</code>. It is the scalar FP32 compute rate available to this kernel after accounting for instruction mix and issue efficiency. <code>effective_dram_bytes_per_s</code> is <code>dram_bw_gbps * dram_efficiency * occupancy_bw_scale * 1e9</code>. It is the sustained DRAM service rate available to this streaming access pattern.</p>
+<p><code>dram_bytes_per_element</code> is the calibrated DRAM traffic per element. <code>dram_efficiency</code> captures the gap between peak DRAM bandwidth and the sustained bandwidth reached by this coalesced streaming kernel. <code>occupancy_bw_scale</code> reduces effective bandwidth when too few active warps are available to hide memory latency.</p>
 <p>The main challenge is that algorithm bytes are 16 B/element, but NCU DRAM bytes are closer to 12 B/element. I address this by reporting algorithm OI separately from the NCU-like modeled DRAM traffic. The DRAM utilization submodel uses the same predicted runtime as the bottleneck model, so utilization falls naturally when the kernel becomes compute-bound.</p>
 <h2>3. Validation</h2>
 <p>Validation used actual NCU measurements on the RTX 5080. The model remains parameterized, so TitanV values can be substituted later.</p>
