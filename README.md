@@ -21,10 +21,11 @@ from the published site.
 - Keep `index.html` as the central list of links to HTML files stored in
   subdirectories.
 - Editing rule automation: when the user says `apply the edit rule`, inspect the
-  repository for new directories and new HTML files. If a new directory needs a
-  new section box in `index.html`, add that section box, then add relative links
-  to the new HTML files in the correct section. Do not add a link to
-  `index.html` itself.
+  repository for new files and edited files, then add those files into git. If a
+  new or edited file is an HTML file in a subdirectory, add a relative link to it
+  in the correct section box of `index.html`. If a new section box is necessary,
+  add that section box in `index.html`. Do not add a link to `index.html`
+  itself.
 - When adding a new topic directory, add a visible section box for it in
   `index.html`.
 - When adding a new HTML page inside a subdirectory, add a link to that page in
