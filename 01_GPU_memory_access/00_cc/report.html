@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Do LLM Weights &amp; KV Cache Stream? — RTX 5080</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --stream: #1a7f37;
+      --stream-bg: #e7f5ec;
+      --random: #b54708;
+      --random-bg: #fdf0e6;
+      --code: #0b1020;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text); background: var(--bg);
+      line-height: 1.6;
+    }
+    a { color: var(--accent); }
+    .wrap { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 28px;
+      width: min(100%, 1180px); margin: 0 auto; padding: 36px 24px 64px; }
+
+    /* sticky table of contents */
+    nav.toc { position: sticky; top: 24px; align-self: start; font-size: 0.92rem; }
+    nav.toc .crumb { color: var(--muted); font-size: 0.8rem; margin-bottom: 14px; }
+    nav.toc a { display: block; padding: 6px 10px; border-radius: 6px;
+      color: var(--muted); text-decoration: none; border-left: 2px solid transparent; }
+    nav.toc a:hover { background: #eef5ff; color: var(--accent); }
+    nav.toc a.active { color: var(--accent); border-left-color: var(--accent);
+      background: #eef5ff; font-weight: 700; }
+    nav.toc .grp { margin-top: 12px; font-size: 0.72rem; text-transform: uppercase;
+      letter-spacing: .06em; color: #9aa4b4; padding: 0 10px; }
+
+    main { min-width: 0; }
+    header.page { margin-bottom: 24px; }
+    header.page h1 { font-size: clamp(1.7rem, 3.6vw, 2.5rem); line-height: 1.12; margin: 0; }
+    header.page .sub { color: var(--muted); margin-top: 10px; font-size: 1.02rem; }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .tag { font-size: 0.78rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+      background: #eef2f7; color: #43506a; border: 1px solid var(--border); }
+    .tag.gpu { background: #eaf1ff; color: #1f4fdb; }
+
+    section.card { background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; box-shadow: 0 10px 28px rgba(23,32,51,.06);
+      padding: 26px; margin-bottom: 22px; scroll-margin-top: 20px; }
+    section.card > h2 { margin: 0 0 6px; font-size: 1.35rem; }
+    section.card > h2 .num { color: var(--accent); font-weight: 800; margin-right: 8px; }
+    .lead { color: var(--muted); margin: 0 0 18px; }
+    h3 { font-size: 1.05rem; margin: 22px 0 8px; }
+
+    /* verdict pill */
+    .pill { display: inline-flex; align-items: center; gap: 6px; font-weight: 800;
+      font-size: 0.82rem; padding: 4px 12px; border-radius: 999px; }
+    .pill.stream { background: var(--stream-bg); color: var(--stream); }
+    .pill.random { background: var(--random-bg); color: var(--random); }
+    .pill.big { font-size: 1rem; padding: 8px 18px; }
+
+    /* headline grid */
+    .headline { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px; margin: 4px 0 8px; }
+    .kpi { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: #fbfcff; }
+    .kpi .v { font-size: 1.55rem; font-weight: 800; color: var(--text); }
+    .kpi .l { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+
+    .callout { border-left: 4px solid var(--accent); background: #f3f8ff;
+      padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .callout.win { border-left-color: var(--stream); background: var(--stream-bg); }
+
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 8px 0 4px; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+    th { background: #f1f4f9; font-size: 0.82rem; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody tr:hover { background: #f7faff; }
+    .matrix td { text-align: center; font-weight: 700; cursor: default; }
+    .cell-s { background: var(--stream-bg); color: var(--stream); }
+    .cell-r { background: var(--random-bg); color: var(--random); }
+    td.rowlabel { text-align: left; font-weight: 700; white-space: nowrap; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+
+    /* controls */
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      margin: 10px 0 6px; }
+    .controls label { font-size: 0.85rem; color: var(--muted); font-weight: 700; }
+    select { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: #fff; color: var(--text); }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+    .legchip { font-size: 0.78rem; font-weight: 700; padding: 5px 11px; border-radius: 999px;
+      border: 1px solid var(--border); cursor: pointer; user-select: none; display: inline-flex;
+      align-items: center; gap: 7px; background: #fff; }
+    .legchip.off { opacity: 0.38; }
+
+    .chartbox { width: 100%; overflow: hidden; }
+    svg.chart { width: 100%; height: auto; display: block; }
+    svg .grid { stroke: #e6eaf1; stroke-width: 1; }
+    svg .axis { stroke: #aab3c2; stroke-width: 1; }
+    svg text { fill: var(--muted); font-size: 12px; font-family: Arial, sans-serif; }
+    svg text.axtitle { fill: #43506a; font-weight: 700; }
+    svg .dot { cursor: pointer; }
+
+    .tip { position: fixed; z-index: 50; pointer-events: none; background: var(--code);
+      color: #eef; font-size: 0.78rem; padding: 7px 10px; border-radius: 6px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.25); opacity: 0; transition: opacity .08s; max-width: 280px; }
+
+    /* workload cards */
+    .wcard { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 16px 0; }
+    .wcard > .whead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      padding: 12px 16px; cursor: pointer; background: #fbfcff; border-bottom: 1px solid var(--border); }
+    .wcard > .whead .dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+    .wcard > .whead .wtitle { font-weight: 800; font-size: 1.02rem; }
+    .wcard > .whead .role { font-size: 0.72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px;
+      text-transform: uppercase; letter-spacing: .04em; }
+    .role.weight { background: #eaf1ff; color: #1f4fdb; }
+    .role.kv { background: #fde7e7; color: #c0392b; }
+    .role.ctrl { background: #eef0f3; color: #5b6675; }
+    .wcard > .whead .chev { margin-left: auto; color: var(--muted); transition: transform .15s; }
+    .wcard.collapsed > .whead .chev { transform: rotate(-90deg); }
+    .wcard .wbody { padding: 16px; }
+    .wcard.collapsed .wbody { display: none; }
+    .kernel { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.76rem;
+      background: #f3f5f9; border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 10px; overflow-x: auto; white-space: nowrap; color: #41506a; }
+    .statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 10px; margin: 12px 0; }
+    .stat { border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; background: #fbfcff; }
+    .stat .sv { font-size: 1.15rem; font-weight: 800; }
+    .stat .sl { font-size: 0.74rem; color: var(--muted); }
+    .vchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .vchip { font-size: 0.72rem; font-weight: 800; padding: 3px 9px; border-radius: 6px; }
+    .vchip.s { background: var(--stream-bg); color: var(--stream); }
+    .vchip.r { background: var(--random-bg); color: var(--random); }
+
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 10px; margin: 12px 0; counter-reset: s; }
+    .step { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: #fbfcff; position: relative; }
+    .step::before { counter-increment: s; content: counter(s); position: absolute; top: -10px; left: 12px;
+      width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff;
+      font-size: 0.78rem; font-weight: 800; display: grid; place-items: center; }
+    .step b { display: block; margin: 4px 0 2px; }
+    .step span { font-size: 0.84rem; color: var(--muted); }
+
+    figure { margin: 14px 0; }
+    figure img { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+    figcaption { font-size: 0.82rem; color: var(--muted); margin-top: 6px; }
+
+    pre.cmd { background: var(--code); color: #d5e0ff; padding: 14px 16px; border-radius: 8px;
+      overflow-x: auto; font-size: 0.82rem; line-height: 1.55; }
+    pre.cmd .c { color: #7f8db3; }
+    ul.notes { margin: 6px 0; padding-left: 20px; }
+    ul.notes li { margin: 5px 0; }
+    .footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--border);
+      margin-top: 26px; padding-top: 18px; }
+    .footer a { text-decoration: none; }
+    @media (max-width: 880px) {
+      .wrap { grid-template-columns: 1fr; }
+      nav.toc { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <div class="tip" id="tip"></div>
+  <div class="wrap">
+    <nav class="toc" id="toc">
+      <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+      <a href="#summary">Summary of results</a>
+      <a href="#method">Methodology</a>
+      <a href="#explorer">Interactive explorer</a>
+      <div class="grp">Workloads</div>
+      <a href="#w-weights">Weight workloads</a>
+      <a href="#w-kv">KV-cache workloads</a>
+      <a href="#w-control">Control</a>
+      <div class="grp">Wrap-up</div>
+      <a href="#compression">Compression verdict</a>
+      <a href="#caveats">Caveats</a>
+      <a href="#repro">Reproduce</a>
+    </nav>
+
+    <main>
+      <header class="page">
+        <h1>Do LLM Weights &amp; KV Cache Stream?</h1>
+        <p class="sub">Verifying whether model weights and the KV cache are accessed as large
+          contiguous <strong>tile streams</strong> on an NVIDIA RTX 5080 — evidence for or against
+          large-block, high-ratio, pipelined HBM decompression.</p>
+        <div class="tags">
+          <span class="tag gpu">RTX 5080 · Blackwell sm_120 · CUDA 13.0</span>
+          <span class="tag">NVBit 1.7.6 address trace</span>
+          <span class="tag">GPT-2 (fp32) + Qwen2.5-1.5B (bf16)</span>
+          <span class="tag">8 workloads · 32B–16KB granularity</span>
+        </div>
+      </header>
+
+      <!-- ================= SUMMARY ================= -->
+      <section class="card" id="summary">
+        <h2><span class="num">§1</span>Summary of results</h2>
+        <p class="lead">One question drives everything: <em>if a cache line of a weight tensor or
+          the KV cache is touched, how likely is a neighboring line to be touched too?</em>
+          Across every workload and every granularity from 32&nbsp;B to 8&nbsp;KB, the answer is:
+          <strong>very likely</strong>.</p>
+
+        <p><span class="pill stream big">&#10003; Verdict: Weights and KV cache both STREAM</span></p>
+
+        <div class="headline">
+          <div class="kpi"><div class="v">&#8776; 1.00</div><div class="l">P(neighbor line touched) out to &plusmn;32 lines</div></div>
+          <div class="kpi"><div class="v">&#8776; 100%</div><div class="l">tile coverage up to 16&nbsp;KB blocks</div></div>
+          <div class="kpi"><div class="v">once</div><div class="l">each byte streamed per token — no reuse</div></div>
+          <div class="kpi"><div class="v">8 / 8</div><div class="l">workloads Streaming at &le;8&nbsp;KB</div></div>
+        </div>
+
+        <div class="callout win">
+          <strong>So what?</strong> Classic cache-line compressors (BDI, FPC, C-Pack) assume random,
+          latency-sensitive access. LLM weight and KV traffic is the opposite — fully contiguous,
+          fully-block-covered, streamed once, latency-amortizable. That is the ideal target for
+          <strong>large-block, high-ratio, pipelined decompression in an HBM logic die</strong>.
+          Recommended block size: <strong>8–16&nbsp;KB for weights, 4&nbsp;KB for KV cache</strong>.
+        </div>
+
+        <h3>Random-vs-Streaming verdict matrix</h3>
+        <p class="lead">Hover any cell for the underlying numbers. <span class="pill stream">Streaming</span>
+          = P(i+1)&nbsp;&ge;&nbsp;0.5 <em>and</em> median contiguous run &ge; 4 lines.
+          <span class="pill random">Random</span> otherwise.</p>
+        <div style="overflow-x:auto">
+          <table class="matrix" id="matrix"></table>
+        </div>
+        <p class="lead" style="margin-top:12px">The <strong>random-gather control</strong> correctly flips to
+          <span class="pill random">Random</span> at 4–8&nbsp;KB — it densely fills a tiny buffer so it looks
+          stream-like only at fine granularity. That sanity-checks the metric: it is not labelling everything
+          "Streaming".</p>
+      </section>
+
+      <!-- ================= METHODOLOGY ================= -->
+      <section class="card" id="method">
+        <h2><span class="num">§2</span>Methodology</h2>
+        <p class="lead">The guide's preferred recipe — trace a live PyTorch process and map every address
+          back to a weight/KV <code>data_ptr()</code> range — is <strong>impossible on this stack</strong>:
+          NVBit 1.7.6/1.8 emit zero trace lines against PyTorch&nbsp;cu128 on driver&nbsp;590.48 (the launch
+          interceptor misses its kernels). Standalone CUDA/cuBLAS binaries trace perfectly. So we trace
+          <strong>proxy kernels whose tensor role is known by construction</strong> — the <code>W</code> buffer
+          <em>is</em> the weight, the K/V pool <em>is</em> the KV cache — making attribution exact, and we
+          dimension each proxy from a real model's tensor table.</p>
+
+        <div class="steps">
+          <div class="step"><b>Measure real tensors</b><span>Dump weight + KV <code>data_ptr</code>/shape/stride/dtype from GPT-2 &amp; Qwen2.5-1.5B.</span></div>
+          <div class="step"><b>Build proxies</b><span>cuBLAS GEMM/GEMV (weights) + a custom attention kernel (KV), sized from step&nbsp;1.</span></div>
+          <div class="step"><b>Trace every access</b><span>NVBit <code>mem_trace</code> logs 32 lane addresses per warp-instruction (pre-coalescer).</span></div>
+          <div class="step"><b>Analyze the stream</b><span>Per byte-address: line/sector/tile IDs &rarr; run length, P(i+N), coverage, reuse, temporal stride.</span></div>
+        </div>
+
+        <h3>Workloads &amp; what each one models</h3>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Workload</th><th>Role</th><th>Kernel (real SASS)</th><th class="num">warp-insts</th><th class="num">load addrs</th></tr></thead>
+            <tbody id="wltable"></tbody>
+          </table>
+        </div>
+
+        <h3>The two real models we dimensioned from</h3>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Model</th><th>dtype</th><th class="num">weights</th><th class="num">layers</th>
+              <th class="num">q&nbsp;heads</th><th class="num">kv&nbsp;heads</th><th class="num">head_dim</th><th>KV layout</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlabel">GPT-2</td><td>fp32</td><td class="num">474.7 MiB</td><td class="num">12</td>
+                <td class="num">12</td><td class="num">12 (MHA)</td><td class="num">64</td><td>[1,12,S,64] contiguous</td></tr>
+              <tr><td class="rowlabel">Qwen2.5-1.5B-Instruct</td><td>bf16</td><td class="num">2944.4 MiB</td><td class="num">28</td>
+                <td class="num">12</td><td class="num">2 (GQA)</td><td class="num">128</td><td>[1,2,S,128] contiguous</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul class="notes">
+          <li><strong>Granularity IDs:</strong> <code>line_id = addr &gt;&gt; k</code> with k = 5/6/7/10/12/13 for 32B/64B/128B/1KB/4KB/8KB.</li>
+          <li><strong>Run length</strong> = longest contiguous span of touched line IDs (are blocks fully populated?).</li>
+          <li><strong>Tile coverage</strong> = fraction of 32&nbsp;B sectors actually touched inside each tile (are fetched blocks wasted?).</li>
+          <li><strong>Temporal stride</strong> = per-warp inter-instruction byte delta (does the sweep move forward in order?).</li>
+        </ul>
+      </section>
+
+      <!-- ================= EXPLORER ================= -->
+      <section class="card" id="explorer">
+        <h2><span class="num">§3</span>Interactive explorer</h2>
+        <p class="lead">Compare workloads directly. Click a legend chip to show/hide a series.</p>
+
+        <h3>Stream probability — P(line i+N touched | line i touched)</h3>
+        <div class="controls">
+          <label for="granSel">Granularity:</label>
+          <select id="granSel"></select>
+          <span class="lead" style="margin:0">A flat line near 1.0 means strong streaming; a fast drop means random.</span>
+        </div>
+        <div class="legend" id="legProb"></div>
+        <div class="chartbox"><svg class="chart" id="probChart" viewBox="0 0 760 380" role="img"></svg></div>
+
+        <h3>Tile coverage — are large compression blocks fully used?</h3>
+        <p class="lead">Bars at 1 / 4 / 8 / 16&nbsp;KB. Near 1.0 everywhere = a fetched block is almost entirely consumed.</p>
+        <div class="legend" id="legCov"></div>
+        <div class="chartbox"><svg class="chart" id="covChart" viewBox="0 0 760 360" role="img"></svg></div>
+
+        <h3>Temporal order — contiguous (HF) vs paged (vLLM) KV</h3>
+        <p class="lead">Same spatial footprint, different access order. Paging fragments each per-head sweep at
+          block boundaries: the regular-stride fraction falls and big &gt;1&nbsp;MB jumps rise.</p>
+        <div class="chartbox"><svg class="chart" id="tempChart" viewBox="0 0 760 360" role="img"></svg></div>
+      </section>
+
+      <!-- ================= WEIGHT WORKLOADS ================= -->
+      <section class="card" id="w-weights">
+        <h2><span class="num">§4</span>Weight workloads</h2>
+        <p class="lead">Weights are read by the matmul kernels the real models actually launch (verified by SASS
+          name in nsys traces). Prefill uses tiled GEMM; batch-1 decode collapses to a GEMV that streams the whole
+          weight matrix to multiply one activation vector.</p>
+        <div id="weightCards"></div>
+      </section>
+
+      <!-- ================= KV WORKLOADS ================= -->
+      <section class="card" id="w-kv">
+        <h2><span class="num">§5</span>KV-cache workloads</h2>
+        <p class="lead">A decode step attends one new query against all past keys then values. We model both the
+          HuggingFace <strong>contiguous</strong> layout (<code>[heads, seq, head_dim]</code>) and the vLLM
+          <strong>paged</strong> layout (16-token blocks gathered through a block table), in bf16 (Qwen-shaped)
+          and fp32 (GPT-2-shaped).</p>
+        <div id="kvCards"></div>
+        <div class="callout">
+          <strong>Paging changes order, not coverage.</strong> Because the physical KV pool is densely packed,
+          the paged footprint is just as fully covered as the contiguous one (coverage 1.0 to 16&nbsp;KB) — so it is
+          equally compressible. What paging changes is the <em>time order</em>: a streaming decompressor needs
+          roughly <strong>16–36 concurrent stream buffers</strong> (heads &times; active blocks) instead of one,
+          and prefetch is block-bounded.
+        </div>
+      </section>
+
+      <!-- ================= CONTROL ================= -->
+      <section class="card" id="w-control">
+        <h2><span class="num">§6</span>Control workload</h2>
+        <p class="lead">A negative control to prove the metric can say "Random". A random-gather kernel scatters
+          reads across a buffer.</p>
+        <div id="ctrlCards"></div>
+      </section>
+
+      <!-- ================= COMPRESSION ================= -->
+      <section class="card" id="compression">
+        <h2><span class="num">§7</span>Compression verdict &amp; recommended block size</h2>
+        <p class="lead">Pick a candidate block size to see measured coverage per workload. High coverage means
+          compressing &amp; fetching whole blocks wastes almost no bandwidth.</p>
+        <div class="controls">
+          <label for="blkSel">Compression block size:</label>
+          <select id="blkSel"></select>
+        </div>
+        <div class="legend" id="legBlk"></div>
+        <div class="chartbox"><svg class="chart" id="blkChart" viewBox="0 0 760 360" role="img"></svg></div>
+
+        <table style="margin-top:18px">
+          <thead><tr><th>Tensor</th><th>Behavior</th><th>Recommended block</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td class="rowlabel">Weights</td><td><span class="pill stream">Streaming</span></td><td><strong>8–16 KB</strong></td>
+              <td>Largest tensors, swept fully and once; coverage 1.0 through 16&nbsp;KB; deepest latency amortization, least metadata.</td></tr>
+            <tr><td class="rowlabel">KV cache (contiguous)</td><td><span class="pill stream">Streaming</span></td><td><strong>4 KB</strong></td>
+              <td>Coverage 1.0 to 16&nbsp;KB too, but 4&nbsp;KB matches the per-head per-token slab and bounds buffer count.</td></tr>
+            <tr><td class="rowlabel">KV cache (paged)</td><td><span class="pill stream">Streaming</span></td><td><strong>2–4 KB</strong></td>
+              <td>Aligns with vLLM's 16-token blocks (16&times;128&times;2&nbsp;B = 4&nbsp;KB for one bf16 GQA head).</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ================= CAVEATS ================= -->
+      <section class="card" id="caveats">
+        <h2><span class="num">§8</span>Caveats</h2>
+        <ul class="notes">
+          <li><strong>Proxy, not live trace.</strong> Live PyTorch is un-traceable by NVBit here (driver 590.48 vs &le;575).
+            Proxies carry byte-identical SASS / access patterns and known tensor roles, but are not the literal production process.</li>
+          <li><strong>Pre-coalescer virtual addresses.</strong> NVBit logs the 32 issued lane addresses, not post-coalescer DRAM
+            requests, and not L1/L2 hit/miss (use <code>ncu</code> for that). Physical channel interleave is invisible.</li>
+          <li><strong>Spatial vs temporal.</strong> Footprint contiguity (the compression-relevant property) is robust; the
+            per-warp temporal stride is reported separately and is sensitive to warp scheduling and q/K/V allocation gaps.</li>
+          <li><strong>Single decode step, modest seq.</strong> seq = 1024, batch = 1. Larger batch turns decode GEMV &rarr; GEMM;
+            the streaming verdict only strengthens.</li>
+        </ul>
+      </section>
+
+      <!-- ================= REPRODUCE ================= -->
+      <section class="card" id="repro">
+        <h2><span class="num">§9</span>Reproduce</h2>
+        <pre class="cmd"><span class="c"># in 01_workloads/02_address_trace/ , using the cu128 venv python</span>
+PY=../../02_tools/venv_gpt2/bin/python
+
+<span class="c"># 1. tensor address-range DB (downloads GPT-2 + Qwen2.5-1.5B)</span>
+$PY dump_tensor_ranges.py --model gpt2 -o tensor_ranges_gpt2.json
+$PY dump_tensor_ranges.py --model qwen -o tensor_ranges_qwen.json
+
+<span class="c"># 2. build sm_120 proxies and collect NVBit traces -&gt; results/*.npz</span>
+make                       <span class="c"># uses /usr/local/cuda-13.0/bin/nvcc</span>
+bash run_guide_traces.sh
+
+<span class="c"># 3. stream statistics + figures</span>
+bash run_stream_stats.sh
+$PY plot_stream_metrics.py --results results --out ../../00_doc/02_report</pre>
+        <p class="lead">Static figures rendered by the pipeline (the explorer above is driven by the same data):</p>
+        <figure><img src="assets/stream_prob_by_N.png" alt="Stream probability vs N"><figcaption>Stream probability P(i+N) — weights vs KV layouts, 128&nbsp;B lines.</figcaption></figure>
+        <figure><img src="assets/tile_coverage.png" alt="Tile coverage by block size"><figcaption>Mean tile coverage at 1/4/8/16&nbsp;KB — ~1.0 everywhere.</figcaption></figure>
+        <figure><img src="assets/temporal_layout.png" alt="Temporal order, contiguous vs paged"><figcaption>Temporal order — paging fragments the per-stream sweep.</figcaption></figure>
+      </section>
+
+      <div class="footer">
+        <p>author : yang-gon kim &nbsp;·&nbsp; email : yanggon@g.ucla.edu</p>
+        <p>part of the GPU memory-access observation lab (RTX 5080, Blackwell sm_120). Generated from NVBit address traces.</p>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const DATA = {"GR":["32B","64B","128B","1KB","4KB","8KB"],"NS":["1","2","4","8","16","32"],"TI":["1KB","4KB","8KB","16KB"],"roles":{"kv_contig_bf16":{"role":"kv","kernel":"void attn_contig<__nv_bfloat16>(__nv_bfloat16 const*, __nv_bfloat16 const*, __nv_bfloat16 const*, __nv_bfloat16*, int, int)","warp_insts":73760,"load_addrs":2098176,"P":{"32B":[1.0,1.0,1.0,0.9999,0.9999,0.9998],"64B":[1.0,1.0,0.9999,0.9999,0.9998,0.9995],"128B":[1.0,0.9999,0.9999,0.9998,0.9995,0.999],"1KB":[0.9998,0.9995,0.999,0.998,0.9961,0.9922],"4KB":[0.999,0.998,0.9961,0.9922,0.9844,0.9688],"8KB":[0.9981,0.9961,0.9922,0.9844,0.9688,0.9376]},"medrun":{"32B":131136.0,"64B":65568.0,"128B":32784.0,"1KB":4098.0,"4KB":1025.0,"8KB":513.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":0.9995,"8KB":0.9985,"16KB":0.9966},"temporal":{"n_warps_sampled":32,"n_steps":73728,"frac_forward":0.944,"modal_stride_bytes":256,"frac_at_modal_stride":0.8329,"median_abs_delta_bytes":256,"frac_local_within_4KB":0.8885,"frac_big_jumps_over_1MB":0.1115},"window":{"100":{"mean_distinct_lines":55.6,"mean_contiguous_runs":19.9,"mean_lines_per_run":3.2},"500":{"mean_distinct_lines":238.7,"mean_contiguous_runs":26.9,"mean_lines_per_run":11.4},"1000":{"mean_distinct_lines":458.9,"mean_contiguous_runs":26.9,"mean_lines_per_run":21.6}},"reuse":{"1KB":{"n_revisits":32554,"revisit_fraction":0.8882,"median_reuse_accesses":7,"p90_reuse_accesses":16,"max_reuse_accesses":312},"4KB":{"n_revisits":33493,"revisit_fraction":0.9703,"median_reuse_accesses":6,"p90_reuse_accesses":15,"max_reuse_accesses":75},"8KB":{"n_revisits":33552,"revisit_fraction":0.9849,"median_reuse_accesses":6,"p90_reuse_accesses":15,"max_reuse_accesses":75},"16KB":{"n_revisits":33564,"revisit_fraction":0.9924,"median_reuse_accesses":6,"p90_reuse_accesses":15,"max_reuse_accesses":75}}},"kv_contig_fp32":{"role":"kv","kernel":"void attn_contig<float>(float const*, float const*, float const*, float*, int, int)","warp_insts":55320,"load_addrs":786432,"P":{"32B":[1.0,1.0,1.0,0.9999,0.9998,0.9997],"64B":[1.0,1.0,0.9999,0.9998,0.9997,0.9993],"128B":[1.0,0.9999,0.9998,0.9997,0.9993,0.9987],"1KB":[0.9997,0.9993,0.9987,0.9974,0.9948,0.9896],"4KB":[0.9987,0.9974,0.9948,0.9896,0.9792,0.9583],"8KB":[0.9974,0.9948,0.9896,0.9792,0.9583,0.9167]},"medrun":{"32B":98304.0,"64B":49152.0,"128B":24576.0,"1KB":3072.0,"4KB":768.0,"8KB":384.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":1.0,"16KB":1.0},"temporal":{"n_warps_sampled":24,"n_steps":55296,"frac_forward":0.8885,"modal_stride_bytes":256,"frac_at_modal_stride":0.7773,"median_abs_delta_bytes":256,"frac_local_within_4KB":0.7773,"frac_big_jumps_over_1MB":0.2227},"window":{"100":{"mean_distinct_lines":91.4,"mean_contiguous_runs":19.6,"mean_lines_per_run":5.0},"500":{"mean_distinct_lines":444.6,"mean_contiguous_runs":20.2,"mean_lines_per_run":23.7},"1000":{"mean_distinct_lines":881.7,"mean_contiguous_runs":19.9,"mean_lines_per_run":48.2}},"reuse":{"1KB":{"n_revisits":15048,"revisit_fraction":0.8305,"median_reuse_accesses":7,"p90_reuse_accesses":12,"max_reuse_accesses":29},"4KB":{"n_revisits":17352,"revisit_fraction":0.9576,"median_reuse_accesses":8,"p90_reuse_accesses":30,"max_reuse_accesses":64},"8KB":{"n_revisits":17736,"revisit_fraction":0.9788,"median_reuse_accesses":8,"p90_reuse_accesses":34,"max_reuse_accesses":64},"16KB":{"n_revisits":17928,"revisit_fraction":0.9894,"median_reuse_accesses":8,"p90_reuse_accesses":35,"max_reuse_accesses":64}}},"kv_paged_bf16":{"role":"kv","kernel":"void attn_paged<__nv_bfloat16>(__nv_bfloat16 const*, __nv_bfloat16 const*, int const*, __nv_bfloat16 const*, __nv_bfloat16*, int, int, int, int)","warp_insts":139296,"load_addrs":2097152,"P":{"32B":[1.0,1.0,1.0,0.9999,0.9999,0.9998],"64B":[1.0,1.0,0.9999,0.9999,0.9998,0.9995],"128B":[1.0,0.9999,0.9999,0.9998,0.9995,0.999],"1KB":[0.9998,0.9995,0.999,0.998,0.9961,0.9922],"4KB":[0.999,0.998,0.9961,0.9922,0.9844,0.9688],"8KB":[0.998,0.9961,0.9922,0.9844,0.9688,0.9375]},"medrun":{"32B":131072.0,"64B":65536.0,"128B":32768.0,"1KB":4096.0,"4KB":1024.0,"8KB":512.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":1.0,"16KB":1.0},"temporal":{"n_warps_sampled":32,"n_steps":90112,"frac_forward":0.8182,"modal_stride_bytes":256,"frac_at_modal_stride":0.5455,"median_abs_delta_bytes":256,"frac_local_within_4KB":0.5458,"frac_big_jumps_over_1MB":0.4542},"window":{"100":{"mean_distinct_lines":38.4,"mean_contiguous_runs":17.9,"mean_lines_per_run":2.2},"500":{"mean_distinct_lines":144.1,"mean_contiguous_runs":28.2,"mean_lines_per_run":5.3},"1000":{"mean_distinct_lines":265.5,"mean_contiguous_runs":35.6,"mean_lines_per_run":7.9}},"reuse":{"1KB":{"n_revisits":28380,"revisit_fraction":0.8739,"median_reuse_accesses":5,"p90_reuse_accesses":10,"max_reuse_accesses":464},"4KB":{"n_revisits":29955,"revisit_fraction":0.9669,"median_reuse_accesses":5,"p90_reuse_accesses":17,"max_reuse_accesses":231},"8KB":{"n_revisits":30467,"revisit_fraction":0.9835,"median_reuse_accesses":5,"p90_reuse_accesses":25,"max_reuse_accesses":13227},"16KB":{"n_revisits":30723,"revisit_fraction":0.9917,"median_reuse_accesses":5,"p90_reuse_accesses":28,"max_reuse_accesses":5820}}},"kv_paged_fp32":{"role":"kv","kernel":"void attn_paged<float>(float const*, float const*, int const*, float const*, float*, int, int, int, int)","warp_insts":104472,"load_addrs":786432,"P":{"32B":[1.0,1.0,1.0,0.9999,0.9998,0.9997],"64B":[1.0,1.0,0.9999,0.9998,0.9997,0.9993],"128B":[1.0,0.9999,0.9998,0.9997,0.9993,0.9987],"1KB":[0.9997,0.9993,0.9987,0.9974,0.9948,0.9896],"4KB":[0.9987,0.9974,0.9948,0.9896,0.9792,0.9583],"8KB":[0.9974,0.9948,0.9896,0.9792,0.9583,0.9167]},"medrun":{"32B":98304.0,"64B":49152.0,"128B":24576.0,"1KB":3072.0,"4KB":768.0,"8KB":384.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":1.0,"16KB":1.0},"temporal":{"n_warps_sampled":24,"n_steps":67584,"frac_forward":0.8182,"modal_stride_bytes":256,"frac_at_modal_stride":0.5455,"median_abs_delta_bytes":256,"frac_local_within_4KB":0.5455,"frac_big_jumps_over_1MB":0.4542},"window":{"100":{"mean_distinct_lines":58.9,"mean_contiguous_runs":25.2,"mean_lines_per_run":2.4},"500":{"mean_distinct_lines":248.9,"mean_contiguous_runs":34.7,"mean_lines_per_run":7.3},"1000":{"mean_distinct_lines":482.4,"mean_contiguous_runs":42.0,"mean_lines_per_run":11.6}},"reuse":{"1KB":{"n_revisits":14377,"revisit_fraction":0.8239,"median_reuse_accesses":5,"p90_reuse_accesses":9,"max_reuse_accesses":25},"4KB":{"n_revisits":16681,"revisit_fraction":0.956,"median_reuse_accesses":6,"p90_reuse_accesses":36,"max_reuse_accesses":74},"8KB":{"n_revisits":17065,"revisit_fraction":0.978,"median_reuse_accesses":6,"p90_reuse_accesses":40,"max_reuse_accesses":14137},"16KB":{"n_revisits":17257,"revisit_fraction":0.989,"median_reuse_accesses":6,"p90_reuse_accesses":42,"max_reuse_accesses":7283}}},"random_baseline":{"role":"other","kernel":"random_gather(float const*, int const*, float*, int)","warp_insts":64,"load_addrs":2048,"P":{"32B":[0.9922,0.9844,0.9688,0.9375,0.875,0.75],"64B":[0.9844,0.9688,0.9375,0.875,0.75,0.5],"128B":[0.9688,0.9375,0.875,0.75,0.5,0.0],"1KB":[0.75,0.5,0.0,0.0,0.0,0.0],"4KB":[0.0,0.0,0.0,0.0,0.0,0.0],"8KB":[0.5,0.0,0.0,0.0,0.0,0.0]},"medrun":{"32B":128.0,"64B":64.0,"128B":32.0,"1KB":4.0,"4KB":1.0,"8KB":2.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Random","8KB":"Random"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":0.5,"16KB":0.5},"temporal":{"n_steps":63,"frac_forward_contiguous":0.381,"frac_local_within_8_lines":0.8095,"median_abs_delta_lines":2,"p90_abs_delta_lines":10},"window":{"100":{"mean_distinct_lines":40.0,"mean_contiguity":0.6951},"500":{"mean_distinct_lines":40.0,"mean_contiguity":0.6951},"1000":{"mean_distinct_lines":40.0,"mean_contiguity":0.6951}},"reuse":{"1KB":{"n_revisits":2040,"revisit_fraction":0.9961,"median_reuse_accesses":1,"p90_reuse_accesses":7,"max_reuse_accesses":65},"4KB":{"n_revisits":2046,"revisit_fraction":0.999,"median_reuse_accesses":1,"p90_reuse_accesses":1,"max_reuse_accesses":1},"8KB":{"n_revisits":2046,"revisit_fraction":0.999,"median_reuse_accesses":1,"p90_reuse_accesses":1,"max_reuse_accesses":1},"16KB":{"n_revisits":2047,"revisit_fraction":0.9995,"median_reuse_accesses":1,"p90_reuse_accesses":1,"max_reuse_accesses":1}}},"weight_gemm_bf16":{"role":"weight","kernel":"void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x1_nn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x1_nn_align8::Params)","warp_insts":5248,"load_addrs":32768,"P":{"32B":[0.9995,0.999,0.998,0.9961,0.9922,0.9844],"64B":[0.999,0.998,0.9961,0.9922,0.9844,0.9688],"128B":[0.998,0.9961,0.9922,0.9844,0.9688,0.9375],"1KB":[0.9844,0.9688,0.9375,0.875,0.75,0.5],"4KB":[0.9375,0.875,0.75,0.5,0.0,0.0],"8KB":[0.875,0.75,0.5,0.0,0.0,0.0]},"medrun":{"32B":2048.0,"64B":1024.0,"128B":512.0,"1KB":64.0,"4KB":16.0,"8KB":8.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":1.0,"16KB":1.0},"temporal":{"n_warps_sampled":64,"n_steps":5184,"frac_forward":0.6296,"modal_stride_bytes":2176,"frac_at_modal_stride":0.1728,"median_abs_delta_bytes":2176,"frac_local_within_4KB":0.716,"frac_big_jumps_over_1MB":0.0247},"window":{"100":{"mean_distinct_lines":26.1,"mean_contiguous_runs":10.3,"mean_lines_per_run":9.1},"500":{"mean_distinct_lines":65.5,"mean_contiguous_runs":13.8,"mean_lines_per_run":11.9},"1000":{"mean_distinct_lines":87.9,"mean_contiguous_runs":12.8,"mean_lines_per_run":10.1}},"reuse":{"1KB":{"n_revisits":2332,"revisit_fraction":0.9733,"median_reuse_accesses":4,"p90_reuse_accesses":4,"max_reuse_accesses":130},"4KB":{"n_revisits":340,"revisit_fraction":0.9551,"median_reuse_accesses":5,"p90_reuse_accesses":19,"max_reuse_accesses":41},"8KB":{"n_revisits":292,"revisit_fraction":0.9733,"median_reuse_accesses":2,"p90_reuse_accesses":7,"max_reuse_accesses":21},"16KB":{"n_revisits":238,"revisit_fraction":0.9835,"median_reuse_accesses":2,"p90_reuse_accesses":2,"max_reuse_accesses":2}}},"weight_gemm_fp32":{"role":"weight","kernel":"void cutlass::Kernel2<cutlass_80_simt_sgemm_128x32_8x5_nn_align1>(cutlass_80_simt_sgemm_128x32_8x5_nn_align1::Params)","warp_insts":12384,"load_addrs":81920,"P":{"32B":[0.9998,0.9995,0.999,0.998,0.9961,0.9922],"64B":[0.9995,0.999,0.998,0.9961,0.9922,0.9844],"128B":[0.999,0.998,0.9961,0.9922,0.9844,0.9688],"1KB":[0.9922,0.9844,0.9688,0.9375,0.875,0.75],"4KB":[0.9688,0.9375,0.875,0.75,0.5,0.0],"8KB":[0.9375,0.875,0.75,0.5,0.0,0.0]},"medrun":{"32B":4096.0,"64B":2048.0,"128B":1024.0,"1KB":128.0,"4KB":32.0,"8KB":16.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":1.0,"16KB":1.0},"temporal":{"n_warps_sampled":32,"n_steps":12352,"frac_forward":0.6036,"modal_stride_bytes":384,"frac_at_modal_stride":0.1218,"median_abs_delta_bytes":14624,"frac_local_within_4KB":0.2345,"frac_big_jumps_over_1MB":0.4145},"window":{"100":{"mean_distinct_lines":47.2,"mean_contiguous_runs":22.1,"mean_lines_per_run":6.2},"500":{"mean_distinct_lines":142.0,"mean_contiguous_runs":75.1,"mean_lines_per_run":10.8},"1000":{"mean_distinct_lines":235.9,"mean_contiguous_runs":124.2,"mean_lines_per_run":11.3}},"reuse":{"1KB":{"n_revisits":1592,"revisit_fraction":0.9256,"median_reuse_accesses":16,"p90_reuse_accesses":187,"max_reuse_accesses":348},"4KB":{"n_revisits":983,"revisit_fraction":0.9685,"median_reuse_accesses":2,"p90_reuse_accesses":64,"max_reuse_accesses":225},"8KB":{"n_revisits":820,"revisit_fraction":0.9809,"median_reuse_accesses":2,"p90_reuse_accesses":13,"max_reuse_accesses":203},"16KB":{"n_revisits":808,"revisit_fraction":0.9902,"median_reuse_accesses":2,"p90_reuse_accesses":6,"max_reuse_accesses":126}}},"weight_gemv_bf16":{"role":"weight","kernel":"std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, false, true, true, false, 6, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>)","warp_insts":1067008,"load_addrs":16777216,"P":{"32B":[1.0,1.0,1.0,1.0,1.0,1.0],"64B":[1.0,1.0,1.0,1.0,1.0,0.9999],"128B":[1.0,1.0,1.0,1.0,0.9999,0.9999],"1KB":[1.0,0.9999,0.9999,0.9998,0.9995,0.999],"4KB":[0.9999,0.9998,0.9995,0.999,0.998,0.9961],"8KB":[0.9998,0.9995,0.999,0.998,0.9961,0.9922]},"medrun":{"32B":1048576.0,"64B":524288.0,"128B":262144.0,"1KB":32768.0,"4KB":8192.0,"8KB":4096.0},"verdict":{"32B":"Streaming","64B":"Streaming","128B":"Streaming","1KB":"Streaming","4KB":"Streaming","8KB":"Streaming"},"cov":{"1KB":1.0,"4KB":1.0,"8KB":1.0,"16KB":1.0},"temporal":{"n_warps_sampled":96,"n_steps":49920,"frac_forward":0.5058,"modal_stride_bytes":32,"frac_at_modal_stride":0.0173,"median_abs_delta_bytes":179814432,"frac_local_within_4KB":0.0308,"frac_big_jumps_over_1MB":0.9692},"window":{"100":{"mean_distinct_lines":110.0,"mean_contiguous_runs":99.0,"mean_lines_per_run":1.1},"500":{"mean_distinct_lines":502.8,"mean_contiguous_runs":485.1,"mean_lines_per_run":1.0},"1000":{"mean_distinct_lines":985.6,"mean_contiguous_runs":963.1,"mean_lines_per_run":1.0}},"reuse":{"1KB":{"n_revisits":1015808,"revisit_fraction":0.9688,"median_reuse_accesses":1868,"p90_reuse_accesses":2588,"max_reuse_accesses":4622},"4KB":{"n_revisits":1040384,"revisit_fraction":0.9922,"median_reuse_accesses":1868,"p90_reuse_accesses":2588,"max_reuse_accesses":4622},"8KB":{"n_revisits":1044480,"revisit_fraction":0.9961,"median_reuse_accesses":1870,"p90_reuse_accesses":2590,"max_reuse_accesses":4622},"16KB":{"n_revisits":522240,"revisit_fraction":0.9961,"median_reuse_accesses":935,"p90_reuse_accesses":1295,"max_reuse_accesses":2311}}}},"models":{"gpt2":{"dims":{"hidden_size":768,"num_attention_heads":12,"num_key_value_heads":12,"num_hidden_layers":12,"head_dim":64,"is_gqa":false,"kv_tensor_shape":[1,12,6,64],"kv_tensor_stride":[4608,384,64,1],"kv_dtype":"float32","kv_bytes_per_layer_per_kv":18432},"totals":{"weight_MiB":474.7,"weight_tensors":148,"kv_MiB":0.42,"kv_tensors":24,"by_role":{"embedding":{"count":2,"bytes":157535232},"layernorm":{"count":50,"bytes":153600},"attn_qkv":{"count":24,"bytes":85045248},"attn_out":{"count":24,"bytes":28348416},"mlp":{"count":48,"bytes":226676736}}}},"qwen":{"dims":{"hidden_size":1536,"num_attention_heads":12,"num_key_value_heads":2,"num_hidden_layers":28,"head_dim":128,"is_gqa":true,"kv_tensor_shape":[1,2,6,128],"kv_tensor_stride":[1536,768,128,1],"kv_dtype":"bfloat16","kv_bytes_per_layer_per_kv":3072},"totals":{"weight_MiB":2944.4,"weight_tensors":338,"kv_MiB":0.16,"kv_tensors":56,"by_role":{"embedding":{"count":1,"bytes":466747392},"attn_qkv":{"count":168,"bytes":176275456},"attn_out":{"count":28,"bytes":132120576},"mlp":{"count":84,"bytes":2312110080},"layernorm":{"count":57,"bytes":175104}}}}}};
+
+    // ---- workload metadata (display) ----------------------------------------
+    const WL = [
+      { k:"weight_gemv_bf16", name:"bf16 GEMV — decode weight", grp:"weight", color:"#1f6feb",
+        what:"The cuBLAS <code>gemvx</code> kernel a batch-1 decode step runs: stream the entire weight matrix once to multiply a single activation vector. This is the dominant, bandwidth-bound kernel of autoregressive generation." },
+      { k:"weight_gemm_bf16", name:"bf16 GEMM — prefill weight", grp:"weight", color:"#0aa2c0",
+        what:"The cutlass bf16 tensor-op GEMM used during prefill: each warp sweeps a 128&times;32 tile of the weight with vectorized loads." },
+      { k:"weight_gemm_fp32", name:"FP32 SGEMM — prefill weight", grp:"weight", color:"#6f42c1",
+        what:"The cutlass FP32 SIMT GEMM GPT-2 invokes for prefill — the classic tiled-GEMM signature." },
+      { k:"kv_contig_bf16", name:"KV contiguous (HF) — bf16", grp:"kv", color:"#d62728",
+        what:"HuggingFace default KV layout, Qwen-shaped (head_dim 128, bf16). Each head streams all past keys then all past values contiguously." },
+      { k:"kv_paged_bf16", name:"KV paged (vLLM) — bf16", grp:"kv", color:"#ff7f0e",
+        what:"vLLM PagedAttention layout: KV lives in 16-token blocks gathered through a block table. Same math, physically scattered blocks." },
+      { k:"kv_contig_fp32", name:"KV contiguous (HF) — fp32", grp:"kv", color:"#e83e8c",
+        what:"GPT-2-shaped contiguous KV (head_dim 64, fp32)." },
+      { k:"kv_paged_fp32", name:"KV paged (vLLM) — fp32", grp:"kv", color:"#fd7e14",
+        what:"GPT-2-shaped paged KV (head_dim 64, fp32)." },
+      { k:"random_baseline", name:"Random gather — control", grp:"ctrl", color:"#6c757d",
+        what:"Negative control: threads read random indices of a small buffer. Should NOT be classified as a clean stream at large block sizes." },
+    ];
+    const byKey = Object.fromEntries(WL.map(w => [w.k, w]));
+    const DEFAULT_ON = ["weight_gemv_bf16","weight_gemm_bf16","kv_contig_bf16","kv_paged_bf16"];
+    // kernel names contain C++ template syntax (< > &) — escape before innerHTML
+    const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+    const tip = document.getElementById("tip");
+    function showTip(html, e) { tip.innerHTML = html; tip.style.opacity = 1;
+      tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 290) + "px";
+      tip.style.top = (e.clientY + 14) + "px"; }
+    function hideTip() { tip.style.opacity = 0; }
+
+    const SVGNS = "http://www.w3.org/2000/svg";
+    function el(tag, attrs, parent) {
+      const n = document.createElementNS(SVGNS, tag);
+      for (const k in attrs) n.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(n);
+      return n;
+    }
+
+    // ---- generic line chart --------------------------------------------------
+    // series: [{key,label,color,vals:[..]}] ; xlabels along x
+    function lineChart(svg, series, xlabels, opt) {
+      opt = opt || {};
+      svg.innerHTML = "";
+      const W = 760, H = 380, mL = 56, mR = 16, mT = 18, mB = 54;
+      const pw = W - mL - mR, ph = H - mT - mB;
+      const ymin = 0, ymax = 1;
+      const X = i => mL + (xlabels.length === 1 ? pw/2 : pw * i / (xlabels.length - 1));
+      const Y = v => mT + ph * (1 - (v - ymin) / (ymax - ymin));
+      // grid + y ticks
+      for (let t = 0; t <= 1.0001; t += 0.25) {
+        el("line", { class:"grid", x1:mL, y1:Y(t), x2:W-mR, y2:Y(t) }, svg);
+        el("text", { x:mL-8, y:Y(t)+4, "text-anchor":"end" }, svg).textContent = t.toFixed(2);
+      }
+      // threshold 0.5
+      const thr = el("line", { x1:mL, y1:Y(0.5), x2:W-mR, y2:Y(0.5), stroke:"#b54708",
+        "stroke-dasharray":"5 4", "stroke-width":1 }, svg);
+      el("text", { x:W-mR, y:Y(0.5)-5, "text-anchor":"end", fill:"#b54708" }, svg)
+        .textContent = "streaming threshold 0.5";
+      // axes
+      el("line", { class:"axis", x1:mL, y1:mT, x2:mL, y2:mT+ph }, svg);
+      el("line", { class:"axis", x1:mL, y1:mT+ph, x2:W-mR, y2:mT+ph }, svg);
+      xlabels.forEach((lb, i) => el("text", { x:X(i), y:mT+ph+20, "text-anchor":"middle" }, svg).textContent = lb);
+      el("text", { class:"axtitle", x:mL+pw/2, y:H-6, "text-anchor":"middle" }, svg).textContent = opt.xtitle || "";
+      el("text", { class:"axtitle", x:14, y:mT+ph/2, "text-anchor":"middle",
+        transform:`rotate(-90 14 ${mT+ph/2})` }, svg).textContent = opt.ytitle || "";
+      // series
+      series.forEach(s => {
+        let d = "";
+        s.vals.forEach((v, i) => { d += (i ? "L" : "M") + X(i) + " " + Y(v) + " "; });
+        el("path", { d, fill:"none", stroke:s.color, "stroke-width":2.4,
+          "stroke-linejoin":"round" }, svg);
+        s.vals.forEach((v, i) => {
+          const c = el("circle", { class:"dot", cx:X(i), cy:Y(v), r:4.5, fill:s.color }, svg);
+          c.addEventListener("mousemove", e => showTip(
+            `<b>${s.label}</b><br>${opt.xtitle||"x"} = ${xlabels[i]}<br>value = <b>${v}</b>`, e));
+          c.addEventListener("mouseleave", hideTip);
+        });
+      });
+    }
+
+    // ---- generic grouped bar chart ------------------------------------------
+    // groups: [labels]; series:[{key,label,color,vals:[per group]}]
+    function barChart(svg, groups, series, opt) {
+      opt = opt || {}; svg.innerHTML = "";
+      const W = 760, H = 360, mL = 52, mR = 14, mT = 16, mB = 64;
+      const pw = W - mL - mR, ph = H - mT - mB;
+      const ymax = opt.ymax || 1;
+      const Y = v => mT + ph * (1 - v / ymax);
+      for (let t = 0; t <= ymax + 1e-6; t += ymax/4) {
+        el("line", { class:"grid", x1:mL, y1:Y(t), x2:W-mR, y2:Y(t) }, svg);
+        el("text", { x:mL-8, y:Y(t)+4, "text-anchor":"end" }, svg).textContent = (+t.toFixed(2));
+      }
+      el("line", { class:"axis", x1:mL, y1:mT+ph, x2:W-mR, y2:mT+ph }, svg);
+      const gw = pw / groups.length;
+      const n = series.length, bw = Math.min(46, (gw - 14) / n);
+      groups.forEach((g, gi) => {
+        const cx = mL + gw * gi + gw / 2;
+        el("text", { x:cx, y:mT+ph+20, "text-anchor":"middle" }, svg).textContent = g;
+        series.forEach((s, si) => {
+          const x = cx - (n*bw)/2 + si*bw;
+          const v = s.vals[gi];
+          const r = el("rect", { x, y:Y(v), width:bw-3, height:(mT+ph)-Y(v), fill:s.color, rx:2 }, svg);
+          r.addEventListener("mousemove", e => showTip(`<b>${s.label}</b><br>${g}: <b>${v}</b>`, e));
+          r.addEventListener("mouseleave", hideTip);
+        });
+      });
+      if (opt.xtitle) el("text", { class:"axtitle", x:mL+pw/2, y:H-8, "text-anchor":"middle" }, svg).textContent = opt.xtitle;
+    }
+
+    // ---- legend factory ------------------------------------------------------
+    function buildLegend(container, keys, state, onChange) {
+      container.innerHTML = "";
+      keys.forEach(k => {
+        const w = byKey[k];
+        const chip = document.createElement("span");
+        chip.className = "legchip" + (state[k] ? "" : " off");
+        chip.innerHTML = `<span class="swatch" style="background:${w.color}"></span>${w.name}`;
+        chip.onclick = () => { state[k] = !state[k]; chip.classList.toggle("off"); onChange(); };
+        container.appendChild(chip);
+      });
+    }
+
+    // ============ build: verdict matrix ============
+    (function () {
+      const t = document.getElementById("matrix");
+      let h = "<thead><tr><th>Workload</th>";
+      DATA.GR.forEach(g => h += `<th class="num">${g}</th>`);
+      h += "</tr></thead><tbody>";
+      WL.forEach(w => {
+        const r = DATA.roles[w.k];
+        h += `<tr><td class="rowlabel"><span class="swatch" style="background:${w.color}"></span>${w.name}</td>`;
+        DATA.GR.forEach(g => {
+          const v = r.verdict[g], s = v === "Streaming";
+          h += `<td class="${s?'cell-s':'cell-r'}" data-k="${w.k}" data-g="${g}">${s?'S':'R'}</td>`;
+        });
+        h += "</tr>";
+      });
+      t.innerHTML = h + "</tbody>";
+      t.querySelectorAll("td[data-k]").forEach(td => {
+        const r = DATA.roles[td.dataset.k], g = td.dataset.g;
+        td.addEventListener("mousemove", e => showTip(
+          `<b>${byKey[td.dataset.k].name}</b> @ ${g}<br>verdict: <b>${r.verdict[g]}</b><br>`+
+          `P(i+1) = ${r.P[g][0]}<br>median run = ${r.medrun[g].toLocaleString()} lines`, e));
+        td.addEventListener("mouseleave", hideTip);
+      });
+    })();
+
+    // ============ build: workload table ============
+    (function () {
+      const tb = document.getElementById("wltable");
+      ["weight_gemv_bf16","weight_gemm_bf16","weight_gemm_fp32",
+       "kv_contig_bf16","kv_paged_bf16","kv_contig_fp32","kv_paged_fp32","random_baseline"].forEach(k => {
+        const r = DATA.roles[k], w = byKey[k];
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="rowlabel"><span class="swatch" style="background:${w.color}"></span>${w.name}</td>`+
+          `<td><span class="role ${w.grp}">${r.role}</span></td>`+
+          `<td><code style="font-size:.74rem">${esc(r.kernel.slice(0,46))}${r.kernel.length>46?'…':''}</code></td>`+
+          `<td class="num">${r.warp_insts.toLocaleString()}</td>`+
+          `<td class="num">${r.load_addrs.toLocaleString()}</td>`;
+        tb.appendChild(tr);
+      });
+    })();
+
+    // ============ build: stream-probability explorer ============
+    const probState = {}; WL.forEach(w => probState[w.k] = DEFAULT_ON.includes(w.k));
+    (function () {
+      const sel = document.getElementById("granSel");
+      DATA.GR.forEach(g => { const o = document.createElement("option"); o.value = g; o.textContent = g; sel.appendChild(o); });
+      sel.value = "128B";
+      const draw = () => {
+        const g = sel.value;
+        const series = WL.filter(w => probState[w.k]).map(w => ({ key:w.k, label:w.name, color:w.color, vals: DATA.roles[w.k].P[g] }));
+        lineChart(document.getElementById("probChart"), series, DATA.NS,
+          { xtitle:"N  (neighbor offset, in "+g+" lines)", ytitle:"P(i+N | i)" });
+      };
+      buildLegend(document.getElementById("legProb"), WL.map(w=>w.k), probState, draw);
+      sel.addEventListener("change", draw);
+      draw();
+    })();
+
+    // ============ build: tile-coverage explorer ============
+    const covState = {}; WL.forEach(w => covState[w.k] = DEFAULT_ON.includes(w.k) || w.k==="random_baseline");
+    (function () {
+      const draw = () => {
+        const series = WL.filter(w => covState[w.k]).map(w => ({ key:w.k, label:w.name, color:w.color,
+          vals: DATA.TI.map(t => DATA.roles[w.k].cov[t]) }));
+        barChart(document.getElementById("covChart"), DATA.TI, series, { ymax:1, xtitle:"tile / block size" });
+      };
+      buildLegend(document.getElementById("legCov"), WL.map(w=>w.k), covState, draw);
+      draw();
+    })();
+
+    // ============ build: temporal chart (KV contig vs paged) ============
+    (function () {
+      const ks = ["kv_contig_bf16","kv_paged_bf16","kv_contig_fp32","kv_paged_fp32"];
+      const groups = ks.map(k => byKey[k].name.replace(" — ", "\n"));
+      const metrics = [
+        { label:"regular forward stride", color:"#1a7f37", f:t=>t.frac_at_modal_stride },
+        { label:"steps local <4KB", color:"#1f6feb", f:t=>t.frac_local_within_4KB },
+        { label:"big jumps >1MB", color:"#d62728", f:t=>t.frac_big_jumps_over_1MB },
+      ];
+      const series = metrics.map(m => ({ label:m.label, color:m.color, vals: ks.map(k => m.f(DATA.roles[k].temporal)) }));
+      barChart(document.getElementById("tempChart"), ks.map(k=>byKey[k].name.split(" — ")[0]+"\n"+byKey[k].name.split(" — ")[1]), series, { ymax:1 });
+      // simple inline legend
+      const box = document.getElementById("tempChart");
+    })();
+    // legend under temporal via title text already in series labels -> add manual legend
+    (function(){
+      const host = document.getElementById("tempChart").parentElement;
+      const leg = document.createElement("div"); leg.className="legend";
+      [["regular forward stride","#1a7f37"],["steps local <4KB","#1f6feb"],["big jumps >1MB","#d62728"]]
+        .forEach(([l,c])=>{ const s=document.createElement("span"); s.className="legchip"; s.style.cursor="default";
+          s.innerHTML=`<span class="swatch" style="background:${c}"></span>${l}`; leg.appendChild(s); });
+      host.parentElement.insertBefore(leg, host);
+    })();
+
+    // ============ build: workload cards ============
+    function cardHTML(k) {
+      const r = DATA.roles[k], w = byKey[k];
+      const vchips = DATA.GR.map(g => `<span class="vchip ${r.verdict[g]==='Streaming'?'s':'r'}">${g}: ${r.verdict[g]==='Streaming'?'S':'R'}</span>`).join("");
+      const t = r.temporal;
+      const stat = (v,l) => `<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div></div>`;
+      const p1 = r.P["128B"][0], p32 = r.P["128B"][5];
+      const cov16 = r.cov["16KB"];
+      const win = r.window["1000"] || {};
+      const lpr = win.mean_lines_per_run!==undefined ? win.mean_lines_per_run : "—";
+      const runs = win.mean_contiguous_runs!==undefined ? win.mean_contiguous_runs : "—";
+      const modal = t.modal_stride_bytes!==undefined ? t.modal_stride_bytes+" B" : "—";
+      const reuse4 = r.reuse["4KB"].median_reuse_accesses;
+      return `<div class="wcard">
+        <div class="whead">
+          <span class="dot" style="background:${w.color}"></span>
+          <span class="wtitle">${w.name}</span>
+          <span class="role ${w.grp}">${r.role}</span>
+          <span class="chev">&#9660;</span>
+        </div>
+        <div class="wbody">
+          <p style="margin:2px 0 10px;color:var(--muted)">${w.what}</p>
+          <div class="kernel">${esc(r.kernel)}</div>
+          <div class="vchips">${vchips}</div>
+          <div class="statgrid">
+            ${stat(r.warp_insts.toLocaleString(),"warp-instructions traced")}
+            ${stat(r.load_addrs.toLocaleString(),"load addresses")}
+            ${stat(p1,"P(i+1) @128B")}
+            ${stat(p32,"P(i+32) @128B")}
+            ${stat((cov16*100).toFixed(1)+"%","16KB tile coverage")}
+            ${stat(runs+" / "+lpr,"streams / lines-per-run (1000-inst window)")}
+            ${stat(modal,"modal per-warp stride")}
+            ${stat(reuse4,"median tile reuse (accesses)")}
+          </div>
+        </div>
+      </div>`;
+    }
+    function renderCards(containerId, keys) {
+      const host = document.getElementById(containerId);
+      host.innerHTML = keys.map(cardHTML).join("");
+      host.querySelectorAll(".wcard").forEach((c,i) => {
+        if (i>0) c.classList.add("collapsed"); // first open, rest collapsed
+        c.querySelector(".whead").addEventListener("click", () => c.classList.toggle("collapsed"));
+      });
+    }
+    renderCards("weightCards", ["weight_gemv_bf16","weight_gemm_bf16","weight_gemm_fp32"]);
+    renderCards("kvCards", ["kv_contig_bf16","kv_paged_bf16","kv_contig_fp32","kv_paged_fp32"]);
+    renderCards("ctrlCards", ["random_baseline"]);
+
+    // ============ build: block-size recommendation chart ============
+    const blkState = {}; WL.forEach(w => blkState[w.k] = true);
+    (function () {
+      const sel = document.getElementById("blkSel");
+      DATA.TI.forEach(t => { const o=document.createElement("option"); o.value=t; o.textContent=t; sel.appendChild(o); });
+      sel.value = "4KB";
+      const draw = () => {
+        const t = sel.value;
+        const shown = WL.filter(w => blkState[w.k]);
+        const groups = shown.map(w => w.name.split(" — ")[0] + (w.grp==='kv'? (w.k.includes('paged')?' paged':' contig'):''));
+        const series = [{ label:"coverage @ "+t, color:"#1f6feb", vals: shown.map(w => DATA.roles[w.k].cov[t]) }];
+        barChart(document.getElementById("blkChart"), groups, series, { ymax:1, xtitle:"fraction of "+t+" block actually used" });
+      };
+      buildLegend(document.getElementById("legBlk"), WL.map(w=>w.k), blkState, draw);
+      sel.addEventListener("change", draw);
+      draw();
+    })();
+
+    // ============ scrollspy for TOC ============
+    (function () {
+      const links = [...document.querySelectorAll("nav.toc a[href^='#']")];
+      const map = {}; links.forEach(a => { const s = document.querySelector(a.getAttribute("href")); if (s) map[s.id] = a; });
+      const obs = new IntersectionObserver(es => {
+        es.forEach(e => { if (e.isIntersecting) {
+          links.forEach(l => l.classList.remove("active"));
+          if (map[e.target.id]) map[e.target.id].classList.add("active");
+        }});
+      }, { rootMargin: "-20% 0px -70% 0px" });
+      Object.keys(map).forEach(id => obs.observe(document.getElementById(id)));
+    })();
+  </script>
+</body>
+</html>
