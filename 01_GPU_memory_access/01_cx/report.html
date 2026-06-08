@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Weight and KV Cache Access Experiments</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --paper: #ffffff;
+      --ink: #172033;
+      --muted: #5d6a7f;
+      --line: #d8e0ec;
+      --blue: #1f6feb;
+      --green: #178a5b;
+      --amber: #aa6b00;
+      --red: #b42318;
+      --violet: #6f42c1;
+      --cyan: #087990;
+      --soft-blue: #eaf2ff;
+      --soft-green: #eaf8f1;
+      --soft-amber: #fff4dc;
+      --soft-red: #fdebea;
+      --shadow: 0 18px 48px rgba(23, 32, 51, 0.1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--blue);
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .topbar a {
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .hero {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 30px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--blue);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 940px;
+      margin: 0;
+      font-size: clamp(2rem, 4.4vw, 4.1rem);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 840px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .metric {
+      min-height: 128px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #fbfcff;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 1.8rem;
+      line-height: 1.1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    main {
+      display: grid;
+      gap: 22px;
+      margin-top: 22px;
+    }
+
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 8px 28px rgba(23, 32, 51, 0.06);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 1.45rem;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 1.08rem;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    .section-note {
+      color: var(--muted);
+      max-width: 880px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      background: #fff;
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 0.94rem;
+    }
+
+    th {
+      color: #26344a;
+      background: #f6f8fb;
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #f0f3f8;
+      font-size: 0.88em;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .ok {
+      color: var(--green);
+      background: var(--soft-green);
+    }
+
+    .warn {
+      color: var(--amber);
+      background: var(--soft-amber);
+    }
+
+    .bad {
+      color: var(--red);
+      background: var(--soft-red);
+    }
+
+    .neutral {
+      color: var(--blue);
+      background: var(--soft-blue);
+    }
+
+    .layout-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 14px 0 16px;
+    }
+
+    button {
+      min-height: 38px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: #fff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button[aria-pressed="true"] {
+      color: #fff;
+      border-color: var(--blue);
+      background: var(--blue);
+    }
+
+    .chart-shell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcff;
+      padding: 16px;
+    }
+
+    .chart-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      min-height: 280px;
+      overflow: visible;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr) 58px;
+      gap: 10px;
+      align-items: center;
+      margin: 12px 0;
+      font-size: 0.92rem;
+    }
+
+    .bar-track {
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #e8edf5;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), var(--green));
+    }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(80px, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .verdict div {
+      border-radius: 6px;
+      padding: 10px;
+      background: #f6f8fb;
+      font-size: 0.86rem;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .verdict .yes {
+      color: var(--green);
+      background: var(--soft-green);
+    }
+
+    .verdict .maybe {
+      color: var(--amber);
+      background: var(--soft-amber);
+    }
+
+    .verdict .weak {
+      color: var(--red);
+      background: var(--soft-red);
+    }
+
+    .kernel-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .kernel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcff;
+    }
+
+    .kernel strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .kernel p {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .footnote {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 900px) {
+      .summary-grid,
+      .layout-2,
+      .kernel-list {
+        grid-template-columns: 1fr;
+      }
+
+      .verdict {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <nav class="topbar" aria-label="Page navigation">
+      <a href="../../index.html">Report Archive</a>
+      <span>GPU memory access / 01_cx</span>
+    </nav>
+
+    <header class="hero">
+      <p class="eyebrow">Summary</p>
+      <h1>Measured LLM Weight and KV Cache Memory Access</h1>
+      <p class="subtitle">
+        I traced real CUDA memory accesses, attributed addresses back to tensor
+        ranges, and measured whether neighboring sectors and tiles are touched
+        soon enough to justify large-block streaming decompression.
+      </p>
+
+      <div class="summary-grid" aria-label="Summary metrics">
+        <div class="metric">
+          <b>5,000</b>
+          <span>weight-kernel NVBit records from the targeted GPT-2 GEMV grid</span>
+        </div>
+        <div class="metric">
+          <b>24,000</b>
+          <span>FMHA lane-level addresses attributed to KV-cache tensors</span>
+        </div>
+        <div class="metric">
+          <b>0.991</b>
+          <span>mean 4KB tile coverage for KV-cache FMHA reads</span>
+        </div>
+        <div class="metric">
+          <b>1KB / 8KB</b>
+          <span>recommended starting blocks: weights / KV cache</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section aria-labelledby="verdict-heading">
+        <h2 id="verdict-heading">Verdict First</h2>
+        <p class="section-note">
+          The traceable HF/PyTorch path gives a clear answer: weight accesses are
+          stream-like at cache-line and 1KB tile scale, while KV cache is the
+          stronger large-block candidate. llama.cpp and TensorRT-LLM ran
+          inference, but their production paths did not yield usable NVBit
+          records in this environment.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Classification</th>
+                <th>Strongest Evidence</th>
+                <th>Compression Read</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Weights</td>
+                <td><span class="pill ok">streaming to 1KB</span></td>
+                <td>P(+1) at 128B = 0.959; 1KB tile coverage mean = 0.767</td>
+                <td>Use 1KB blocks first; 4KB+ needs sub-block fallback.</td>
+              </tr>
+              <tr>
+                <td>KV cache</td>
+                <td><span class="pill ok">streaming to 8KB</span></td>
+                <td>FMHA P(+1) at 4KB = 0.968; 4KB tile coverage mean = 0.991</td>
+                <td>4KB-8KB streaming decompression is plausible.</td>
+              </tr>
+              <tr>
+                <td>llama.cpp CUDA</td>
+                <td><span class="pill warn">inference only</span></td>
+                <td>Qwen GGUF single-turn run passed on RTX 5080.</td>
+                <td>NVBit child-preload stalled; no access verdict claimed.</td>
+              </tr>
+              <tr>
+                <td>TensorRT-LLM</td>
+                <td><span class="pill warn">inference only</span></td>
+                <td>Qwen Ray/no-MPI run passed and allocated paged KV cache.</td>
+                <td>Ray worker emitted no MEMTRACE records; no access verdict claimed.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="interactive-heading">
+        <h2 id="interactive-heading">Interactive Result Explorer</h2>
+        <p class="section-note">
+          Choose a traced target. The line chart shows stream probability across
+          memory granularities; the bars show how much of each tile size was
+          actually touched.
+        </p>
+
+        <div class="control-row" aria-label="Dataset controls">
+          <button type="button" data-target="weight" aria-pressed="true">Weight GEMV</button>
+          <button type="button" data-target="kvFmha" aria-pressed="false">KV FMHA</button>
+          <button type="button" data-target="kvCopy" aria-pressed="false">KV Copy</button>
+        </div>
+
+        <div class="layout-2">
+          <div class="chart-shell">
+            <div class="chart-title">
+              <strong id="chart-name">Weight GEMV</strong>
+              <span>P(line i+N touched | line i touched)</span>
+            </div>
+            <svg id="stream-chart" viewBox="0 0 760 330" role="img" aria-label="Stream probability chart"></svg>
+          </div>
+          <div class="chart-shell">
+            <div class="chart-title">
+              <strong>Tile Coverage</strong>
+              <span>mean fraction of 32B sectors touched</span>
+            </div>
+            <div id="tile-bars"></div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="method-heading">
+        <h2 id="method-heading">Methodology</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Phase</th>
+                <th>Implementation</th>
+                <th>Output</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Tensor range capture</td>
+                <td>For HF/PyTorch, recorded CUDA tensor base address, end address, size, shape, stride, dtype, phase, and category.</td>
+                <td><code>ranges.jsonl</code> with 148 weight ranges and 48 KV-cache ranges.</td>
+              </tr>
+              <tr>
+                <td>Memory tracing</td>
+                <td>Used the repo NVBit filtered memory trace tool with targeted grid IDs and kernel regex filters.</td>
+                <td><code>trace.bin</code>, <code>launches.csv</code>, and raw <code>memtrace.txt</code>.</td>
+              </tr>
+              <tr>
+                <td>Address attribution</td>
+                <td>Mapped every nonzero traced address into recorded tensor ranges.</td>
+                <td>Per-category CSVs such as <code>weight_accesses.csv</code> and <code>kv_cache_accesses.csv</code>.</td>
+              </tr>
+              <tr>
+                <td>Stream analysis</td>
+                <td>Computed P(+N), consecutive runs, tile coverage, reuse distance, and stream-window neighbors.</td>
+                <td><code>summary.csv</code> and <code>guide_metrics.json</code> for each run.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="kernel-heading">
+        <h2 id="kernel-heading">Target Kernels</h2>
+        <p class="section-note">
+          I did not trace every launch indiscriminately. The useful records came
+          from kernels that directly model weight matrix-vector reads and KV
+          cache update/attention reads.
+        </p>
+        <div class="kernel-list">
+          <div class="kernel">
+            <strong>Weight GEMV</strong>
+            <p><code>internal::gemvx::kernel</code>, grid 527, GPT-2 decode. This is the weight-stream evidence used for the recommendation.</p>
+          </div>
+          <div class="kernel">
+            <strong>KV Copy/Update</strong>
+            <p><code>CatArrayBatchedCopy_alignedK_contig</code>, grid 530. This captures KV-cache growth/update behavior.</p>
+          </div>
+          <div class="kernel">
+            <strong>KV Attention Read</strong>
+            <p><code>fmha_cutlassF_f32_aligned_64x64_rf_sm80</code>, grid 532. This captures attention-side KV reads.</p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="env-heading">
+        <h2 id="env-heading">Experiment Environment</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Value</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>GPU</td>
+                <td>NVIDIA GeForce RTX 5080, 16GB class</td>
+                <td>Driver 590.48.01; <code>nvidia-smi</code> reported CUDA 13.1.</td>
+              </tr>
+              <tr>
+                <td>Primary runtime</td>
+                <td>PyTorch 2.9.1 CUDA environment</td>
+                <td>HF/PyTorch path was used for the conclusive address attribution.</td>
+              </tr>
+              <tr>
+                <td>Trace tool</td>
+                <td>NVBit filtered memory trace</td>
+                <td>Captured lane-level load/store addresses, grid IDs, CTA, warp, and opcode.</td>
+              </tr>
+              <tr>
+                <td>llama.cpp</td>
+                <td>Commit <code>1705d43</code>, CUDA backend, CUDA 13.0 runtime</td>
+                <td>CUDA device detected and inference completed; tracing stalled after child preload.</td>
+              </tr>
+              <tr>
+                <td>TensorRT-LLM</td>
+                <td>TensorRT-LLM 1.2.1, TensorRT 10.14.1.48.post1</td>
+                <td>Ray/no-MPI Qwen run completed; worker trace did not emit MEMTRACE records.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="detailed-heading">
+        <h2 id="detailed-heading">Detailed Tables</h2>
+        <div class="table-wrap">
+          <table id="detail-table">
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Granularity</th>
+                <th>P(+1)</th>
+                <th>P(+2)</th>
+                <th>P(+8)</th>
+                <th>P(+32)</th>
+                <th>Mean Run</th>
+                <th>Window 100</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="blocks-heading">
+        <h2 id="blocks-heading">Compression Block Recommendation</h2>
+        <p class="section-note">
+          The recommendation is conservative: it considers both stream
+          probability and tile coverage, not only whether adjacent cache lines
+          eventually appear.
+        </p>
+
+        <h3>Weights</h3>
+        <div class="verdict" aria-label="Weight block recommendation">
+          <div class="yes">128B yes</div>
+          <div class="yes">256B yes</div>
+          <div class="yes">512B yes</div>
+          <div class="yes">1KB yes</div>
+          <div class="maybe">2KB maybe</div>
+          <div class="maybe">4KB mixed</div>
+          <div class="weak">8KB weak</div>
+          <div class="weak">16KB weak</div>
+        </div>
+
+        <h3>KV Cache</h3>
+        <div class="verdict" aria-label="KV cache block recommendation">
+          <div class="yes">128B yes</div>
+          <div class="yes">256B yes</div>
+          <div class="yes">512B yes</div>
+          <div class="yes">1KB yes</div>
+          <div class="yes">2KB yes</div>
+          <div class="yes">4KB yes</div>
+          <div class="yes">8KB yes</div>
+          <div class="maybe">16KB maybe</div>
+        </div>
+      </section>
+
+      <section aria-labelledby="limitations-heading">
+        <h2 id="limitations-heading">Limits and Next Experiments</h2>
+        <p>
+          The production backends matter, but they need a different tracing
+          strategy. llama.cpp under direct NVBit child preload stalled during
+          CUDA/model initialization. TensorRT-LLM ran through Ray and emitted no
+          MEMTRACE records from the worker. The next step is either a CUPTI
+          activity path, an NVBit attach strategy that starts at selected kernels
+          after context initialization, or backend-native instrumentation around
+          KV page/block managers.
+        </p>
+        <p class="footnote">
+          Local source artifacts were generated under
+          <code>/home/yanggon/08_GPU_memory_access/runs</code> and summarized in
+          <code>00_dic/02_report/guide_experiment_results.md</code>.
+        </p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const datasets = {
+      weight: {
+        label: "Weight GEMV",
+        color: "#1f6feb",
+        stream: [
+          { g: 32, p1: 0.959, p2: 0.949, p8: 0.915, p32: 0.778, run: 1.00, win: 0.49 },
+          { g: 64, p1: 0.962, p2: 0.949, p8: 0.879, p32: 0.599, run: 1.00, win: 0.81 },
+          { g: 128, p1: 0.959, p2: 0.934, p8: 0.799, p32: 0.277, run: 1.00, win: 1.22 },
+          { g: 1024, p1: 0.810, p2: 0.648, p8: 0.743, p32: 0.295, run: 1.00, win: 1.14 },
+          { g: 4096, p1: 0.950, p2: 0.900, p8: 0.600, p32: 0.000, run: 1.00, win: 0.59 },
+          { g: 8192, p1: 0.900, p2: 0.800, p8: 0.200, p32: 0.469, run: 1.00, win: 2.45 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.767 },
+          { g: "4KB", v: 0.503 },
+          { g: "8KB", v: 0.503 },
+          { g: "16KB", v: 0.458 }
+        ]
+      },
+      kvFmha: {
+        label: "KV FMHA",
+        color: "#178a5b",
+        stream: [
+          { g: 32, p1: 1.000, p2: 0.999, p8: 0.998, p32: 0.992, run: 1.60, win: 5.62 },
+          { g: 64, p1: 0.999, p2: 0.999, p8: 0.996, p32: 0.984, run: 1.14, win: 2.82 },
+          { g: 128, p1: 0.999, p2: 0.998, p8: 0.992, p32: 0.967, run: 1.00, win: 2.42 },
+          { g: 1024, p1: 0.992, p2: 0.984, p8: 0.935, p32: 0.790, run: 1.01, win: 3.81 },
+          { g: 4096, p1: 0.968, p2: 0.935, p8: 0.790, p32: 0.484, run: 1.04, win: 5.08 },
+          { g: 8192, p1: 0.938, p2: 0.875, p8: 0.688, p32: 0.062, run: 1.02, win: 3.75 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.991 },
+          { g: "4KB", v: 0.991 },
+          { g: "8KB", v: 0.960 },
+          { g: "16KB", v: 0.903 }
+        ]
+      },
+      kvCopy: {
+        label: "KV Copy",
+        color: "#087990",
+        stream: [
+          { g: 32, p1: 0.999, p2: 0.999, p8: 0.995, p32: 0.980, run: 1.88, win: 9.99 },
+          { g: 64, p1: 0.999, p2: 0.997, p8: 0.990, p32: 0.960, run: 1.28, win: 6.00 },
+          { g: 128, p1: 0.997, p2: 0.995, p8: 0.980, p32: 0.919, run: 1.10, win: 3.73 },
+          { g: 1024, p1: 0.980, p2: 0.960, p8: 0.840, p32: 0.360, run: 1.01, win: 3.28 },
+          { g: 4096, p1: 0.920, p2: 0.840, p8: 0.360, p32: 0.000, run: 1.01, win: 2.70 },
+          { g: 8192, p1: 0.846, p2: 0.692, p8: 0.000, p32: 0.000, run: 1.01, win: 2.10 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.990 },
+          { g: "4KB", v: 0.990 },
+          { g: "8KB", v: 0.952 },
+          { g: "16KB", v: 0.884 }
+        ]
+      }
+    };
+
+    const svg = document.getElementById("stream-chart");
+    const bars = document.getElementById("tile-bars");
+    const chartName = document.getElementById("chart-name");
+    const tableBody = document.querySelector("#detail-table tbody");
+    const buttons = Array.from(document.querySelectorAll("[data-target]"));
+
+    function pct(value) {
+      return value.toFixed(3);
+    }
+
+    function xFor(index) {
+      return 68 + index * 124;
+    }
+
+    function yFor(value) {
+      return 270 - value * 220;
+    }
+
+    function renderChart(key) {
+      const data = datasets[key];
+      const rows = data.stream;
+      const points = rows.map((row, index) => `${xFor(index)},${yFor(row.p1)}`).join(" ");
+      const p8Points = rows.map((row, index) => `${xFor(index)},${yFor(row.p8)}`).join(" ");
+      const p32Points = rows.map((row, index) => `${xFor(index)},${yFor(row.p32)}`).join(" ");
+      const xLabels = rows.map((row, index) => `
+        <text x="${xFor(index)}" y="304" text-anchor="middle" fill="#5d6a7f" font-size="13">${row.g}B</text>
+      `).join("");
+      const markers = rows.map((row, index) => `
+        <circle cx="${xFor(index)}" cy="${yFor(row.p1)}" r="5" fill="${data.color}"></circle>
+        <text x="${xFor(index)}" y="${yFor(row.p1) - 12}" text-anchor="middle" fill="#172033" font-size="12">${pct(row.p1)}</text>
+      `).join("");
+      svg.innerHTML = `
+        <line x1="58" y1="270" x2="710" y2="270" stroke="#cfd8e6"></line>
+        <line x1="58" y1="50" x2="58" y2="270" stroke="#cfd8e6"></line>
+        <line x1="58" y1="50" x2="710" y2="50" stroke="#e1e7f0"></line>
+        <line x1="58" y1="160" x2="710" y2="160" stroke="#e1e7f0"></line>
+        <text x="18" y="55" fill="#5d6a7f" font-size="13">1.0</text>
+        <text x="18" y="165" fill="#5d6a7f" font-size="13">0.5</text>
+        <text x="24" y="274" fill="#5d6a7f" font-size="13">0</text>
+        <polyline points="${p32Points}" fill="none" stroke="#aa6b00" stroke-width="2" stroke-dasharray="4 6"></polyline>
+        <polyline points="${p8Points}" fill="none" stroke="#6f42c1" stroke-width="2"></polyline>
+        <polyline points="${points}" fill="none" stroke="${data.color}" stroke-width="4" stroke-linejoin="round"></polyline>
+        ${markers}
+        ${xLabels}
+        <text x="585" y="72" fill="${data.color}" font-size="13">P(+1)</text>
+        <text x="585" y="94" fill="#6f42c1" font-size="13">P(+8)</text>
+        <text x="585" y="116" fill="#aa6b00" font-size="13">P(+32)</text>
+      `;
+      chartName.textContent = data.label;
+    }
+
+    function renderBars(key) {
+      const data = datasets[key];
+      bars.innerHTML = data.tiles.map((tile) => `
+        <div class="bar-row">
+          <strong>${tile.g}</strong>
+          <div class="bar-track" aria-hidden="true">
+            <div class="bar-fill" style="width: ${Math.round(tile.v * 100)}%"></div>
+          </div>
+          <span>${Math.round(tile.v * 100)}%</span>
+        </div>
+      `).join("");
+    }
+
+    function renderTable() {
+      const rows = Object.values(datasets).flatMap((dataset) =>
+        dataset.stream.map((row) => ({ dataset: dataset.label, ...row }))
+      );
+      tableBody.innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.dataset}</td>
+          <td>${row.g}B</td>
+          <td>${pct(row.p1)}</td>
+          <td>${pct(row.p2)}</td>
+          <td>${pct(row.p8)}</td>
+          <td>${pct(row.p32)}</td>
+          <td>${row.run.toFixed(2)}</td>
+          <td>${row.win.toFixed(2)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function selectDataset(key) {
+      buttons.forEach((button) => {
+        button.setAttribute("aria-pressed", button.dataset.target === key ? "true" : "false");
+      });
+      renderChart(key);
+      renderBars(key);
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => selectDataset(button.dataset.target));
+    });
+
+    renderTable();
+    selectDataset("weight");
+  </script>
+</body>
+</html>

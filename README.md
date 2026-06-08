@@ -19,6 +19,9 @@ from the published site.
 - `01_GPU_memory_access/00_cc/report.html`: interactive report on whether LLM
   weights and KV cache are accessed as contiguous tile streams (RTX 5080).
 - `01_GPU_memory_access/00_cc/assets/`: figures for the stream report.
+- `01_GPU_memory_access/01_cx/report.html`: experiment-driven report from live
+  NVBit traces, including methodology, target kernels, environment, results,
+  and backend notes for llama.cpp and TensorRT-LLM.
 
 ## Editing Rules
 
