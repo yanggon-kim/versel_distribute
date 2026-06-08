@@ -280,6 +280,37 @@
           <div class="step"><b>Attribute by range</b><span>Each address &rarr; weight / KV / other. The real <code>fmha</code> kernel reads KV; <code>cutlass</code>/<code>gemvx</code> read weights.</span></div>
           <div class="step"><b>Stream metrics</b><span>Per role: line/sector/tile IDs &rarr; run length, P(i+N), tile coverage, reuse distance at 32 B…8 KB.</span></div>
         </div>
+
+        <h3>What a <code>mem_trace</code> line actually looks like</h3>
+        <p class="lead">NVBit's <code>mem_trace</code> instruments every global memory SASS instruction and prints
+          one line per <strong>warp-instruction</strong>. Real output from a tiny kernel
+          (<code>c[i]=a[i]+b[i]</code>, 1024 floats), addresses abbreviated:</p>
+        <pre class="cmd"><span class="c"># LD_PRELOAD=…/mem_trace.so  CUDA_MODULE_LOADING=EAGER  ./small_workloads seq</span>
+
+<span class="c"># (1) one LAUNCH line per kernel — the metadata</span>
+MEMTRACE: … LAUNCH - Kernel name <b>seq_add(const float*, const float*, float*, int)</b>
+          - grid launch id 0 - grid size 8,1,1 - block size 128,1,1 …
+
+<span class="c"># (2) one record per warp-instruction — the actual access (32 lane addresses)</span>
+MEMTRACE: … grid_launch_id 0 - <b>CTA 6,0,0</b> - <b>warp 2</b> - <b>LDG.E</b> -
+  0x…d00  0x…d04  0x…d08  0x…d0c  …  <span class="c">(32 lanes, +4 B each)</span>  …  0x…d7c</pre>
+        <p class="lead">Each record carries: the <strong>kernel/launch id</strong>, the issuing <strong>CTA + warp</strong>,
+          the <strong>opcode</strong> (<code>LDG</code>=load, <code>STG</code>=store), and the <strong>32 byte
+          addresses</strong> its lanes touched (pre-coalescer; 0 if a lane is idle). That is the whole atom — and the
+          records appear <em>in issue order</em>, so a given warp's records are its program order.</p>
+
+        <h3>How the same record feeds both questions</h3>
+        <div class="steps" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+          <div class="step"><b>Within one record → coalescing</b><span>The 32 lane addresses above step by <code>+4 B</code>
+            (consecutive float32s) — a coalesced, spatially-adjacent access inside one instruction.</span></div>
+          <div class="step"><b>All records as a SET → spatial</b><span>Collapse every address to a line id
+            (<code>addr &gt;&gt; 7</code>) and take the unique set. P(i+N), run length, tile coverage ask
+            "is the footprint one contiguous block?" — <em>order-independent</em> (§1a).</span></div>
+          <div class="step"><b>Records in ORDER, per warp → temporal</b><span>Group by <code>(CTA, warp)</code> (= that
+            warp's program order) and look at the stride to the <em>next</em> record. "Is access i+1 adjacent to i?"
+            — this gave the longest-march proof (§1b).</span></div>
+        </div>
+
         <ul class="notes">
           <li><strong>Granularity IDs:</strong> <code>line_id = addr &gt;&gt; k</code>, k = 5/6/7/10/12/13 for 32B/64B/128B/1KB/4KB/8KB.</li>
           <li><strong>Run length</strong> = longest contiguous span of touched line IDs (are blocks fully populated?).</li>
