@@ -104,7 +104,8 @@
   <div class="wrap">
     <nav class="toc" id="toc">
       <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
-      <a href="#summary">Summary</a>
+      <a href="#summary">Summary — spatial vs temporal</a>
+      <a href="#temporal">Temporal access order</a>
       <a href="#method">How it was traced</a>
       <a href="#explorer">Interactive explorer</a>
       <a href="#workloads">Per-tensor detail</a>
@@ -129,26 +130,35 @@
       <!-- SUMMARY -->
       <section class="card" id="summary">
         <h2><span class="num">§1</span>Summary</h2>
-        <p class="lead">The question: <em>when a cache line of a weight tensor or the KV cache is touched, how
-          likely is a neighboring line to be touched too?</em> — i.e. do these tensors stream (large contiguous,
-          fully-used blocks) or random-access? Decides whether large-block, high-ratio, pipelined HBM
-          decompression is worthwhile.</p>
+        <p class="lead">"Stream access" can mean two different things, and they must be measured separately:</p>
+        <ul class="notes" style="margin:0 0 14px">
+          <li><strong>Spatial — "physically nearby".</strong> Are the touched addresses a contiguous, fully-used
+            block of memory? (If line L is touched, is L+1 touched <em>at all</em>, anywhere in the kernel?)</li>
+          <li><strong>Temporal — "temporally adjacent".</strong> Does one access come <em>right after</em> another
+            to an adjacent address — a sequential stream you could prefetch linearly? (Is access i+1 next to access i?)</li>
+        </ul>
 
-        <p><span class="pill stream big">&#10003; On the real process: weights and KV cache both STREAM</span></p>
+        <p><span class="pill stream big">&#10003; Spatially: weights &amp; KV are contiguous blocks</span>
+          &nbsp; <span class="pill" style="background:#fff4e6;color:#b54708;font-weight:800">~ Temporally: KV is
+          sequential, weights are tiled</span></p>
 
         <div class="headline" id="kpis"></div>
 
         <div class="callout win">
-          <strong>So what?</strong> Classic cache-line compressors (BDI, FPC, C-Pack) assume random,
-          latency-sensitive access. The live trace shows the opposite — fully contiguous, fully-block-covered,
-          streamed once per token, latency-amortizable. Ideal for <strong>large-block, high-ratio, pipelined
-          decompression in an HBM logic die</strong>. Recommended block: <strong>8–16 KB weights, 4 KB KV</strong>.
+          <strong>So what?</strong> The two senses answer two different design questions.
+          <strong>Spatial contiguity</strong> (universal here) decides <strong>block-compressibility</strong> —
+          classic cache-line compressors (BDI, FPC, C-Pack) assume random access; this traffic is the opposite, so
+          large-block, high-ratio compression works (recommend <strong>8–16 KB weights, 4 KB KV</strong>).
+          <strong>Temporal adjacency</strong> (KV yes, weights no) decides <strong>prefetch / streaming-decompression
+          order</strong>: a KV decompressor can run as one linear stream, but a weight decompressor must follow the
+          matmul's <em>tiled</em> traversal, not a linear sweep (§1b).
         </div>
 
-        <h3>Random-vs-Streaming verdict matrix (real tensors)</h3>
-        <p class="lead">Hover any cell for the underlying numbers.
-          <span class="pill stream">Streaming</span> = P(i+1)&nbsp;&ge;&nbsp;0.5 <em>and</em> median contiguous
-          run &ge; 4 lines.</p>
+        <h3>§1a — Spatial: physically-nearby footprint (verdict matrix)</h3>
+        <p class="lead">This is the <strong>spatial</strong> question. Every metric here — P(i+N), run length, tile
+          coverage — is computed on the <em>set</em> of touched addresses, so it measures footprint contiguity, not
+          access order. Hover any cell for the numbers. <span class="pill stream">Streaming</span> =
+          P(i+1)&nbsp;&ge;&nbsp;0.5 <em>and</em> median contiguous run &ge; 4 lines.</p>
         <div style="overflow-x:auto"><table class="matrix" id="matrix"></table></div>
         <p class="lead" style="margin-top:12px"><strong>Paged KV is the one nuance.</strong> vLLM's real paged
           KV (last row) streams cleanly within each 4 KB physical block (Streaming at 32 B–1 KB, coverage 1.0 to
@@ -160,6 +170,34 @@
           16 GB RTX 5080. Its MoE expert GEMMs read the packed 4-bit weight matrices contiguously (P(i+1)=1.0,
           coverage ≈1.0 to 16 KB), exactly like the dense bf16/fp32 models. Streaming is not an artifact of small
           dense models.</p>
+
+        <h3 id="temporal">§1b — Temporal: temporally-adjacent access order</h3>
+        <p class="lead">The matrix above says the footprint is contiguous. It does <strong>not</strong> say the bytes
+          are read one-right-after-another in address order. That is the <strong>temporal</strong> question, measured
+          on the access <em>order</em> — the per-warp stride between consecutive memory instructions (how far the
+          <em>next</em> access is from the current one). Here the answer splits by access pattern:</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Access pattern (real kernel)</th><th class="num">median step between<br>consecutive accesses</th>
+              <th class="num">% consecutive accesses<br>within 4 KB (local)</th><th>Temporal verdict</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlabel">KV cache — contiguous attention sweep</td><td class="num">+256 B (forward)</td>
+                <td class="num">89%</td><td><span class="pill stream">Sequential</span> — one access right after the next</td></tr>
+              <tr><td class="rowlabel">KV cache — paged (vLLM)</td><td class="num">+256 B / block jumps</td>
+                <td class="num">55%</td><td>Sequential within a block, jumps across blocks</td></tr>
+              <tr><td class="rowlabel">Weights — prefill matmul (CUTLASS GEMM, real gpt-oss q_proj)</td><td class="num">1152 B (tile stride)</td>
+                <td class="num">69%</td><td><span class="pill random">Tiled</span> — tile-by-tile, column-strided, not linear</td></tr>
+              <tr><td class="rowlabel">Weights — decode matmul (batch-1 GEMV)</td><td class="num">&gt; 1 MB (97% of steps)</td>
+                <td class="num">3%</td><td><span class="pill random">Scattered in time</span> — warps stride across rows</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lead" style="margin-top:10px"><strong>The division:</strong> the <strong>KV cache is both</strong>
+          physically nearby <em>and</em> temporally adjacent — a genuine sequential stream. <strong>Weights are
+          physically nearby but NOT temporally adjacent</strong> — the matmul sweeps a contiguous matrix in tiled /
+          column order (verified on the real gpt-oss <code>q_proj</code> CUTLASS kernel: consecutive accesses step by
+          1×/2×/16× the 5760 B row pitch, never a clean +1). So "stream" in the temporal sense holds for the KV cache,
+          but for weights it is a contiguous footprint traversed in tile order, not a linear stream.</p>
       </section>
 
       <!-- METHOD -->
@@ -183,11 +221,11 @@
         </ul>
 
         <div class="callout">
-          <strong>Footprint vs. access order — a clarification.</strong> The "Streaming" verdict here is about the
-          <em>footprint</em>: is a tensor a contiguous, fully-used block of memory? That is what decides
-          block-compressibility, and it is what the metrics above measure. It is <em>not</em> a claim that a
-          kernel reads the bytes in strict linear order. A weight can be <strong>contiguous in storage yet read
-          in tiled / column order</strong> by the matmul.
+          <strong>Why these metrics are the <em>spatial</em> (§1a) measure.</strong> <code>P(i+N)</code>,
+          run length, and tile coverage are all computed on the <em>set</em> of touched addresses (sorted unique),
+          so they answer "is the footprint contiguous?" — not "are accesses temporally adjacent?" (that is the
+          per-warp access-order metric behind <a href="#temporal">§1b</a>). A weight can be
+          <strong>contiguous in storage yet read in tiled / column order</strong> by the matmul.
           <br><br>
           We verified this on a real <strong>gpt-oss-20b dense weight</strong> (the <code>q_proj</code> Linear,
           <code>[4096, 2880]</code> bf16). It is stored fully contiguous (<code>stride = (2880, 1)</code>,
