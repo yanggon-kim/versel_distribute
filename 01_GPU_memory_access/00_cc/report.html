@@ -105,7 +105,6 @@
     <nav class="toc" id="toc">
       <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
       <a href="#summary">Summary</a>
-      <a href="#locality">Physical vs temporal</a>
       <a href="#method">How it was traced</a>
       <a href="#explorer">Interactive explorer</a>
       <a href="#workloads">Per-tensor detail</a>
@@ -161,70 +160,6 @@
           16 GB RTX 5080. Its MoE expert GEMMs read the packed 4-bit weight matrices contiguously (P(i+1)=1.0,
           coverage ≈1.0 to 16 KB), exactly like the dense bf16/fp32 models. Streaming is not an artifact of small
           dense models.</p>
-      </section>
-
-      <section class="card" id="locality">
-        <h2><span class="num">§1b</span>Physical vs temporal locality</h2>
-        <p class="lead">For compression, "streaming" must mean two things at the same time:
-          <strong>physically nearby</strong> addresses inside the same fetched/decompressed block, and
-          <strong>temporally adjacent</strong> touches in the live access order. This report separates them:
-          tile coverage is the physical-nearby check; P(i+N) and run length are the temporal-order check.</p>
-        <div style="overflow-x:auto">
-          <table>
-            <thead>
-              <tr>
-                <th>Workload</th>
-                <th>Physically nearby?</th>
-                <th>Temporally adjacent?</th>
-                <th>Both-condition read</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="rowlabel">GPT-2 weights</td>
-                <td><span class="pill stream">Yes</span> Coverage is ≈1.0 through 16 KB.</td>
-                <td><span class="pill stream">Yes</span> P(i+1) is ≈1.0 from 32 B through 8 KB.</td>
-                <td>Both conditions hold for large weight blocks.</td>
-              </tr>
-              <tr>
-                <td class="rowlabel">GPT-2 KV cache</td>
-                <td><span class="pill stream">Yes</span> Coverage remains high through 16 KB.</td>
-                <td><span class="pill stream">Yes</span> P(i+1) remains high through 8 KB.</td>
-                <td>Both conditions hold; 4 KB is the conservative KV block size.</td>
-              </tr>
-              <tr>
-                <td class="rowlabel">Qwen2.5 weights</td>
-                <td><span class="pill stream">Yes</span> Coverage is ≈1.0 through 16 KB in this live trace.</td>
-                <td><span class="pill stream">Yes</span> P(i+1) is ≈1.0 from 32 B through 8 KB.</td>
-                <td>Both conditions hold for the traced full-weight sweep.</td>
-              </tr>
-              <tr>
-                <td class="rowlabel">Qwen2.5 KV cache</td>
-                <td><span class="pill stream">Mostly</span> 1 KB coverage is 0.983; coarse tiles are affected by short context.</td>
-                <td><span class="pill stream">Yes at fine scale</span> Strong from 32 B through 1 KB; coarse tiles are small-footprint artifacts.</td>
-                <td>Both conditions hold at 32 B-1 KB; avoid overreading coarse Qwen KV tiles from the short-context run.</td>
-              </tr>
-              <tr>
-                <td class="rowlabel">vLLM paged KV</td>
-                <td><span class="pill stream">Page-local</span> Coverage is 1.0 through the 4 KB page/block size.</td>
-                <td><span class="pill stream">Page-local</span> Temporal adjacency is strong through 1 KB, then jumps at page boundaries.</td>
-                <td>Both conditions hold inside a 4 KB paged block, not across scattered pages.</td>
-              </tr>
-              <tr>
-                <td class="rowlabel">gpt-oss-20b weights</td>
-                <td><span class="pill stream">Yes</span> Reported coverage is ≈1.0 through 16 KB.</td>
-                <td><span class="pill stream">Yes</span> P(i+1) is near 1.0 through 8 KB.</td>
-                <td>Both conditions hold for the live-trace row in this report.</td>
-              </tr>
-              <tr>
-                <td class="rowlabel">gpt-oss-20b KV cache</td>
-                <td><span class="pill stream">Mostly</span> Coverage is 0.966 at 1 KB and 0.843 at 8 KB.</td>
-                <td><span class="pill stream">Yes</span> P(i+1) is 0.967 at 1 KB and 0.947 at 8 KB.</td>
-                <td>Both conditions hold through 8 KB, with less complete coarse-tile coverage than dense KV.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
       </section>
 
       <!-- METHOD -->
