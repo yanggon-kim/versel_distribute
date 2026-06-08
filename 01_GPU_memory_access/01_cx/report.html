@@ -420,9 +420,8 @@
         <p class="section-note">
           The traceable HF/PyTorch path gives a clear answer: weight accesses are
           stream-like at cache-line and 1KB tile scale, while KV cache is the
-          stronger large-block candidate. llama.cpp and TensorRT-LLM ran
-          inference, but their production paths did not yield usable NVBit
-          records in this environment.
+          stronger large-block candidate. The report below focuses only on
+          runs that produced attributable live memory-access records.
         </p>
 
         <div class="table-wrap">
@@ -447,18 +446,6 @@
                 <td><span class="pill ok">streaming to 8KB</span></td>
                 <td>FMHA P(+1) at 4KB = 0.968; 4KB tile coverage mean = 0.991</td>
                 <td>4KB-8KB streaming decompression is plausible.</td>
-              </tr>
-              <tr>
-                <td>llama.cpp CUDA</td>
-                <td><span class="pill warn">inference only</span></td>
-                <td>Qwen GGUF single-turn run passed on RTX 5080.</td>
-                <td>NVBit child-preload stalled; no access verdict claimed.</td>
-              </tr>
-              <tr>
-                <td>TensorRT-LLM</td>
-                <td><span class="pill warn">inference only</span></td>
-                <td>Qwen Ray/no-MPI run passed and allocated paged KV cache.</td>
-                <td>Ray worker emitted no MEMTRACE records; no access verdict claimed.</td>
               </tr>
             </tbody>
           </table>
@@ -584,16 +571,6 @@
                 <td>NVBit filtered memory trace</td>
                 <td>Captured lane-level load/store addresses, grid IDs, CTA, warp, and opcode.</td>
               </tr>
-              <tr>
-                <td>llama.cpp</td>
-                <td>Commit <code>1705d43</code>, CUDA backend, CUDA 13.0 runtime</td>
-                <td>CUDA device detected and inference completed; tracing stalled after child preload.</td>
-              </tr>
-              <tr>
-                <td>TensorRT-LLM</td>
-                <td>TensorRT-LLM 1.2.1, TensorRT 10.14.1.48.post1</td>
-                <td>Ray/no-MPI Qwen run completed; worker trace did not emit MEMTRACE records.</td>
-              </tr>
             </tbody>
           </table>
         </div>
@@ -656,13 +633,11 @@
       <section aria-labelledby="limitations-heading">
         <h2 id="limitations-heading">Limits and Next Experiments</h2>
         <p>
-          The production backends matter, but they need a different tracing
-          strategy. llama.cpp under direct NVBit child preload stalled during
-          CUDA/model initialization. TensorRT-LLM ran through Ray and emitted no
-          MEMTRACE records from the worker. The next step is either a CUPTI
-          activity path, an NVBit attach strategy that starts at selected kernels
-          after context initialization, or backend-native instrumentation around
-          KV page/block managers.
+          This page reports only the targeted kernels that produced live,
+          attributable NVBit records. Broader coverage should add longer
+          prompts, larger models, multiple decode lengths, and more attention
+          kernels so the block-size recommendation can be stress-tested across
+          layouts and batch sizes.
         </p>
         <p class="footnote">
           Local source artifacts were generated under
