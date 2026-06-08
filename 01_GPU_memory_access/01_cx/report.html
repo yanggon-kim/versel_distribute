@@ -63,6 +63,8 @@
     }
 
     .hero {
+      width: 100%;
+      min-width: 0;
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -126,9 +128,12 @@
       display: grid;
       gap: 22px;
       margin-top: 22px;
+      min-width: 0;
     }
 
     section {
+      width: 100%;
+      min-width: 0;
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -156,6 +161,9 @@
     }
 
     .table-wrap {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       overflow-x: auto;
       margin-top: 14px;
       border: 1px solid var(--line);
@@ -233,6 +241,7 @@
       grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr);
       gap: 18px;
       align-items: start;
+      min-width: 0;
     }
 
     .control-row {
@@ -261,6 +270,7 @@
     }
 
     .chart-shell {
+      min-width: 0;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fbfcff;
@@ -386,6 +396,9 @@
     }
 
     .code-box {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       margin-top: 14px;
       padding: 14px;
       overflow-x: auto;
