@@ -199,6 +199,34 @@
           column order (verified on the real gpt-oss <code>q_proj</code> CUTLASS kernel: consecutive accesses step by
           1×/2×/16× the 5760 B row pitch, never a clean +1). So "stream" in the temporal sense holds for the KV cache,
           but for weights it is a contiguous footprint traversed in tile order, not a linear stream.</p>
+
+        <h4 style="margin:18px 0 4px">Trace-order proof (accesses in the order they were issued)</h4>
+        <p class="lead">NVBit records each warp-instruction in issue order, so a warp's records <em>are</em> its
+          program order. Three checks on that order — the decisive one is the <strong>longest forward
+          "march"</strong>: how many consecutive memory instructions a warp issues that each step forward by the
+          <em>same</em> stride (an unbroken sequential run).</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Real kernel</th><th class="num">next step<br>≤256 B fwd</th><th class="num">modal<br>next-stride</th>
+              <th class="num">longest forward<br>march / warp</th><th class="num">per-warp window<br>contiguity</th><th>temporally adjacent?</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlabel">KV cache — contiguous sweep</td><td class="num">89%</td><td class="num">+256 B (83%)</td>
+                <td class="num"><strong>1023</strong></td><td class="num">0.22</td><td><span class="pill stream">Yes</span> — a full unbroken sweep</td></tr>
+              <tr><td class="rowlabel">KV cache — paged (vLLM)</td><td class="num">71%</td><td class="num">0 / 256 B</td>
+                <td class="num">3</td><td class="num">~0</td><td>within a block, then jumps</td></tr>
+              <tr><td class="rowlabel">Weight — gpt-oss q_proj GEMM</td><td class="num">22%</td><td class="num">16 B (22%)</td>
+                <td class="num"><strong>1</strong></td><td class="num">0.01</td><td><span class="pill random">No</span> — tiled, never 2 forward steps in a row</td></tr>
+              <tr><td class="rowlabel">Weight — decode GEMV</td><td class="num">2%</td><td class="num">32 B; 97% jumps &gt;1 MB</td>
+                <td class="num"><strong>1</strong></td><td class="num">~0</td><td><span class="pill random">No</span> — scattered in time</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lead" style="margin-top:10px">Read the <strong>march</strong> column: a KV warp issues
+          <strong>1023 consecutive +256 B steps with no break</strong> (median = max = 1023 — <em>every</em> sampled
+          warp sweeps the whole buffer in order) → a genuine temporal stream. A weight warp's longest march is
+          <strong>1</strong> — it <em>never</em> takes even two equal-forward steps in a row → tiled, not adjacent in
+          time. (A separate control: <em>within</em> one instruction the 32 lanes are coalesced for KV — that is
+          spatial adjacency, not the temporal question.) Tool: <code>temporal_proof.py</code>.</p>
       </section>
 
       <!-- TILED EXAMPLE -->
