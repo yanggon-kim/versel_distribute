@@ -537,6 +537,60 @@
         </div>
       </section>
 
+      <section aria-labelledby="precision-heading">
+        <h2 id="precision-heading">Tensor Precision</h2>
+        <p class="section-note">
+          Precision is taken from the recorded CUDA tensor ranges, not from
+          model-card defaults. The GPT-OSS row separates dense BF16 projection
+          weights from the MXFP4 expert storage that was recorded but not
+          attributable in the current expert-kernel trace.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Recorded Precision</th>
+                <th>Range Evidence</th>
+                <th>Interpretation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>GPT-2 weights</td>
+                <td>FP32 (<code>float32</code>)</td>
+                <td>148 / 148 recorded weight ranges are <code>float32</code>.</td>
+                <td>The GPT-2 weight GEMV result measures FP32 weight traffic.</td>
+              </tr>
+              <tr>
+                <td>GPT-2 KV cache</td>
+                <td>FP32 (<code>float32</code>)</td>
+                <td>48 / 48 recorded KV-cache ranges are <code>float32</code>.</td>
+                <td>The GPT-2 KV FMHA and KV-copy results measure FP32 cache traffic.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS dense weights</td>
+                <td>BF16 (<code>bfloat16</code>)</td>
+                <td>Traced dense projection ranges such as <code>q/k/v_proj.weight</code> and <code>o_proj.weight</code> are <code>bfloat16</code>.</td>
+                <td>The GPT-OSS dense-weight result measures BF16 CUTLASS/tensor-core projection traffic.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS KV cache</td>
+                <td>BF16 (<code>bfloat16</code>)</td>
+                <td>144 / 144 recorded KV-cache ranges in the prompt-16 decode-2 run are <code>bfloat16</code>.</td>
+                <td>The GPT-OSS KV-copy result measures BF16 cache traffic.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS expert weights</td>
+                <td>MXFP4 packed storage plus FP32 biases</td>
+                <td>96 custom expert storage/scale ranges are <code>uint8</code>; 50 small weight ranges are <code>float32</code>.</td>
+                <td>Expert kernels ran, but their packed MXFP4 weight addresses were not attributable with this NVBit path.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section aria-labelledby="kernel-heading">
         <h2 id="kernel-heading">Target Kernels</h2>
         <p class="section-note">
