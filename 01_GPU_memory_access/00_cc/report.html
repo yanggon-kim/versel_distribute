@@ -181,6 +181,24 @@
           <li><strong>Run length</strong> = longest contiguous span of touched line IDs (are blocks fully populated?).</li>
           <li><strong>Tile coverage</strong> = fraction of 32 B sectors touched inside each tile (are fetched blocks wasted?).</li>
         </ul>
+
+        <div class="callout">
+          <strong>Footprint vs. access order — a clarification.</strong> The "Streaming" verdict here is about the
+          <em>footprint</em>: is a tensor a contiguous, fully-used block of memory? That is what decides
+          block-compressibility, and it is what the metrics above measure. It is <em>not</em> a claim that a
+          kernel reads the bytes in strict linear order. A weight can be <strong>contiguous in storage yet read
+          in tiled / column order</strong> by the matmul.
+          <br><br>
+          We verified this on a real <strong>gpt-oss-20b dense weight</strong> (the <code>q_proj</code> Linear,
+          <code>[4096, 2880]</code> bf16). It is stored fully contiguous (<code>stride = (2880, 1)</code>,
+          <code>is_contiguous = True</code>) and its 23.6 MB footprint is swept <strong>100%</strong> — so it
+          compresses as a block. But the CUTLASS kernel (<code>cutlass_80_wmma_tensorop_bf16…tn</code>, which
+          reads W transposed for <code>x·Wᵀ</code>) walks it in <strong>tiles with column-like strides</strong>:
+          contiguous/vectorized <em>within</em> a tile (4 B / 16 B loads), then jumps of exactly 1×, 2×, and
+          <strong>16× the 5760 B row pitch</strong> to step across output rows. So the access <em>order</em> is
+          tiled even though the <em>layout</em> is contiguous — that affects prefetch / streaming-decompression
+          design, not whether large-block compression is viable.
+        </div>
       </section>
 
       <!-- EXPLORER -->
