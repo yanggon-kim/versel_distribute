@@ -453,7 +453,7 @@
                 <td>GPT-OSS dense weights</td>
                 <td><span class="pill warn">tiled / strided</span></td>
                 <td>316,768 attributed weight addresses; 1KB tile coverage mean = 0.193</td>
-                <td>Do not use large full-block decompression without sub-block validity.</td>
+                <td>Weights are contiguous in storage, but CUTLASS reads them through tiled/column-like strides.</td>
               </tr>
               <tr>
                 <td>GPT-OSS KV cache</td>
@@ -631,6 +631,53 @@
             <tbody></tbody>
           </table>
         </div>
+      </section>
+
+      <section aria-labelledby="strided-heading">
+        <h2 id="strided-heading">Why GPT-OSS Dense Weights Look Strided</h2>
+        <p class="section-note">
+          The GPT-OSS dense weights are not strided in tensor storage. The traced
+          tensors are row-major contiguous BF16 matrices, but the projection
+          kernels are CUTLASS/tensor-core GEMM kernels. For
+          <code>linear(x, W)</code>, the kernel consumes fragments of
+          <code>W</code> as if reading <code>W^T</code>, so a warp can jump by
+          an entire row stride while moving through a column-oriented tile.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tensor</th>
+                <th>Storage Layout</th>
+                <th>Stride Jump</th>
+                <th>Trace Effect</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>q/k/v_proj.weight</code></td>
+                <td>Contiguous row-major, shape <code>[out, 2880]</code>, stride <code>[2880, 1]</code></td>
+                <td>2880 BF16 elements = 5760 bytes between adjacent rows</td>
+                <td>Low 128B adjacency because lanes revisit matrix tiles rather than streaming one row linearly.</td>
+              </tr>
+              <tr>
+                <td><code>o_proj.weight</code></td>
+                <td>Contiguous row-major, shape <code>[2880, 4096]</code>, stride <code>[4096, 1]</code></td>
+                <td>4096 BF16 elements = 8192 bytes between adjacent rows</td>
+                <td>Large row-stride jumps make the memory trace appear tiled/strided even though storage is contiguous.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="section-note">
+          That is why the dense-weight trace has only <code>0.182</code>
+          P(+1) at 128B and <code>0.193</code> mean 1KB tile coverage, while
+          GPT-OSS KV copy reaches <code>1.000</code> mean 1KB coverage. KV copy
+          is a contiguous data-movement kernel; dense projection GEMM is a
+          tiled matrix kernel.
+        </p>
       </section>
 
       <section aria-labelledby="blocks-heading">
