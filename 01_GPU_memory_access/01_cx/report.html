@@ -389,27 +389,28 @@
       <p class="eyebrow">Summary</p>
       <h1>Measured LLM Weight and KV Cache Memory Access</h1>
       <p class="subtitle">
-        I traced real CUDA memory accesses, attributed addresses back to tensor
-        ranges, and measured whether neighboring sectors and tiles are touched
-        soon enough to justify large-block streaming decompression.
+        I traced real CUDA memory accesses for GPT-2 and GPT-OSS-20B,
+        attributed addresses back to tensor ranges, and measured whether
+        neighboring sectors and tiles are touched soon enough to justify
+        large-block streaming decompression.
       </p>
 
       <div class="summary-grid" aria-label="Summary metrics">
         <div class="metric">
-          <b>5,000</b>
-          <span>weight-kernel NVBit records from the targeted GPT-2 GEMV grid</span>
+          <b>13.77GB</b>
+          <span>GPT-OSS-20B CUDA weight ranges recorded, including MXFP4 custom tensors</span>
         </div>
         <div class="metric">
-          <b>24,000</b>
-          <span>FMHA lane-level addresses attributed to KV-cache tensors</span>
+          <b>1.35M</b>
+          <span>GPT-OSS-20B KV-copy lane addresses attributed to cache tensors</span>
         </div>
         <div class="metric">
-          <b>0.991</b>
-          <span>mean 4KB tile coverage for KV-cache FMHA reads</span>
+          <b>0.977</b>
+          <span>mean 8KB tile coverage for GPT-OSS-20B KV-cache copy traffic</span>
         </div>
         <div class="metric">
-          <b>1KB / 8KB</b>
-          <span>recommended starting blocks: weights / KV cache</span>
+          <b>2 models</b>
+          <span>GPT-2 baseline plus GPT-OSS-20B quantized checkpoint traces</span>
         </div>
       </div>
     </header>
@@ -418,10 +419,11 @@
       <section aria-labelledby="verdict-heading">
         <h2 id="verdict-heading">Verdict First</h2>
         <p class="section-note">
-          The traceable HF/PyTorch path gives a clear answer: weight accesses are
-          stream-like at cache-line and 1KB tile scale, while KV cache is the
-          stronger large-block candidate. The report below focuses only on
-          runs that produced attributable live memory-access records.
+          The traceable HF/PyTorch paths give a consistent cache conclusion:
+          KV-cache update traffic is the strongest large-block candidate.
+          Weight behavior depends on the kernel family: GPT-2 GEMV is
+          stream-like at 1KB scale, while GPT-OSS dense projection weights are
+          tiled/strided and need smaller sub-block handling.
         </p>
 
         <div class="table-wrap">
@@ -436,16 +438,28 @@
             </thead>
             <tbody>
               <tr>
-                <td>Weights</td>
+                <td>GPT-2 weights</td>
                 <td><span class="pill ok">streaming to 1KB</span></td>
                 <td>P(+1) at 128B = 0.959; 1KB tile coverage mean = 0.767</td>
                 <td>Use 1KB blocks first; 4KB+ needs sub-block fallback.</td>
               </tr>
               <tr>
-                <td>KV cache</td>
+                <td>GPT-2 KV cache</td>
                 <td><span class="pill ok">streaming to 8KB</span></td>
                 <td>FMHA P(+1) at 4KB = 0.968; 4KB tile coverage mean = 0.991</td>
                 <td>4KB-8KB streaming decompression is plausible.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS dense weights</td>
+                <td><span class="pill warn">tiled / strided</span></td>
+                <td>316,768 attributed weight addresses; 1KB tile coverage mean = 0.193</td>
+                <td>Do not use large full-block decompression without sub-block validity.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS KV cache</td>
+                <td><span class="pill ok">streaming to 8KB</span></td>
+                <td>1.35M KV addresses; 8KB tile coverage mean = 0.977</td>
+                <td>1KB-8KB blocks are well supported; 16KB is plausible but less conservative.</td>
               </tr>
             </tbody>
           </table>
@@ -464,6 +478,8 @@
           <button type="button" data-target="weight" aria-pressed="true">Weight GEMV</button>
           <button type="button" data-target="kvFmha" aria-pressed="false">KV FMHA</button>
           <button type="button" data-target="kvCopy" aria-pressed="false">KV Copy</button>
+          <button type="button" data-target="gptOssDense" aria-pressed="false">GPT-OSS Dense Weights</button>
+          <button type="button" data-target="gptOssKv" aria-pressed="false">GPT-OSS KV Copy</button>
         </div>
 
         <div class="layout-2">
@@ -498,8 +514,8 @@
             <tbody>
               <tr>
                 <td>Tensor range capture</td>
-                <td>For HF/PyTorch, recorded CUDA tensor base address, end address, size, shape, stride, dtype, phase, and category.</td>
-                <td><code>ranges.jsonl</code> with 148 weight ranges and 48 KV-cache ranges.</td>
+                <td>For HF/PyTorch, recorded CUDA tensor base address, end address, size, shape, stride, dtype, phase, and category. GPT-OSS additionally records MXFP4 custom tensor <code>storage.data</code> ranges.</td>
+                <td>GPT-2: 148 weight ranges and 48 KV-cache ranges. GPT-OSS: 461 weight ranges and 144 KV-cache ranges.</td>
               </tr>
               <tr>
                 <td>Memory tracing</td>
@@ -526,7 +542,10 @@
         <p class="section-note">
           I did not trace every launch indiscriminately. The useful records came
           from kernels that directly model weight matrix-vector reads and KV
-          cache update/attention reads.
+          cache update/attention reads. The GPT-OSS MXFP4 expert kernels ran,
+          but their packed expert-weight addresses were not exposed by this
+          NVBit trace path, so they are listed as a probe rather than conclusive
+          weight evidence.
         </p>
         <div class="kernel-list">
           <div class="kernel">
@@ -540,6 +559,18 @@
           <div class="kernel">
             <strong>KV Attention Read</strong>
             <p><code>fmha_cutlassF_f32_aligned_64x64_rf_sm80</code>, grid 532. This captures attention-side KV reads.</p>
+          </div>
+          <div class="kernel">
+            <strong>GPT-OSS Dense Projection</strong>
+            <p><code>gemvx</code>, <code>gemmk1</code>, and CUTLASS BF16 kernels. This is the attributable GPT-OSS dense-weight evidence.</p>
+          </div>
+          <div class="kernel">
+            <strong>GPT-OSS KV Copy</strong>
+            <p><code>CatArrayBatchedCopy_alignedK_contig</code> with prompt 16 plus two decode steps. This produced the clean GPT-OSS KV-cache result.</p>
+          </div>
+          <div class="kernel">
+            <strong>GPT-OSS MXFP4 Expert Probe</strong>
+            <p><code>_matmul_ogs_NNT_bf16xbf16xmxfp4</code>. Kernel execution was confirmed, but packed weight loads were not attributable.</p>
           </div>
         </div>
       </section>
@@ -565,6 +596,11 @@
                 <td>Primary runtime</td>
                 <td>PyTorch 2.9.1 CUDA environment</td>
                 <td>HF/PyTorch path was used for the conclusive address attribution.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS runtime</td>
+                <td>PyTorch 2.8.0+cu128, Transformers 5.10.2, Triton 3.4.0, kernels 0.14.1</td>
+                <td>Model loaded from the local <code>openai/gpt-oss-20b</code> snapshot and used about 13.8GB allocated VRAM.</td>
               </tr>
               <tr>
                 <td>Trace tool</td>
@@ -617,8 +653,32 @@
           <div class="weak">16KB weak</div>
         </div>
 
+        <h3>GPT-OSS Dense Weights</h3>
+        <div class="verdict" aria-label="GPT-OSS dense weight block recommendation">
+          <div class="maybe">128B mixed</div>
+          <div class="weak">256B weak</div>
+          <div class="weak">512B weak</div>
+          <div class="maybe">1KB mixed</div>
+          <div class="weak">2KB weak</div>
+          <div class="weak">4KB weak</div>
+          <div class="weak">8KB weak</div>
+          <div class="weak">16KB weak</div>
+        </div>
+
         <h3>KV Cache</h3>
         <div class="verdict" aria-label="KV cache block recommendation">
+          <div class="yes">128B yes</div>
+          <div class="yes">256B yes</div>
+          <div class="yes">512B yes</div>
+          <div class="yes">1KB yes</div>
+          <div class="yes">2KB yes</div>
+          <div class="yes">4KB yes</div>
+          <div class="yes">8KB yes</div>
+          <div class="maybe">16KB maybe</div>
+        </div>
+
+        <h3>GPT-OSS KV Cache</h3>
+        <div class="verdict" aria-label="GPT-OSS KV cache block recommendation">
           <div class="yes">128B yes</div>
           <div class="yes">256B yes</div>
           <div class="yes">512B yes</div>
@@ -642,7 +702,8 @@
         <p class="footnote">
           Local source artifacts were generated under
           <code>/home/yanggon/08_GPU_memory_access/runs</code> and summarized in
-          <code>00_dic/02_report/guide_experiment_results.md</code>.
+          <code>00_dic/02_report/guide_experiment_results.md</code> and
+          <code>00_dic/02_report/gptoss20b_memory_access_results.md</code>.
         </p>
       </section>
     </main>
@@ -703,6 +764,42 @@
           { g: "8KB", v: 0.952 },
           { g: "16KB", v: 0.884 }
         ]
+      },
+      gptOssDense: {
+        label: "GPT-OSS Dense Weights",
+        color: "#b42318",
+        stream: [
+          { g: 32, p1: 0.795, p2: 0.591, p8: 0.036, p32: 0.036, run: 1.65, win: 2.17 },
+          { g: 128, p1: 0.182, p2: 0.036, p8: 0.036, p32: 0.036, run: 1.02, win: 0.21 },
+          { g: 1024, p1: 0.456, p2: 0.456, p8: 0.679, p32: 0.675, run: 1.00, win: 0.71 },
+          { g: 4096, p1: 0.461, p2: 0.802, p8: 0.801, p32: 0.826, run: 1.03, win: 1.14 },
+          { g: 8192, p1: 1.000, p2: 0.999, p8: 0.998, p32: 0.993, run: 1.04, win: 1.26 },
+          { g: 16384, p1: 0.999, p2: 0.999, p8: 0.996, p32: 0.988, run: 1.02, win: 1.60 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.193 },
+          { g: "4KB", v: 0.073 },
+          { g: "8KB", v: 0.048 },
+          { g: "16KB", v: 0.048 }
+        ]
+      },
+      gptOssKv: {
+        label: "GPT-OSS KV Copy",
+        color: "#aa6b00",
+        stream: [
+          { g: 32, p1: 1.000, p2: 1.000, p8: 0.998, p32: 0.994, run: 1.26, win: 8.49 },
+          { g: 128, p1: 0.999, p2: 0.998, p8: 0.994, p32: 0.975, run: 1.04, win: 4.43 },
+          { g: 1024, p1: 0.994, p2: 0.988, p8: 0.953, p32: 0.843, run: 1.01, win: 2.59 },
+          { g: 4096, p1: 0.975, p2: 0.955, p8: 0.846, p32: 0.610, run: 1.01, win: 1.47 },
+          { g: 8192, p1: 0.961, p2: 0.922, p8: 0.741, p32: 0.439, run: 1.01, win: 0.93 },
+          { g: 16384, p1: 0.924, p2: 0.857, p8: 0.600, p32: 0.362, run: 1.00, win: 0.47 }
+        ],
+        tiles: [
+          { g: "1KB", v: 1.000 },
+          { g: "4KB", v: 0.994 },
+          { g: "8KB", v: 0.977 },
+          { g: "16KB", v: 0.954 }
+        ]
       }
     };
 
@@ -714,6 +811,10 @@
 
     function pct(value) {
       return value.toFixed(3);
+    }
+
+    function granularityLabel(value) {
+      return value >= 1024 ? `${value / 1024}KB` : `${value}B`;
     }
 
     function xFor(index) {
@@ -731,7 +832,7 @@
       const p8Points = rows.map((row, index) => `${xFor(index)},${yFor(row.p8)}`).join(" ");
       const p32Points = rows.map((row, index) => `${xFor(index)},${yFor(row.p32)}`).join(" ");
       const xLabels = rows.map((row, index) => `
-        <text x="${xFor(index)}" y="304" text-anchor="middle" fill="#5d6a7f" font-size="13">${row.g}B</text>
+        <text x="${xFor(index)}" y="304" text-anchor="middle" fill="#5d6a7f" font-size="13">${granularityLabel(row.g)}</text>
       `).join("");
       const markers = rows.map((row, index) => `
         <circle cx="${xFor(index)}" cy="${yFor(row.p1)}" r="5" fill="${data.color}"></circle>
@@ -777,7 +878,7 @@
       tableBody.innerHTML = rows.map((row) => `
         <tr>
           <td>${row.dataset}</td>
-          <td>${row.g}B</td>
+          <td>${granularityLabel(row.g)}</td>
           <td>${pct(row.p1)}</td>
           <td>${pct(row.p2)}</td>
           <td>${pct(row.p8)}</td>
