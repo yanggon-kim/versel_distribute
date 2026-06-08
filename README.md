@@ -20,8 +20,9 @@ from the published site.
   weights and KV cache are accessed as contiguous tile streams (RTX 5080).
 - `01_GPU_memory_access/00_cc/assets/`: figures for the stream report.
 - `01_GPU_memory_access/01_cx/report.html`: experiment-driven report from live
-  NVBit traces for GPT-2 and GPT-OSS-20B, including methodology, target
-  kernels, environment, results, and compression block-size recommendations.
+  NVBit traces for GPT-2, GPT-OSS-20B, and Qwen2.5-1.5B, including methodology,
+  target kernels, environment, results, and compression block-size
+  recommendations.
 
 ## Editing Rules
 

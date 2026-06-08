@@ -389,10 +389,10 @@
       <p class="eyebrow">Summary</p>
       <h1>Measured LLM Weight and KV Cache Memory Access</h1>
       <p class="subtitle">
-        I traced real CUDA memory accesses for GPT-2 and GPT-OSS-20B,
-        attributed addresses back to tensor ranges, and measured whether
-        neighboring sectors and tiles are touched soon enough to justify
-        large-block streaming decompression.
+        I traced real CUDA memory accesses for GPT-2, GPT-OSS-20B, and
+        Qwen2.5-1.5B, attributed addresses back to tensor ranges, and measured
+        whether neighboring sectors and tiles are touched soon enough to
+        justify large-block streaming decompression.
       </p>
 
       <div class="summary-grid" aria-label="Summary metrics">
@@ -409,8 +409,8 @@
           <span>mean 8KB tile coverage for GPT-OSS-20B KV-cache copy traffic</span>
         </div>
         <div class="metric">
-          <b>2 models</b>
-          <span>GPT-2 baseline plus GPT-OSS-20B quantized checkpoint traces</span>
+          <b>3 models</b>
+          <span>GPT-2 baseline, GPT-OSS-20B, and Qwen2.5-1.5B HF/PyTorch traces</span>
         </div>
       </div>
     </header>
@@ -461,6 +461,18 @@
                 <td>1.35M KV addresses; 8KB tile coverage mean = 0.977</td>
                 <td>1KB-8KB blocks are well supported; 16KB is plausible but less conservative.</td>
               </tr>
+              <tr>
+                <td>Qwen2.5 dense weights</td>
+                <td><span class="pill warn">tiled / strided</span></td>
+                <td>225,024 attributed BF16 weight addresses; 1KB tile coverage mean = 0.270</td>
+                <td>Use sub-block or gather-aware handling for dense GEMM weights.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 KV cache</td>
+                <td><span class="pill ok">streaming to 8KB</span></td>
+                <td>KV copy 8KB tile coverage = 0.925; flash attention 8KB tile coverage = 0.978</td>
+                <td>1KB-8KB blocks are supported for both update and attention-side KV reads.</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -480,6 +492,9 @@
           <button type="button" data-target="kvCopy" aria-pressed="false">KV Copy</button>
           <button type="button" data-target="gptOssDense" aria-pressed="false">GPT-OSS Dense Weights</button>
           <button type="button" data-target="gptOssKv" aria-pressed="false">GPT-OSS KV Copy</button>
+          <button type="button" data-target="qwenDense" aria-pressed="false">Qwen Dense Weights</button>
+          <button type="button" data-target="qwenKvCopy" aria-pressed="false">Qwen KV Copy</button>
+          <button type="button" data-target="qwenFlash" aria-pressed="false">Qwen Flash KV</button>
         </div>
 
         <div class="layout-2">
@@ -515,7 +530,7 @@
               <tr>
                 <td>Tensor range capture</td>
                 <td>For HF/PyTorch, recorded CUDA tensor base address, end address, size, shape, stride, dtype, phase, and category. GPT-OSS additionally records MXFP4 custom tensor <code>storage.data</code> ranges.</td>
-                <td>GPT-2: 148 weight ranges and 48 KV-cache ranges. GPT-OSS: 461 weight ranges and 144 KV-cache ranges.</td>
+                <td>GPT-2: 148 weight ranges and 48 KV-cache ranges. GPT-OSS: 461 weight ranges and 144 KV-cache ranges. Qwen2.5: 338 weight ranges and 168 KV-cache ranges.</td>
               </tr>
               <tr>
                 <td>Memory tracing</td>
@@ -586,6 +601,18 @@
                 <td>96 custom expert storage/scale ranges are <code>uint8</code>; 50 small weight ranges are <code>float32</code>.</td>
                 <td>Expert kernels ran, but their packed MXFP4 weight addresses were not attributable with this NVBit path.</td>
               </tr>
+              <tr>
+                <td>Qwen2.5-1.5B weights</td>
+                <td>BF16 (<code>bfloat16</code>)</td>
+                <td>338 / 338 recorded weight ranges are <code>bfloat16</code>.</td>
+                <td>The Qwen dense-weight result measures BF16 CUTLASS/tensor-core projection traffic.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5-1.5B KV cache</td>
+                <td>BF16 (<code>bfloat16</code>)</td>
+                <td>168 / 168 recorded KV-cache ranges in the prompt-32 decode-2 collect run are <code>bfloat16</code>.</td>
+                <td>The Qwen KV-copy and flash-attention results measure BF16 cache traffic.</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -626,6 +653,18 @@
             <strong>GPT-OSS MXFP4 Expert Probe</strong>
             <p><code>_matmul_ogs_NNT_bf16xbf16xmxfp4</code>. Kernel execution was confirmed, but packed weight loads were not attributable.</p>
           </div>
+          <div class="kernel">
+            <strong>Qwen Dense Projection</strong>
+            <p><code>gemvx</code>, <code>gemmk1</code>, and CUTLASS BF16 kernels. This produced 225,024 attributable weight addresses.</p>
+          </div>
+          <div class="kernel">
+            <strong>Qwen KV Copy</strong>
+            <p><code>CatArrayBatchedCopy</code>. This produced 1,864,576 attributable KV-cache addresses.</p>
+          </div>
+          <div class="kernel">
+            <strong>Qwen Flash KV Read</strong>
+            <p><code>pytorch_flash::flash_fwd_kernel</code>. This produced 221,184 attributable attention-side KV-cache addresses.</p>
+          </div>
         </div>
       </section>
 
@@ -655,6 +694,11 @@
                 <td>GPT-OSS runtime</td>
                 <td>PyTorch 2.8.0+cu128, Transformers 5.10.2, Triton 3.4.0, kernels 0.14.1</td>
                 <td>Model loaded from the local <code>openai/gpt-oss-20b</code> snapshot and used about 13.8GB allocated VRAM.</td>
+              </tr>
+              <tr>
+                <td>Qwen runtime</td>
+                <td>PyTorch 2.9.1+cu128, Transformers 4.57.1</td>
+                <td>Model loaded from the local <code>Qwen2.5-1.5B-Instruct</code> snapshot in BF16.</td>
               </tr>
               <tr>
                 <td>Trace tool</td>
@@ -690,9 +734,9 @@
       <section aria-labelledby="strided-heading">
         <h2 id="strided-heading">Why GPT-OSS Dense Weights Look Strided</h2>
         <p class="section-note">
-          The GPT-OSS dense weights are not strided in tensor storage. The traced
-          tensors are row-major contiguous BF16 matrices, but the projection
-          kernels are CUTLASS/tensor-core GEMM kernels. For
+          The GPT-OSS and Qwen dense weights are not strided in tensor storage.
+          The traced tensors are row-major contiguous BF16 matrices, but the
+          projection kernels are CUTLASS/tensor-core GEMM kernels. For
           <code>linear(x, W)</code>, the kernel consumes fragments of
           <code>W</code> as if reading <code>W^T</code>, so a warp can jump by
           an entire row stride while moving through a column-oriented tile.
@@ -754,6 +798,18 @@
           <div class="weak">16KB weak</div>
         </div>
 
+        <h3>Qwen Dense Weights</h3>
+        <div class="verdict" aria-label="Qwen dense weight block recommendation">
+          <div class="maybe">128B mixed</div>
+          <div class="weak">256B weak</div>
+          <div class="weak">512B weak</div>
+          <div class="maybe">1KB mixed</div>
+          <div class="weak">2KB weak</div>
+          <div class="weak">4KB weak</div>
+          <div class="weak">8KB weak</div>
+          <div class="weak">16KB weak</div>
+        </div>
+
         <h3>GPT-OSS Dense Weights</h3>
         <div class="verdict" aria-label="GPT-OSS dense weight block recommendation">
           <div class="maybe">128B mixed</div>
@@ -789,6 +845,18 @@
           <div class="yes">8KB yes</div>
           <div class="maybe">16KB maybe</div>
         </div>
+
+        <h3>Qwen KV Cache</h3>
+        <div class="verdict" aria-label="Qwen KV cache block recommendation">
+          <div class="yes">128B yes</div>
+          <div class="yes">256B yes</div>
+          <div class="yes">512B yes</div>
+          <div class="yes">1KB yes</div>
+          <div class="yes">2KB yes</div>
+          <div class="yes">4KB yes</div>
+          <div class="yes">8KB yes</div>
+          <div class="maybe">16KB maybe</div>
+        </div>
       </section>
 
       <section aria-labelledby="limitations-heading">
@@ -804,7 +872,8 @@
           Local source artifacts were generated under
           <code>/home/yanggon/08_GPU_memory_access/runs</code> and summarized in
           <code>00_dic/02_report/guide_experiment_results.md</code> and
-          <code>00_dic/02_report/gptoss20b_memory_access_results.md</code>.
+          <code>00_dic/02_report/gptoss20b_memory_access_results.md</code> and
+          <code>00_dic/02_report/qwen25_15b_hf_memory_access_results.md</code>.
         </p>
       </section>
     </main>
@@ -900,6 +969,60 @@
           { g: "4KB", v: 0.994 },
           { g: "8KB", v: 0.977 },
           { g: "16KB", v: 0.954 }
+        ]
+      },
+      qwenDense: {
+        label: "Qwen Dense Weights",
+        color: "#6f42c1",
+        stream: [
+          { g: 32, p1: 0.839, p2: 0.677, p8: 0.000, p32: 0.000, run: 1.72, win: 2.99 },
+          { g: 128, p1: 0.354, p2: 0.000, p8: 0.000, p32: 0.114, run: 1.05, win: 1.07 },
+          { g: 1024, p1: 0.235, p2: 0.414, p8: 0.254, p32: 0.231, run: 1.00, win: 0.70 },
+          { g: 4096, p1: 0.809, p2: 0.685, p8: 0.689, p32: 0.556, run: 1.02, win: 1.20 },
+          { g: 8192, p1: 0.772, p2: 0.716, p8: 0.595, p32: 0.642, run: 1.01, win: 1.60 },
+          { g: 16384, p1: 0.737, p2: 0.699, p8: 0.507, p32: 0.621, run: 1.01, win: 2.11 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.270 },
+          { g: "4KB", v: 0.112 },
+          { g: "8KB", v: 0.095 },
+          { g: "16KB", v: 0.084 }
+        ]
+      },
+      qwenKvCopy: {
+        label: "Qwen KV Copy",
+        color: "#178a5b",
+        stream: [
+          { g: 32, p1: 0.985, p2: 0.970, p8: 0.994, p32: 0.991, run: 1.03, win: 0.91 },
+          { g: 128, p1: 0.943, p2: 0.994, p8: 0.991, p32: 0.975, run: 1.00, win: 0.71 },
+          { g: 1024, p1: 0.995, p2: 0.990, p8: 0.959, p32: 0.860, run: 1.00, win: 1.83 },
+          { g: 4096, p1: 0.980, p2: 0.960, p8: 0.862, p32: 0.553, run: 1.00, win: 1.99 },
+          { g: 8192, p1: 0.960, p2: 0.919, p8: 0.742, p32: 0.371, run: 1.00, win: 1.68 },
+          { g: 16384, p1: 0.921, p2: 0.857, p8: 0.556, p32: 0.000, run: 1.00, win: 1.32 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.940 },
+          { g: "4KB", v: 0.933 },
+          { g: "8KB", v: 0.925 },
+          { g: "16KB", v: 0.911 }
+        ]
+      },
+      qwenFlash: {
+        label: "Qwen Flash KV",
+        color: "#087990",
+        stream: [
+          { g: 32, p1: 1.000, p2: 0.999, p8: 0.998, p32: 0.991, run: 1.60, win: 10.48 },
+          { g: 128, p1: 0.999, p2: 0.998, p8: 0.991, p32: 0.966, run: 1.00, win: 5.27 },
+          { g: 1024, p1: 0.991, p2: 0.983, p8: 0.932, p32: 0.783, run: 1.00, win: 5.20 },
+          { g: 4096, p1: 0.966, p2: 0.933, p8: 0.787, p32: 0.472, run: 1.03, win: 3.07 },
+          { g: 8192, p1: 0.933, p2: 0.867, p8: 0.644, p32: 0.178, run: 1.02, win: 1.79 },
+          { g: 16384, p1: 0.870, p2: 0.783, p8: 0.478, p32: 0.000, run: 1.01, win: 0.72 }
+        ],
+        tiles: [
+          { g: "1KB", v: 0.999 },
+          { g: "4KB", v: 0.989 },
+          { g: "8KB", v: 0.978 },
+          { g: "16KB", v: 0.957 }
         ]
       }
     };
