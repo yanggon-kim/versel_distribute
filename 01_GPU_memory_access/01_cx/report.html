@@ -478,6 +478,86 @@
         </div>
       </section>
 
+      <section aria-labelledby="locality-heading">
+        <h2 id="locality-heading">Physical vs Temporal Locality</h2>
+        <p class="section-note">
+          I treat "streaming" as two separate requirements. <strong>Physical
+          nearby</strong> means traced addresses fill nearby sectors inside the
+          same candidate tile, measured by tile coverage. <strong>Temporally
+          adjacent</strong> means nearby lines appear soon after one another in
+          trace order, measured by P(+N). A block is a good decompression target
+          only when both hold at the same scale.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Physically Nearby</th>
+                <th>Temporally Adjacent</th>
+                <th>Both Conditions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>GPT-2 weight GEMV</td>
+                <td><span class="pill warn">1KB only</span><br>1KB coverage = 0.767; 4KB coverage drops to 0.503.</td>
+                <td><span class="pill ok">yes</span><br>128B P(+1) = 0.959; 1KB P(+1) = 0.810.</td>
+                <td>Yes at 1KB; mixed beyond 1KB.</td>
+              </tr>
+              <tr>
+                <td>GPT-2 KV FMHA</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.991 / 0.991 / 0.960.</td>
+                <td><span class="pill ok">yes</span><br>4KB P(+1) = 0.968; 8KB P(+1) = 0.938.</td>
+                <td>Yes through 8KB.</td>
+              </tr>
+              <tr>
+                <td>GPT-2 KV copy</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.990 / 0.990 / 0.952.</td>
+                <td><span class="pill ok">yes</span><br>4KB P(+1) = 0.920; 8KB P(+1) = 0.846.</td>
+                <td>Yes through 8KB.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS dense weights</td>
+                <td><span class="pill bad">weak</span><br>1KB/4KB coverage = 0.193 / 0.073.</td>
+                <td><span class="pill bad">weak</span><br>128B P(+1) = 0.182; 1KB P(+1) = 0.456.</td>
+                <td>No. Storage is contiguous, but GEMM reads tiled/column-like strides.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS KV copy</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 1.000 / 0.994 / 0.977.</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB P(+1) = 0.994 / 0.975 / 0.961.</td>
+                <td>Yes through 8KB; 16KB is plausible but less conservative.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS MXFP4 expert weights</td>
+                <td><span class="pill neutral">not verified</span><br>Custom MXFP4 storage ranges were recorded.</td>
+                <td><span class="pill neutral">not verified</span><br>The current NVBit trace did not expose packed expert-weight addresses.</td>
+                <td>No conclusion for expert-weight load locality.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 dense weights</td>
+                <td><span class="pill bad">weak</span><br>1KB/4KB coverage = 0.270 / 0.112.</td>
+                <td><span class="pill bad">weak</span><br>128B P(+1) = 0.354; 1KB P(+1) = 0.235.</td>
+                <td>No. BF16 tensors are contiguous, but CUTLASS GEMM access is tiled/strided.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 KV copy</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.940 / 0.933 / 0.925.</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB P(+1) = 0.995 / 0.980 / 0.960.</td>
+                <td>Yes through 8KB.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 flash KV read</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.999 / 0.989 / 0.978.</td>
+                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB P(+1) = 0.991 / 0.966 / 0.933.</td>
+                <td>Yes through 8KB.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section aria-labelledby="interactive-heading">
         <h2 id="interactive-heading">Interactive Result Explorer</h2>
         <p class="section-note">
