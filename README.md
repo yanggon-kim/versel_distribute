@@ -15,6 +15,10 @@ from the published site.
 - `index.html`: the main landing page and link index.
 - `00_DAE/`: section directory for DAE-related pages.
 - `00_DAE/00_kernel/report.html`: GPU kernel performance model report.
+- `01_GPU_memory_access/`: section directory for GPU memory-access pages.
+- `01_GPU_memory_access/00_cc/report.html`: interactive report on whether LLM
+  weights and KV cache are accessed as contiguous tile streams (RTX 5080).
+- `01_GPU_memory_access/00_cc/assets/`: figures for the stream report.
 
 ## Editing Rules
 
