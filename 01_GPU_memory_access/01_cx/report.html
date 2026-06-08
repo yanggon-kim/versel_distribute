@@ -894,6 +894,60 @@ INSTR_END=1000000</code></pre>
           dense-weight claim can be checked at same-warp granularity rather than
           only with aggregate counters.
         </p>
+
+        <h3>Raw MEMTRACE Examples</h3>
+        <p class="section-note">
+          These are direct excerpts from the run-local <code>memtrace.txt</code>
+          files. A launch line names the kernel and assigns a launch id. A memory
+          line then records one warp instruction: CTA, warp, opcode, and lane
+          addresses in lane order.
+        </p>
+
+        <pre class="code-box"><code># Qwen2.5 dense CUTLASS launch, from qwen25_15b_prompt16_decode1_trace_dense/memtrace.txt
+MEMTRACE: CTX 0x000064fbef55f3c0 - LAUNCH - Kernel pc 0x0000727a03ffc400 - Kernel name void cutlass::Kernel2&lt;cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8&gt;(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8::Params) - grid launch id 19 - grid size 8,12,1 - block size 32,1,1 - nregs 124 - shmem 16896 - traced 1
+
+# Same launch, one real warp load record. Lanes 0-15 read one row fragment; lanes 16-31 jump to the next row fragment.
+MEMTRACE: CTX 0x000064fbef55f3c0 - grid_launch_id 19 - CTA 4,6,0 - warp 3 - LDG.E.LTC128B.128 - 0x0000727b1c270000 0x0000727b1c270010 0x0000727b1c270020 0x0000727b1c270030 0x0000727b1c270040 0x0000727b1c270050 0x0000727b1c270060 0x0000727b1c270070 0x0000727b1c270080 0x0000727b1c270090 0x0000727b1c2700a0 0x0000727b1c2700b0 0x0000727b1c2700c0 0x0000727b1c2700d0 0x0000727b1c2700e0 0x0000727b1c2700f0 0x0000727b1c270c00 0x0000727b1c270c10 0x0000727b1c270c20 0x0000727b1c270c30 0x0000727b1c270c40 0x0000727b1c270c50 0x0000727b1c270c60 0x0000727b1c270c70 0x0000727b1c270c80 0x0000727b1c270c90 0x0000727b1c270ca0 0x0000727b1c270cb0 0x0000727b1c270cc0 0x0000727b1c270cd0 0x0000727b1c270ce0 0x0000727b1c270cf0
+
+# GPT-OSS KV copy launch, from gptoss20b_prompt16_decode2_trace_kvcopy/memtrace.txt
+MEMTRACE: CTX 0x00005c5749673440 - LAUNCH - Kernel pc 0x000072a2d4717f00 - Kernel name void at::native::(anonymous namespace)::CatArrayBatchedCopy_alignedK_contig&lt;at::native::(anonymous namespace)::OpaqueType&lt;2u&gt;, unsigned int, 4, 128, 1, 8&gt;(at::native::(anonymous namespace)::OpaqueType&lt;2u&gt;*, at::native::(anonymous namespace)::CatArrInputTensorMetadata&lt;at::native::(anonymous namespace)::OpaqueType&lt;2u&gt;, unsigned int, 128, 1&gt;, at::native::(anonymous namespace)::TensorSizeStride&lt;unsigned int, 4u&gt;, int, unsigned int) - grid launch id 1591 - grid size 16,2,1 - block size 128,1,1 - nregs 36 - shmem 0 - traced 1
+
+# Same launch, one compact KV-cache warp load. All 32 lane addresses advance by 8B.
+MEMTRACE: CTX 0x00005c5749673440 - grid_launch_id 1591 - CTA 11,0,0 - warp 3 - LDG.E.64 - 0x0000729f625f9400 0x0000729f625f9408 0x0000729f625f9410 0x0000729f625f9418 0x0000729f625f9420 0x0000729f625f9428 0x0000729f625f9430 0x0000729f625f9438 0x0000729f625f9440 0x0000729f625f9448 0x0000729f625f9450 0x0000729f625f9458 0x0000729f625f9460 0x0000729f625f9468 0x0000729f625f9470 0x0000729f625f9478 0x0000729f625f9480 0x0000729f625f9488 0x0000729f625f9490 0x0000729f625f9498 0x0000729f625f94a0 0x0000729f625f94a8 0x0000729f625f94b0 0x0000729f625f94b8 0x0000729f625f94c0 0x0000729f625f94c8 0x0000729f625f94d0 0x0000729f625f94d8 0x0000729f625f94e0 0x0000729f625f94e8 0x0000729f625f94f0 0x0000729f625f94f8</code></pre>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>How the raw line is used</th>
+                <th>Example outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Which tensor is touched?</td>
+                <td>Each nonzero lane address is compared with <code>ranges.jsonl</code> start/end addresses.</td>
+                <td><code>0x...1c270000</code> maps to Qwen <code>model.layers.0.self_attn.q_proj.weight</code>; <code>0x...625f9400</code> maps to GPT-OSS <code>past_key_values.layers[0].keys</code>.</td>
+              </tr>
+              <tr>
+                <td>Spatial locality</td>
+                <td>After attribution, addresses are bucketed into candidate tiles: <code>tile_id = addr // tile_size</code>. Coverage counts how many 32B sectors inside that tile were touched.</td>
+                <td>The KV copy line fills a compact span; dense CUTLASS fills two small fragments separated by a row jump, so large tile coverage stays weak.</td>
+              </tr>
+              <tr>
+                <td>Temporal adjacency</td>
+                <td>The parser preserves record order as <code>seq</code>. I flatten attributed lane addresses in that order, then measure compact runs, Window100 same/neighbor hits, and same-warp lane deltas.</td>
+                <td>Qwen dense has adjacent lanes inside fragments but a 2832B lane-15 to lane-16 jump. GPT-OSS KV copy has all 32 lanes advancing by 8B, so it passes same-warp temporal adjacency.</td>
+              </tr>
+              <tr>
+                <td>P(+i)</td>
+                <td>P(+i) is computed from address-unit existence, not by itself from trace order.</td>
+                <td>It is useful as a spatial neighbor signal, but temporal claims in this report use the trace-order checks above.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section aria-labelledby="precision-heading">
