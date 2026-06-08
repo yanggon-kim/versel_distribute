@@ -299,6 +299,23 @@ MEMTRACE: … grid_launch_id 0 - <b>CTA 6,0,0</b> - <b>warp 2</b> - <b>LDG.E</b>
           addresses</strong> its lanes touched (pre-coalescer; 0 if a lane is idle). That is the whole atom — and the
           records appear <em>in issue order</em>, so a given warp's records are its program order.</p>
 
+        <p class="lead"><code>parse_memtrace.py</code> turns that text into NumPy arrays — one row per
+          warp-instruction, kept <strong>in trace order</strong>:</p>
+        <pre class="cmd"><span class="c"># parse_memtrace.py seq.memtrace  ->  one .npz (here N = 96 warp-instructions)</span>
+addrs       [N, 32]  int64   <span class="c"># the 32 lane byte-addresses per warp-instruction (0 = idle lane)</span>
+opcodes     [N]      int8    <span class="c"># 0 = load (LDG), 1 = store (STG), 2 = other</span>
+cta         [N, 3]   int32   <span class="c"># block (x,y,z) that issued it</span>
+warp        [N]      int16   <span class="c"># warp id within the block</span>
+grid_id     [N]      int32   <span class="c"># which kernel launch</span>
+kernel_name [K]      str     <span class="c"># name per grid_id, e.g. "seq_add(...)"</span>
+
+<span class="c"># the example record above becomes row r:</span>
+addrs[r]   = [0x…d00, 0x…d04, 0x…d08, …, 0x…d7c]   <span class="c"># 32 values, +4 B apart</span>
+opcodes[r] = 0   cta[r] = [6,0,0]   warp[r] = 2   grid_id[r] = 0   <span class="c"># → kernel_name[0] = seq_add</span></pre>
+        <p class="lead">Everything downstream is array ops on these: a row's 32 columns = lane addresses
+          (coalescing); <code>np.unique(addrs &gt;&gt; 7)</code> = the spatial line set; rows grouped by
+          <code>(cta, warp)</code> in order = the temporal march.</p>
+
         <h3>How the same record feeds both questions</h3>
         <div class="steps" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
           <div class="step"><b>Within one record → coalescing</b><span>The 32 lane addresses above step by <code>+4 B</code>
