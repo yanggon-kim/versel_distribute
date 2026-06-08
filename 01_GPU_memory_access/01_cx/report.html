@@ -552,9 +552,10 @@
         <p class="section-note">
           The traceable HF/PyTorch paths give a consistent cache conclusion:
           KV-cache update traffic is the strongest large-block candidate.
-          Weight behavior depends on the kernel family: GPT-2 GEMV is
-          stream-like at 1KB scale, while GPT-OSS dense projection weights are
-          tiled/strided and need smaller sub-block handling.
+          Weight behavior depends on the kernel family: GPT-2 GEMV has useful
+          1KB spatial coverage but short temporal runs, while GPT-OSS and Qwen
+          dense projection weights are tiled/strided and need smaller sub-block
+          or gather-aware handling.
         </p>
 
         <div class="table-wrap">
@@ -570,9 +571,9 @@
             <tbody>
               <tr>
                 <td>GPT-2 weights</td>
-                <td><span class="pill ok">streaming to 1KB</span></td>
+                <td><span class="pill warn">1KB spatial / short runs</span></td>
                 <td>P(+1) at 128B = 0.959; 1KB tile coverage mean = 0.767</td>
-                <td>Use 1KB blocks first; 4KB+ needs sub-block fallback.</td>
+                <td>Use 1KB only with sub-block buffering; 4KB+ needs fallback.</td>
               </tr>
               <tr>
                 <td>GPT-2 KV cache</td>
@@ -635,31 +636,31 @@
               <tr>
                 <td>GPT-2 weight GEMV</td>
                 <td><span class="pill warn">1KB only</span><br>1KB coverage = 0.767; 4KB coverage drops to 0.503.</td>
-                <td><span class="pill ok">yes</span><br>128B P(+1) = 0.959; 1KB P(+1) = 0.810.</td>
-                <td>Yes at 1KB; mixed beyond 1KB.</td>
+                <td><span class="pill warn">short runs</span><br>Mean compact run = 4 accesses; same-warp compact records = 0%.</td>
+                <td>Spatially useful at 1KB, but temporal proof is only fragment-level.</td>
               </tr>
               <tr>
                 <td>GPT-2 KV FMHA</td>
                 <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.991 / 0.991 / 0.960.</td>
-                <td><span class="pill ok">yes</span><br>4KB P(+1) = 0.968; 8KB P(+1) = 0.938.</td>
-                <td>Yes through 8KB.</td>
+                <td><span class="pill warn">tiled</span><br>Mean compact run = 8 accesses; same-warp pair locality = 90.4%.</td>
+                <td>Good tile coverage, but attention reads are tiled rather than full-warp linear.</td>
               </tr>
               <tr>
                 <td>GPT-2 KV copy</td>
                 <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.990 / 0.990 / 0.952.</td>
-                <td><span class="pill ok">yes</span><br>4KB P(+1) = 0.920; 8KB P(+1) = 0.846.</td>
-                <td>Yes through 8KB.</td>
+                <td><span class="pill ok">strong</span><br>Mean compact run = 31.4; compact warp records = 95.2%.</td>
+                <td>Yes through 8KB for copy/update traffic.</td>
               </tr>
               <tr>
                 <td>GPT-OSS dense weights</td>
                 <td><span class="pill bad">weak</span><br>1KB/4KB coverage = 0.193 / 0.073.</td>
-                <td><span class="pill bad">weak</span><br>128B P(+1) = 0.182; 1KB P(+1) = 0.456.</td>
-                <td>No. Storage is contiguous, but GEMM reads tiled/column-like strides.</td>
+                <td><span class="pill warn">fragment-only</span><br>Mean compact run = 9.6; compact warp records = 0%.</td>
+                <td>No for large blocks. Same-warp fragments are adjacent, then row/tile jumps break the stream.</td>
               </tr>
               <tr>
                 <td>GPT-OSS KV copy</td>
                 <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 1.000 / 0.994 / 0.977.</td>
-                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB P(+1) = 0.994 / 0.975 / 0.961.</td>
+                <td><span class="pill ok">strong</span><br>Mean compact run = 31.2; compact warp records = 94.2%.</td>
                 <td>Yes through 8KB; 16KB is plausible but less conservative.</td>
               </tr>
               <tr>
@@ -671,20 +672,20 @@
               <tr>
                 <td>Qwen2.5 dense weights</td>
                 <td><span class="pill bad">weak</span><br>1KB/4KB coverage = 0.270 / 0.112.</td>
-                <td><span class="pill bad">weak</span><br>128B P(+1) = 0.354; 1KB P(+1) = 0.235.</td>
-                <td>No. BF16 tensors are contiguous, but CUTLASS GEMM access is tiled/strided.</td>
+                <td><span class="pill warn">fragment-only</span><br>Mean compact run = 12.4; compact warp records = 0%.</td>
+                <td>No for large blocks. BF16 tensors are contiguous, but CUTLASS access is tiled/strided.</td>
               </tr>
               <tr>
                 <td>Qwen2.5 KV copy</td>
                 <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.940 / 0.933 / 0.925.</td>
-                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB P(+1) = 0.995 / 0.980 / 0.960.</td>
+                <td><span class="pill ok">strong</span><br>Mean compact run = 32.2; compact warp records = 100%.</td>
                 <td>Yes through 8KB.</td>
               </tr>
               <tr>
                 <td>Qwen2.5 flash KV read</td>
                 <td><span class="pill ok">yes</span><br>1KB/4KB/8KB coverage = 0.999 / 0.989 / 0.978.</td>
-                <td><span class="pill ok">yes</span><br>1KB/4KB/8KB P(+1) = 0.991 / 0.966 / 0.933.</td>
-                <td>Yes through 8KB.</td>
+                <td><span class="pill warn">tiled</span><br>Mean compact run = 8.0; same-warp pair locality = 90.3%.</td>
+                <td>Tile-local temporal adjacency is clear; full linear copy behavior is not.</td>
               </tr>
             </tbody>
           </table>
@@ -725,6 +726,89 @@
             </div>
             <div id="tile-bars"></div>
           </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="temporal-proof-heading">
+        <h2 id="temporal-proof-heading">Trace-Order Temporal Proof</h2>
+        <p class="section-note">
+          This table is the temporal proof layer. It does not use P(+i).
+          <strong>Compact run</strong> groups consecutive attributed lane
+          accesses while the byte delta stays within 128B. <strong>Window100</strong>
+          asks whether the same or neighboring 128B unit appears within the next
+          100 attributed accesses. <strong>Compact warp</strong> means one NVBit
+          warp record has all adjacent active lanes within 128B.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Consecutive Compact Run</th>
+                <th>Window100 Same/Neighbor</th>
+                <th>Same-Warp Lane Record</th>
+                <th>Temporal Read</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>GPT-2 weight GEMV</td>
+                <td>Mean 4.0 accesses; p90 4.</td>
+                <td>0.794</td>
+                <td>77.4% of adjacent lane pairs within 128B; 0% compact warp records.</td>
+                <td>Only short fragments are temporally adjacent.</td>
+              </tr>
+              <tr>
+                <td>GPT-2 KV FMHA</td>
+                <td>Mean 8.0 accesses; p90 8.</td>
+                <td>0.898</td>
+                <td>90.4% pair-local; 3.1% compact warp records.</td>
+                <td>Attention is tile-local, not a full linear warp stream.</td>
+              </tr>
+              <tr>
+                <td>GPT-2 KV copy</td>
+                <td>Mean 31.4 accesses; p90 32.</td>
+                <td>0.970</td>
+                <td>99.8% pair-local; 95.2% compact warp records; median span 496B.</td>
+                <td>Strong temporal adjacency for copy/update traffic.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS dense weights</td>
+                <td>Mean 9.6 accesses; p90 16.</td>
+                <td>0.895</td>
+                <td>94.5% pair-local; 0% compact warp records; median span 5872B.</td>
+                <td>Adjacent only inside small CUTLASS fragments, then row/tile jumps.</td>
+              </tr>
+              <tr>
+                <td>GPT-OSS KV copy</td>
+                <td>Mean 31.2 accesses; p90 32.</td>
+                <td>0.977</td>
+                <td>99.7% pair-local; 94.2% compact warp records; median span 248B.</td>
+                <td>Strong temporal adjacency for KV copy/update.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 dense weights</td>
+                <td>Mean 12.4 accesses; p90 16.</td>
+                <td>0.919</td>
+                <td>95.8% pair-local; 0% compact warp records; median span 3312B.</td>
+                <td>Adjacent only inside fragments; large row/tile jumps break block streaming.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 KV copy</td>
+                <td>Mean 32.2 accesses; p90 32.</td>
+                <td>0.971</td>
+                <td>100% pair-local; 100% compact warp records; median span 62B.</td>
+                <td>Strongest temporal proof in the report.</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5 flash KV read</td>
+                <td>Mean 8.0 accesses; p90 8.</td>
+                <td>0.895</td>
+                <td>90.3% pair-local; 0% compact warp records; median span 880B.</td>
+                <td>Tile-local temporal adjacency; not a linear copy stream.</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
