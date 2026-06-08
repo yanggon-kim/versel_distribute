@@ -360,6 +360,132 @@
       font-size: 0.9rem;
     }
 
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .flow-step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcff;
+    }
+
+    .flow-step b {
+      display: block;
+      margin-bottom: 6px;
+      color: #26344a;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .code-box {
+      margin-top: 14px;
+      padding: 14px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .code-box code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    .warp-visual {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #fbfcff;
+    }
+
+    .warp-title {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .lane-strip {
+      display: grid;
+      grid-template-columns: repeat(16, minmax(28px, 1fr));
+      gap: 4px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    .lane-cell {
+      min-height: 34px;
+      border: 1px solid #cbd5e1;
+      border-radius: 5px;
+      display: grid;
+      place-items: center;
+      background: #eef6ff;
+      color: #1f3a68;
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .lane-cell.row-b {
+      background: #eaf8f1;
+      color: #176340;
+    }
+
+    .jump-band {
+      margin: 10px 0;
+      padding: 8px 10px;
+      border-left: 4px solid var(--amber);
+      background: var(--soft-amber);
+      color: #6d4500;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .mini-matrix {
+      display: grid;
+      grid-template-columns: 86px repeat(8, minmax(30px, 1fr));
+      gap: 4px;
+      margin-top: 14px;
+      align-items: center;
+      font-size: 0.78rem;
+    }
+
+    .mini-matrix .label {
+      color: var(--muted);
+      font-weight: 800;
+      text-align: right;
+      padding-right: 6px;
+    }
+
+    .mini-matrix .slot {
+      min-height: 28px;
+      border-radius: 4px;
+      background: #e8edf5;
+    }
+
+    .mini-matrix .hit {
+      background: var(--blue);
+    }
+
+    .mini-matrix .hit.row-b {
+      background: var(--green);
+    }
+
     .footnote {
       color: var(--muted);
       font-size: 0.9rem;
@@ -368,12 +494,17 @@
     @media (max-width: 900px) {
       .summary-grid,
       .layout-2,
+      .flow-grid,
       .kernel-list {
         grid-template-columns: 1fr;
       }
 
       .verdict {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .lane-strip {
+        grid-template-columns: repeat(8, minmax(28px, 1fr));
       }
     }
   </style>
@@ -485,8 +616,10 @@
           nearby</strong> means traced addresses fill nearby sectors inside the
           same candidate tile, measured by tile coverage. <strong>Temporally
           adjacent</strong> means nearby lines appear soon after one another in
-          trace order, measured by P(+N). A block is a good decompression target
-          only when both hold at the same scale.
+          trace order, checked with run/window statistics and same-warp lane
+          records. P(+N) is used as an address-neighbor signal; it is paired
+          with trace-order evidence before calling a block stream-like. A block
+          is a good decompression target only when both hold at the same scale.
         </p>
         <div class="table-wrap">
           <table>
@@ -630,6 +763,53 @@
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section aria-labelledby="nvbit-heading">
+        <h2 id="nvbit-heading">How NVBit Was Used</h2>
+        <p class="section-note">
+          NVBit was used as a live CUDA instruction instrumenter, not as a
+          profiler summary. The repo wrapper preloaded a custom NVBit shared
+          object into the model process, filtered launches by kernel name, and
+          emitted lane-level memory addresses for selected load/store
+          instructions.
+        </p>
+
+        <div class="flow-grid" aria-label="NVBit trace pipeline">
+          <div class="flow-step">
+            <b>1. Capture ranges</b>
+            <span>Run the HF workload once and write tensor start/end, shape, stride, dtype, and category to <code>ranges.jsonl</code>.</span>
+          </div>
+          <div class="flow-step">
+            <b>2. Preload NVBit</b>
+            <span>Run the workload with <code>LD_PRELOAD=tools/nvbit_filtered_mem_trace/mem_trace_filtered.so</code>.</span>
+          </div>
+          <div class="flow-step">
+            <b>3. Filter kernels</b>
+            <span>Use regexes such as <code>gemvx|gemmk1|cutlass</code> for dense weights and <code>CatArrayBatchedCopy</code> for KV updates.</span>
+          </div>
+          <div class="flow-step">
+            <b>4. Attribute addresses</b>
+            <span>Parse <code>memtrace.txt</code> into <code>trace.bin</code>, then map every lane address back to tensor ranges.</span>
+          </div>
+        </div>
+
+        <pre class="code-box"><code>LD_PRELOAD=/home/yanggon/08_GPU_memory_access/tools/nvbit_filtered_mem_trace/mem_trace_filtered.so
+TRACE_KERNEL_REGEX=gemvx|gemmk1|cutlass
+TRACE_OPS=LD,ST
+TRACE_MAX_RECORDS_PER_GRID=5000
+TRACE_MAX_RECORDS_TOTAL=60000
+INSTR_BEGIN=0
+INSTR_END=1000000</code></pre>
+
+        <p class="section-note">
+          The NVBit tool hooks CUDA kernel launches, instruments memory-reference
+          operands before execution, and sends records through a host/device
+          channel. Each printed <code>MEMTRACE</code> record contains the launch
+          id, CTA id, warp id, opcode, and 32 lane addresses. This is why the
+          dense-weight claim can be checked at same-warp granularity rather than
+          only with aggregate counters.
+        </p>
       </section>
 
       <section aria-labelledby="precision-heading">
@@ -820,6 +1000,82 @@
           <code>linear(x, W)</code>, the kernel consumes fragments of
           <code>W</code> as if reading <code>W^T</code>, so a warp can jump by
           an entire row stride while moving through a column-oriented tile.
+        </p>
+
+        <div class="warp-visual" aria-label="Same-warp tiled load visual">
+          <div class="warp-title">
+            <strong>Same warp, one CUTLASS load instruction</strong>
+            <span>Qwen <code>q_proj.weight</code>, BF16, stride <code>[1536, 1]</code></span>
+          </div>
+          <div class="lane-strip" aria-label="Warp lanes 0 through 15 read row 832">
+            <div class="lane-cell">L0</div>
+            <div class="lane-cell">L1</div>
+            <div class="lane-cell">L2</div>
+            <div class="lane-cell">L3</div>
+            <div class="lane-cell">L4</div>
+            <div class="lane-cell">L5</div>
+            <div class="lane-cell">L6</div>
+            <div class="lane-cell">L7</div>
+            <div class="lane-cell">L8</div>
+            <div class="lane-cell">L9</div>
+            <div class="lane-cell">L10</div>
+            <div class="lane-cell">L11</div>
+            <div class="lane-cell">L12</div>
+            <div class="lane-cell">L13</div>
+            <div class="lane-cell">L14</div>
+            <div class="lane-cell">L15</div>
+          </div>
+          <div class="jump-band">
+            Lane-to-lane deltas are 16B within the fragment, then a 2832B jump
+            from row 832 col 120 to row 833 col 0.
+          </div>
+          <div class="lane-strip" aria-label="Warp lanes 16 through 31 read row 833">
+            <div class="lane-cell row-b">L16</div>
+            <div class="lane-cell row-b">L17</div>
+            <div class="lane-cell row-b">L18</div>
+            <div class="lane-cell row-b">L19</div>
+            <div class="lane-cell row-b">L20</div>
+            <div class="lane-cell row-b">L21</div>
+            <div class="lane-cell row-b">L22</div>
+            <div class="lane-cell row-b">L23</div>
+            <div class="lane-cell row-b">L24</div>
+            <div class="lane-cell row-b">L25</div>
+            <div class="lane-cell row-b">L26</div>
+            <div class="lane-cell row-b">L27</div>
+            <div class="lane-cell row-b">L28</div>
+            <div class="lane-cell row-b">L29</div>
+            <div class="lane-cell row-b">L30</div>
+            <div class="lane-cell row-b">L31</div>
+          </div>
+          <div class="mini-matrix" aria-label="Rows and columns touched by the same warp">
+            <div class="label">row 832</div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="slot hit"></div>
+            <div class="label">row 833</div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+            <div class="slot hit row-b"></div>
+          </div>
+        </div>
+
+        <p class="section-note">
+          This same-warp pattern was verified from the NVBit records. For Qwen,
+          all 9,080 dense-weight warp records had mixed or large lane deltas;
+          the median same-warp span was 3312B. For GPT-OSS, 16,560 of 16,563
+          dense-weight warp records had mixed or large lane deltas; the median
+          same-warp span was 5872B. KV copy is the contrast case: Qwen KV copy
+          had 58,268 same-warp records with only small adjacent lane deltas.
         </p>
 
         <div class="table-wrap">
