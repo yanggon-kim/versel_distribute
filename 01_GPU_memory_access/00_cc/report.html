@@ -111,6 +111,7 @@
       <a href="#explorer">Interactive explorer</a>
       <a href="#workloads">Per-tensor detail</a>
       <a href="#compression">Compression verdict</a>
+      <a href="#hbm3">HBM3 timing validation</a>
       <a href="#caveats">Caveats</a>
       <a href="#repro">Reproduce</a>
     </nav>
@@ -404,10 +405,58 @@ opcodes[r] = 0   cta[r] = [6,0,0]   warp[r] = 2   grid_id[r] = 0   <span class="
         </table>
       </section>
 
+      <!-- HBM3 VALIDATION -->
+      <section class="card" id="hbm3">
+        <h2><span class="num">§6</span>HBM3 timing validation (Ramulator 2)</h2>
+        <p class="lead">§5 says "stream weights/KV as large contiguous blocks." That is a claim about what the
+          <strong>DRAM</strong> does with the pattern — so we tested it on a <strong>cycle-accurate HBM3 model</strong>
+          (<a href="https://github.com/CMU-SAFARI/ramulator2">Ramulator&nbsp;2</a>, <code>HBM3_8Gb</code> /
+          <code>HBM3_2Gbps</code>, single channel, open-row, FR-FCFS). The real gpt-oss <code>q_proj.weight</code>
+          (CUTLASS-tiled) and the real <code>attn_contig</code> KV cache were each replayed two ways, moving an
+          identical <strong>4&nbsp;MB</strong> (65 536 × 64 B bursts):</p>
+        <ul class="notes">
+          <li><strong>native</strong> — every distinct 64 B line each load touches, in the global order the memory
+            controller actually sees from all concurrent warps (un-compressed today).</li>
+          <li><strong>block-fetch (1 KB / 16 KB)</strong> — the compression model: each touched block is decompressed
+            once and read as a <em>contiguous</em> run of 64 B bursts.</li>
+        </ul>
+        <p class="lead">The clean metric is the <strong>row-buffer hit rate</strong>
+          (<code>hits / (hits+misses+conflicts)</code>). A perfect contiguous stream tops out at a structural
+          <strong>87.5%</strong> ceiling on this mapping (boundary + refresh conflicts); a 1 MB-stride scatter floors
+          at 0%.</p>
+        <div class="chartbox" id="hbm3svg"><svg class="chart" viewBox="0 0 760 366" role="img" xmlns="http://www.w3.org/2000/svg"><style> .axl{font:600 12px Arial;fill:#43506a} .cap2{font:11px Arial;fill:#647083} .val{font:700 11px Arial;fill:#2a3550} .leg{font:600 11px Arial;fill:#43506a}</style><rect x="180" y="12" width="13" height="13" fill="rgb(197,197,197)" stroke="#222" stroke-width="0.6"/><text class="leg" x="198" y="22">native</text><rect x="315" y="12" width="13" height="13" fill="rgb(162,162,162)" stroke="#222" stroke-width="0.6"/><text class="leg" x="333" y="22">1 KB block</text><rect x="450" y="12" width="13" height="13" fill="rgb(119,119,119)" stroke="#222" stroke-width="0.6"/><text class="leg" x="468" y="22">16 KB block</text><line x1="80" y1="300" x2="720" y2="300" stroke="#e6eaf1" stroke-width="1"/><text class="cap2" x="72" y="304" text-anchor="end">0</text><line x1="80" y1="250" x2="720" y2="250" stroke="#e6eaf1" stroke-width="1"/><text class="cap2" x="72" y="254" text-anchor="end">20</text><line x1="80" y1="201" x2="720" y2="201" stroke="#e6eaf1" stroke-width="1"/><text class="cap2" x="72" y="205" text-anchor="end">40</text><line x1="80" y1="151" x2="720" y2="151" stroke="#e6eaf1" stroke-width="1"/><text class="cap2" x="72" y="155" text-anchor="end">60</text><line x1="80" y1="102" x2="720" y2="102" stroke="#e6eaf1" stroke-width="1"/><text class="cap2" x="72" y="106" text-anchor="end">80</text><line x1="80" y1="52" x2="720" y2="52" stroke="#e6eaf1" stroke-width="1"/><text class="cap2" x="72" y="56" text-anchor="end">100</text><text class="axl" x="26" y="176" text-anchor="middle" transform="rotate(-90 26 176)">row-buffer hit rate (%)</text><line x1="80" y1="83.0" x2="720" y2="83.0" stroke="#444" stroke-width="1.3" stroke-dasharray="6 4"/><text class="cap2" x="385" y="77" text-anchor="middle" font-style="italic" fill="#444">streaming ceiling 87.5%</text><rect x="117" y="184.8" width="70" height="115.2" fill="rgb(237,164,164)" stroke="#222" stroke-width="0.7"/><text class="val" x="152" y="180" text-anchor="middle">46.5</text><rect x="195" y="91.5" width="70" height="208.5" fill="rgb(227,108,108)" stroke="#222" stroke-width="0.7"/><text class="val" x="230" y="86" text-anchor="middle">84.1</text><rect x="273" y="83.0" width="70" height="217.0" fill="rgb(214,39,40)" stroke="#222" stroke-width="0.7"/><text class="val" x="308" y="78" text-anchor="middle">87.5</text><text class="axl" x="230" y="322" text-anchor="middle">q_proj weight (CUTLASS tiled)</text><rect x="427" y="124.7" width="70" height="175.3" fill="rgb(160,197,223)" stroke="#222" stroke-width="0.7"/><text class="val" x="462" y="120" text-anchor="middle">70.7</text><rect x="505" y="92.2" width="70" height="207.8" fill="rgb(102,162,204)" stroke="#222" stroke-width="0.7"/><text class="val" x="540" y="87" text-anchor="middle">83.8</text><rect x="583" y="83.0" width="70" height="217.0" fill="rgb(31,119,180)" stroke="#222" stroke-width="0.7"/><text class="val" x="618" y="78" text-anchor="middle">87.5</text><text class="axl" x="540" y="322" text-anchor="middle">KV cache (attn streamed)</text></svg></div>
+        <table style="margin-top:14px">
+          <thead><tr><th>Tensor (access)</th><th>Mode</th><th class="num">Row-buffer hit rate</th><th class="num">Bandwidth (1 ch)</th></tr></thead>
+          <tbody>
+            <tr><td class="rowlabel" rowspan="3">q_proj weight<br><span style="font-weight:400;color:#647083;font-size:11px">CUTLASS tiled</span></td><td>native</td><td class="num"><strong>46.5%</strong></td><td class="num">27.2 GB/s</td></tr>
+            <tr><td>1 KB block</td><td class="num">84.1%</td><td class="num">31.2 GB/s</td></tr>
+            <tr><td>16 KB block</td><td class="num"><strong>87.5%</strong> <span class="pill stream">ceiling</span></td><td class="num">32.0 GB/s</td></tr>
+            <tr><td class="rowlabel" rowspan="3">KV cache<br><span style="font-weight:400;color:#647083;font-size:11px">attn streamed</span></td><td>native</td><td class="num"><strong>70.7%</strong></td><td class="num">29.9 GB/s</td></tr>
+            <tr><td>1 KB block</td><td class="num">83.8%</td><td class="num">30.5 GB/s</td></tr>
+            <tr><td>16 KB block</td><td class="num"><strong>87.5%</strong> <span class="pill stream">ceiling</span></td><td class="num">32.0 GB/s</td></tr>
+          </tbody>
+        </table>
+        <p class="lead" style="margin-top:12px"><strong>What the DRAM says.</strong> Native tiled-weight access wastes
+          the row buffer (<strong>46.5%</strong>): the column-strided walk (§1c) opens a row, takes a few bursts, then
+          jumps a row-pitch multiple away. Native KV is better but not ideal (<strong>70.7%</strong>) — spatially
+          contiguous, so concurrent warps keep nearby rows open, yet the per-warp 256 B stride leaves locality on the
+          table. <strong>Reading each compression block as one contiguous run converts even the tiled weight into a
+          stream</strong>: 46.5% → 87.5% for weights, 70.7% → 87.5% for KV — the biggest win for the pattern that
+          needs it most. And <strong>16 KB ≥ 1 KB</strong> (16 KB reaches the full ceiling; 1 KB lands ~84% because
+          there are 16× more block boundaries to re-open a row) — the hardware-timing evidence behind the
+          <em>8–16 KB weights / 4 KB KV</em> recommendation in §5: larger contiguous blocks amortize the
+          row-activation cost more deeply. Setup &amp; runnable matrix:
+          <code>01_workloads/04_dram_attribution/ramulator/</code>.</p>
+      </section>
+
       <!-- CAVEATS -->
       <section class="card" id="caveats">
-        <h2><span class="num">§6</span>Caveats</h2>
+        <h2><span class="num">§7</span>Caveats</h2>
         <ul class="notes">
+          <li><strong>HBM3 model, not this GPU.</strong> Ramulator's HBM3 is a generic timing model (single channel
+            shown for a clean row-buffer signal); it validates the <em>direction</em> (large contiguous blocks →
+            higher row-buffer hit rate), not the absolute GB/s of the RTX 5080's GDDR7. The 87.5% ceiling is a
+            property of the HBM3 mapping, not a universal constant.</li>
           <li><strong>Trace volume &amp; short context.</strong> The literal trace costs ≈7 GB per token for
             GPT-2 (49.8 GB for Qwen), so each run is scoped to a short context (GPT-2 seq = 64, Qwen seq = 8).
             At seq = 8 the Qwen KV cache is tiny (~2 KB per head), so its coarse-tile (4–16 KB) coverage and
@@ -426,7 +475,7 @@ opcodes[r] = 0   cta[r] = [6,0,0]   warp[r] = 2   grid_id[r] = 0   <span class="
 
       <!-- REPRO -->
       <section class="card" id="repro">
-        <h2><span class="num">§7</span>Reproduce</h2>
+        <h2><span class="num">§8</span>Reproduce</h2>
         <pre class="cmd"><span class="c"># in 01_workloads/02_address_trace/</span>
 NVBIT=../../02_tools/nvbit_release/nvbit_release_x86_64
 PY=../../02_tools/venv_gpt2/bin/python
