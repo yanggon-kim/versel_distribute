@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real DDR/HBM memory controllers — how they are implemented</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --stream:#1a7f37; --stream-bg:#e7f5ec; --random:#b54708; --random-bg:#fdf0e6; --code:#0b1020;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:Arial,Helvetica,sans-serif; color:var(--text); background:var(--bg); line-height:1.6; }
+  a { color:var(--accent); }
+  .wrap { display:grid; grid-template-columns:232px minmax(0,1fr); gap:28px; width:min(100%,1180px); margin:0 auto; padding:36px 24px 64px; }
+  nav.toc { position:sticky; top:24px; align-self:start; font-size:.92rem; }
+  nav.toc .crumb { color:var(--muted); font-size:.8rem; margin-bottom:14px; }
+  nav.toc a { display:block; padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+  nav.toc a:hover { background:#eef5ff; color:var(--accent); }
+  nav.toc a.active { color:var(--accent); border-left-color:var(--accent); background:#eef5ff; font-weight:700; }
+  main { min-width:0; }
+  header.page h1 { font-size:clamp(1.7rem,3.6vw,2.4rem); line-height:1.12; margin:0; }
+  header.page .sub { color:var(--muted); margin-top:10px; font-size:1.02rem; }
+  .tags { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+  .tag { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:999px; background:#eef2f7; color:#43506a; border:1px solid var(--border); }
+  .tag.live { background:var(--stream-bg); color:var(--stream); }
+  section.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 28px rgba(23,32,51,.06); padding:26px; margin-bottom:22px; scroll-margin-top:20px; }
+  section.card > h2 { margin:0 0 6px; font-size:1.35rem; }
+  section.card > h2 .num { color:var(--accent); font-weight:800; margin-right:8px; }
+  .lead { color:var(--muted); margin:0 0 18px; }
+  h3 { font-size:1.05rem; margin:22px 0 8px; }
+  h4 { font-size:.95rem; margin:14px 0 6px; }
+  p { margin:10px 0; }
+  code.k { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em; background:#eef2f7; border:1px solid var(--border); border-radius:4px; padding:1px 5px; color:#33415c; }
+  .pill { display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:.82rem; padding:4px 12px; border-radius:999px; }
+  .pill.stream { background:var(--stream-bg); color:var(--stream); }
+  .pill.random { background:var(--random-bg); color:var(--random); }
+  /* confidence badges */
+  .c { font-size:.72rem; font-weight:800; padding:2px 8px; border-radius:999px; white-space:nowrap; border:1px solid transparent; }
+  .c.g { background:var(--stream-bg); color:var(--stream); }
+  .c.a { background:var(--random-bg); color:var(--random); }
+  .c.w { background:#eef2f7; color:#43506a; border-color:var(--border); }
+  .c.r { background:#fde7e7; color:#c0392b; }
+  .headline { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin:4px 0 8px; }
+  .kpi { border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:#fbfcff; }
+  .kpi .v { font-size:1.5rem; font-weight:800; }
+  .kpi .l { font-size:.8rem; color:var(--muted); margin-top:2px; }
+  .callout { border-left:4px solid var(--accent); background:#f3f8ff; padding:14px 18px; border-radius:0 8px 8px 0; margin:16px 0; }
+  .callout.win { border-left-color:var(--stream); background:var(--stream-bg); }
+  .callout.warn { border-left-color:var(--random); background:var(--random-bg); }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; margin:8px 0 4px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f1f4f9; font-size:.82rem; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tbody tr:hover { background:#f7faff; }
+  td.rowlabel { text-align:left; font-weight:700; white-space:nowrap; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82em; }
+  ul.notes { margin:6px 0; padding-left:20px; }
+  ul.notes li { margin:6px 0; }
+  .fnote { font-size:.86rem; color:var(--muted); }
+  .footer { color:var(--muted); font-size:.9rem; border-top:1px solid var(--border); margin-top:26px; padding-top:18px; }
+  .footer a { text-decoration:none; }
+  @media (max-width:880px){ .wrap{ grid-template-columns:1fr; } nav.toc{ position:static; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#how">How it was researched</a>
+    <a href="#summary">§1 Executive summary</a>
+    <a href="#ip">§2 Commercial controller IP</a>
+    <a href="#hbm">§3 HBM structure</a>
+    <a href="#xilinx">§4 AMD/Xilinx HBM2 IP</a>
+    <a href="#latency">§5 Where the latency lives</a>
+    <a href="#policy">§6 Page policy &amp; mapping</a>
+    <a href="#ramulator">§7 Ramulator 2 reference</a>
+    <a href="#sched">§8 Scheduling literature</a>
+    <a href="#relate">§9 Ties to our controller</a>
+    <a href="#limits">§10 Limitations</a>
+    <a href="#sources">§11 Sources</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Real-world DDR / HBM memory controllers: how they are actually implemented</h1>
+      <p class="sub">A cited literature/industry survey — what commercial IP vendors (Synopsys, AMD/Xilinx) and
+        research papers publicly document about real DDR and HBM memory-controller microarchitecture, and how it maps
+        onto the bit-exact HBM3 controller built in this project. Explicit about <strong>vendor-published vs measured
+        vs proprietary</strong>. June 2026.</p>
+      <div class="tags">
+        <span class="tag live">28 sources · 25 claims verified</span>
+        <span class="tag">Synopsys · AMD/Xilinx · JEDEC</span>
+        <span class="tag">Ramulator 2</span>
+        <span class="tag">adversarially fact-checked</span>
+      </div>
+    </header>
+
+    <!-- HOW -->
+    <section class="card" id="how">
+      <h2><span class="num">¶</span>How this was researched (methodology &amp; confidence)</h2>
+      <p class="lead">Produced with a deep-research harness: the question was decomposed into <strong>6 search
+        angles</strong> (commercial IP, HBM architecture, academic/simulation accuracy, scheduling theory, measured
+        hardware teardown, refresh/reliability), explored by parallel web searches; <strong>28 sources</strong> were
+        fetched and <strong>129 candidate claims</strong> extracted; the top <strong>25 claims</strong> each went
+        through <strong>3-vote adversarial verification</strong> (a claim dies only on ≥2/3 refutes).</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">25 / 25</div><div class="l">claims confirmed (0 killed)</div></div>
+        <div class="kpi"><div class="v">10</div><div class="l">synthesized findings</div></div>
+        <div class="kpi"><div class="v">28</div><div class="l">sources fetched</div></div>
+        <div class="kpi"><div class="v">111</div><div class="l">research agent calls</div></div>
+      </div>
+      <h4>Confidence legend (used throughout)</h4>
+      <ul class="notes">
+        <li><span class="c g">vendor / 3-0</span> stated on a vendor page, JEDEC, an AMD/Xilinx PG, or a peer-reviewed paper, and survived 3-0 verification.</li>
+        <li><span class="c a">config-specific / 2-1</span> a real published number, but scoped to a particular configuration — not a universal constant.</li>
+        <li><span class="c w">background</span> source fetched, but the specific claim was <em>not</em> among the 10 verified findings; well-known context, re-confirm before quoting.</li>
+        <li><span class="c r">not verified</span> requested but produced no surviving verified claim this pass. Absence ≠ "undocumented."</li>
+      </ul>
+    </section>
+
+    <!-- §1 SUMMARY -->
+    <section class="card" id="summary">
+      <h2><span class="num">§1</span>Executive summary</h2>
+      <p class="lead">Real DDR/HBM controllers converge on a small set of documented patterns:</p>
+      <ul class="notes">
+        <li><b>Out-of-order scheduling over a reorder/CAM structure.</b> Synopsys uMCTL2 (DDR) exposes up to
+          <b>64 read + 64 write look-ahead</b> with a <b>read reorder buffer</b>; the Synopsys HBM3 controller uses
+          <b>CAM-based scheduling, depth 32 or 64</b>. The policy is FR-FCFS-like, and <b>page policy is programmable
+          (open vs close-with-timer)</b> — that <em>is</em> the row-buffer-locality vs bank-level-parallelism knob.</li>
+        <li><b>Per-channel / per-pseudo-channel replication.</b> HBM stacks are a <b>1024-bit</b> interface split into
+          <b>16 independent 64-bit channels / 32 32-bit pseudo-channels</b> with <b>independent (asynchronous)
+          clocks</b>, so the controller is instantiated per (pseudo)channel. AMD/Xilinx's HBM2 IP: <b>one 2-channel MC
+          per 2 pseudo-channels (16 MCs for 32 PCs)</b> behind a <b>segmented AXI crossbar</b>.</li>
+        <li><b>Latency lives in the front-end/crossbar + scheduler + DFI/PHY.</b> AMD publishes <b>90 vs 108
+          memory-clocks</b> (open-page vs activate, direct path); a measurement on Alveo U280 shows <b>~229 ns</b>
+          round-trip read (~182 ns in HBMC+HBM), with the <b>AXI crossbar</b> the main adder.</li>
+        <li><b>Ramulator 2.0 is the authoritative open reference</b> and is itself validated by replaying its issued
+          command trace into <b>Micron's DDR4 Verilog model</b> — the same method this project uses against Ramulator.</li>
+      </ul>
+    </section>
+
+    <!-- §2 COMMERCIAL IP -->
+    <section class="card" id="ip">
+      <h2><span class="num">§2</span>Commercial controller IP — documented microarchitecture</h2>
+
+      <h3>2.1 Synopsys DesignWare uMCTL2 (DDR) <span class="c g">vendor / 3-0</span></h3>
+      <p>The Universal DDR Memory Controller documents configurable <b>out-of-order scheduling</b> with <b>up to 64
+        read and 64 write look-ahead commands</b>, <b>dual address queues per port</b>, <b>QoS</b>,
+        <b>variable-priority commands</b>, and a <b>Read Reorder Buffer (RRB)</b> giving out-of-order execution with
+        <b>in-order responses</b>. It accepts <b>1–16 host ports</b> over AMBA AXI4/AXI/AHB or a custom single-port
+        ultra-low-latency H-IF.
+        <a href="https://www.synopsys.com/designware-ip/interface-ip/ddr/ddr-universal-umctl2.html">[uMCTL2 page]</a>
+        <a href="https://www.synopsys.com/dw/doc.php/wp/DDR_read_reorder_wp.pdf">[read-reorder WP]</a></p>
+      <div class="callout"><b>Maps to our design:</b> the RRB / look-ahead window is the industrial analog of our
+        FR-FCFS arbiter scanning for the oldest <em>ready</em> command; "in-order responses" is why real controllers
+        carry request IDs (our <code class="k">seq</code>/<code class="k">id</code>).</div>
+
+      <h3>2.2 Synopsys DesignWare HBM3 controller <span class="c g">vendor / 3-0</span></h3>
+      <p>Documented features: <b>Dynamic Memory Access Scheduling (CAM-based)</b> with <b>CAM size 32 or 64</b>;
+        <b>page policy (Open, or Close-with-timer)</b>; instantiated <b>per pseudo-channel</b> (<b>up to 32 PCs</b>,
+        <b>16–64 banks/PC</b>); a <b>multiport AMBA (4 AXI) interface with managed QoS</b> per PC. It implements a
+        <b>DFI 5.0-compliant</b> interface to the HBM3 PHY at <b>up to 6.4 Gbps in DFI 1:1:2</b> with a <b>1.6 GHz
+        controller clock</b> (controller/DFI/PHY/memory all 1.6 GHz, 3.2 GHz strobe; DFI 1:1 CA, 1:2 data). Higher DFI
+        ratios reach 7.2 Gbps on the PHY.
+        <a href="https://www.synopsys.com/designware-ip/interface-ip/hbm/hbm3-controller.html">[HBM3 controller]</a>
+        <a href="https://www.synopsys.com/glossary/what-is-high-bandwitdth-memory-3.html">[What is HBM3]</a></p>
+      <div class="callout"><b>Maps to our design:</b> "CAM-based scheduling, page policy = open" is exactly the
+        open-row FR-FCFS our controller implements; "per pseudo-channel instantiation" matches our single-channel ×
+        2-pseudochannel scope; "DFI 5.0 to PHY" is the datapath our <b>pipelined variant</b> models as the registered
+        egress command pipeline.</div>
+
+      <h3>2.3 Cadence/Denali, Rambus, ARM (CMN/DMC) <span class="c r">not verified</span></h3>
+      <p>Requested but <b>no surviving verified claim</b> this pass — Cadence datasheets yielded no extractable
+        specifics; Rambus and ARM did not surface. Internal per-stage pipeline depths inside
+        Synopsys/Cadence/Rambus/ARM IP are <b>proprietary and not publicly disclosed</b>.</p>
+    </section>
+
+    <!-- §3 HBM STRUCTURE -->
+    <section class="card" id="hbm">
+      <h2><span class="num">§3</span>HBM structure &amp; why controllers are replicated per channel <span class="c g">vendor / 3-0</span></h2>
+      <p>HBM3 keeps a <b>1024-bit data interface</b>, divided into <b>16 independent 64-bit channels</b>, each with
+        <b>two pseudo-channels</b> (32-bit DDR each) → <b>32 pseudo-channels</b>; this <b>doubles independent channels
+        from 8 (HBM2) to 16</b>. Crucially, <b>channels operate with independent clocks and need not be
+        synchronous</b> — the architectural reason the controller is <b>replicated per (pseudo)channel</b>. HBM3 also
+        <b>mandates strong, symbol-based on-die ECC</b> (a fixed 304-bit code word: 272 data + 32 check) plus real-time
+        error reporting (on-die ECC was <em>optional</em> in HBM2).
+        <a href="https://www.jedec.org/news/pressreleases/jedec-publishes-hbm3-update-high-bandwidth-memory-hbm-standard">[JEDEC JESD238]</a>
+        <a href="https://www.synopsys.com/glossary/what-is-high-bandwitdth-memory-3.html">[Synopsys glossary]</a></p>
+      <p class="fnote">Our 2-pseudochannel, 4-bankgroup, 4-bank (32-bank) HBM3 organization and per-bank timing are the
+        modeled subset of one such channel.</p>
+    </section>
+
+    <!-- §4 XILINX -->
+    <section class="card" id="xilinx">
+      <h2><span class="num">§4</span>AMD/Xilinx HBM2 IP — a fully concrete real architecture <span class="c g">vendor / 3-0</span></h2>
+      <p class="lead">The AMD/Xilinx AXI HBM hard IP (Alveo U280/U50, documented in PG276) is the most completely
+        public real HBM controller architecture:</p>
+      <ul class="notes">
+        <li>Each stack = <b>8 channels × 2 (64-bit) pseudo-channels = 16 PCs</b> per 1024-bit stack; <b>each PC limited
+          to its own 1/16 of the stack (256 MB)</b>.</li>
+        <li><b>One 2-channel memory controller per 2 PCs</b> → <b>16 MCs for 32 PCs</b> on a 2-stack (8 GB) board.</li>
+        <li><b>One AXI port per pseudo-channel</b> (16 ports/stack) through a <b>16×16 AXI crossbar</b> (32×32 for two
+          stacks), so any master can reach any PC via global addressing.</li>
+        <li>The crossbar is <b>hierarchical — eight 4×4 unit switches</b>, not one monolithic 32×32. Aligning a master
+          to its <b>local</b> PC (M0→S0 for 0–256 MB) avoids lateral inter-switch traversal; crossing all 32 channels
+          was <b>measured at &lt;0.5 GB/s (&gt;20× bandwidth loss)</b>.</li>
+      </ul>
+      <p class="fnote">
+        <a href="https://docs.amd.com/r/en-US/pg276-axi-hbm/Core-Overview">[AMD PG276]</a>
+        <a href="https://xilinx.github.io/Vitis-Tutorials/2021-1/build/html/docs/Hardware_Acceleration/Feature_Tutorials/07-using-hbm/1_overview.html">[Vitis "Using HBM"]</a>
+        <a href="https://arxiv.org/abs/2010.06075">[arXiv 2010.06075]</a>
+        <a href="https://arxiv.org/abs/2005.04324">[Shuhai 2005.04324]</a>
+        <a href="https://arxiv.org/abs/2105.11754">[ScalaBFS 2105.11754]</a></p>
+      <div class="callout"><b>Maps to our design:</b> "one MC per 2 PCs" is precisely the granularity our single-channel
+        controller models; the <b>AXI crossbar</b> is the front-end stage our controller (and Ramulator) abstracts
+        away — and a real source of latency (next).</div>
+    </section>
+
+    <!-- §5 LATENCY -->
+    <section class="card" id="latency">
+      <h2><span class="num">§5</span>Where the pipeline latency actually lives</h2>
+      <p class="lead">Two concrete data points (both Xilinx HBM2 hard IP; they do <b>not</b> generalize to Versal HBM,
+        discrete-GPU HBM, or CPU IMCs):</p>
+      <table>
+        <thead><tr><th>Source</th><th>Number</th><th>What it is</th><th>Confidence</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">AMD PG276, Table 2</td><td><b>90</b> mem-clocks (open page) / <b>108</b> (activate)</td><td>AXI3 port → <em>aligned</em> channel, global addressing disabled (direct path); 18-clock delta = row-activate overhead</td><td><span class="c a">config-specific / 2-1</span></td></tr>
+          <tr><td class="rowlabel">arXiv 2010.06075, Table 6</td><td><b>~229 ns</b> RT read (~<b>182 ns</b> HBMC+HBM, ~47 ns PE)</td><td>Alveo U280 end-to-end; elevated vs ~107 ns page-hit/crossbar-disabled baseline, attributed mainly to <b>AXI crossbar</b> + parallel-master interaction</td><td><span class="c g">measured / 3-0</span></td></tr>
+        </tbody>
+      </table>
+      <div class="callout win"><b>Takeaway:</b> real controller latency localizes to <b>front-end/crossbar → scheduler
+        → DFI/PHY</b>. The vendor "90 vs 108 clocks" isolates the scheduler+DRAM core (open-page vs activate); the U280
+        measurement shows the <b>front-end crossbar</b> is the dominant <em>added</em> latency off the direct path.</div>
+      <p class="fnote"><b>Maps to our design:</b> this validates the <b>pipelined variant</b> — real depth is in the
+        datapath (front-end + DFI/PHY), not the per-cycle decision; exactly why our egress command pipeline adds
+        latency without changing the schedule. Concrete CPU/GPU IMC stage breakdowns remain
+        <span class="c r">proprietary</span> (Intel/AMD IMC latency is generally only microbenchmark-derived).</p>
+    </section>
+
+    <!-- §6 POLICY -->
+    <section class="card" id="policy">
+      <h2><span class="num">§6</span>Page policy &amp; address mapping: the locality vs parallelism knob</h2>
+      <p>Both vendor controllers expose <b>page policy</b> as a first-class option (Synopsys HBM3: <em>Open</em> or
+        <em>Close-with-timer</em>). This is the industrial form of the <b>row-buffer-locality vs bank-level-parallelism</b>
+        tradeoff: open page keeps rows open to harvest hits (streaming/locality); closed page precharges eagerly to
+        expose bank parallelism (scattered access). Address mapping is the second knob — Ramulator 2 ships mappers like
+        <b>MOP4CLXOR</b> (permuting bank/channel bits low to spread accesses) vs row-high mappers (our RoBaRaCoCh) that
+        preserve row locality. <span class="c g">vendor / 3-0</span> for the page-policy options;
+        <span class="c w">background</span> for the quantitative tradeoff (established by the scheduling literature, §8).
+        <a href="https://www.synopsys.com/designware-ip/interface-ip/hbm/hbm3-controller.html">[Synopsys HBM3]</a></p>
+    </section>
+
+    <!-- §7 RAMULATOR -->
+    <section class="card" id="ramulator">
+      <h2><span class="num">§7</span>Ramulator 2.0 — the open reference, and how our controller relates <span class="c g">paper / 3-0</span></h2>
+      <p>Ramulator 2.0 is the authoritative open, modular DRAM simulator. Its controller decomposes into <b>shared
+        interfaces + independent implementations</b>: <b>frontend → address mapper (MOP4CLXOR) → generic DRAM
+        controller → request scheduler (FR-FCFS) → DRAM device model → refresh manager (all-bank)</b>, plus optional
+        <b>plugins</b> (e.g. PARA RowHammer mitigation). Per cycle it <b>ticks the refresh manager, queries the
+        scheduler (which consults the DRAM device model to decode the best command), then issues</b>. It covers
+        <b>DDR3/4/5, LPDDR5, HBM2/HBM3, GDDR6</b> via reusable templated lambdas, and is <b>validated by replaying its
+        issued command trace into Micron's DDR4 Verilog model</b> with identical organization/timings — finding
+        <b>no timing or state-transition violations</b>.
+        <a href="https://arxiv.org/abs/2308.11030">[Ramulator 2 paper]</a>
+        <a href="https://people.inf.ethz.ch/omutlu/pub/Ramulator2_arxiv23.pdf">[PDF]</a></p>
+      <div class="callout win"><b>Maps directly to this project:</b> our <code class="k">04_hbm_rtl</code> controller
+        mirrors this exact decomposition (frontend phases, <code class="k">addr_mapper</code>,
+        <code class="k">frfcfs_arbiter</code>, <code class="k">bank_state</code> + <code class="k">timing_engine</code>
+        device model, refresh), and we validate it the <b>same way Ramulator validates against Micron</b> — by diffing
+        the issued command trace — except our golden is <b>Ramulator's own TraceRecorder</b> rather than a Verilog DRAM
+        model. We extended Ramulator's validation methodology one level up: behavioral model → synthesizable RTL.</div>
+    </section>
+
+    <!-- §8 SCHEDULING LIT -->
+    <section class="card" id="sched">
+      <h2><span class="num">§8</span>Memory-scheduling research literature (background) <span class="c w">background</span></h2>
+      <p class="lead">These foundational papers were fetched as sources but their specific claims were <em>not</em> among
+        the 10 adversarially-verified findings — well-known context; re-confirm specifics before quoting.</p>
+      <ul class="notes">
+        <li><b>FR-FCFS</b> — the baseline real schedulers approximate; Ramulator's default scheduler.</li>
+        <li><b>PAR-BS</b> (Mutlu &amp; Moscibroda, ISCA 2008) — parallelism-aware batch scheduling. <a href="https://people.inf.ethz.ch/omutlu/pub/parbs_isca08.pdf">[PDF]</a></li>
+        <li><b>TCM</b> (Kim et al., MICRO 2010) — thread-cluster memory scheduling. <a href="http://users.ece.cmu.edu/~omutlu/pub/tcm_micro10.pdf">[PDF]</a></li>
+        <li><b>BLISS</b> (Subramanian et al., ICCD 2014 / TPDS 2016) — blacklisting scheduler. <a href="https://people.inf.ethz.ch/omutlu/pub/bliss-memory-scheduler_iccd14.pdf">[ICCD]</a> <a href="https://people.inf.ethz.ch/omutlu/pub/bliss-memory-scheduler_ieee-tpds16.pdf">[TPDS]</a></li>
+        <li><b>USIMM</b> / Memory Scheduling Championship — the standard scheduling-eval framework. <a href="https://users.cs.utah.edu/~rajeev/pubs/usimm.pdf">[PDF]</a></li>
+        <li>Refresh/RAS (DDR5 features, RFM/per-bank refresh, RowHammer-aware) — partially surfaced. <a href="https://www.synopsys.com/designware-ip/technical-bulletin/ddr5-features.html">[DDR5 features]</a> <a href="https://arxiv.org/html/2406.19094v1">[RFM]</a> <a href="https://fast.cc.gatech.edu/papers/ASPLOS_2025_1.pdf">[ASPLOS '25]</a></li>
+      </ul>
+    </section>
+
+    <!-- §9 RELATE -->
+    <section class="card" id="relate">
+      <h2><span class="num">§9</span>How this complements the controller we built</h2>
+      <table>
+        <thead><tr><th>Real-world fact (verified)</th><th>Equivalent in <code class="k">04_hbm_rtl</code></th></tr></thead>
+        <tbody>
+          <tr><td>CAM-based dynamic scheduling, page policy = Open (Synopsys HBM3)</td><td><code class="k">frfcfs_arbiter</code> (prefer-ready, oldest) + open-row policy</td></tr>
+          <tr><td>Per-pseudo-channel instantiation; independent clocks (JEDEC/Synopsys)</td><td>single-channel × 2-pseudochannel scope; per-(pch,bg,bank) timing</td></tr>
+          <tr><td>One 2-ch MC per 2 PCs; AXI crossbar front-end (AMD PG276)</td><td>the front-end we abstract (Ramulator does too); a real latency source</td></tr>
+          <tr><td>Latency lives in front-end/crossbar + scheduler + DFI/PHY (PG276 90/108; U280 182 ns)</td><td><b>pipelined variant</b>: registered egress command pipeline = constant DFI/PHY-style latency, schedule unchanged</td></tr>
+          <tr><td>DFI 5.0 controller→PHY datapath (Synopsys HBM3)</td><td>the egress <code class="k">command-select → DFI-format → PHY-launch</code> stages we model</td></tr>
+          <tr><td>Ramulator validated by command-trace diff vs Micron DDR4 Verilog</td><td>our controller validated <b>bit-exact</b> by command-trace diff vs Ramulator</td></tr>
+        </tbody>
+      </table>
+      <p class="fnote"><b>Net:</b> the controller in this project is a faithful, industrially-recognizable subset —
+        FR-FCFS over per-bank state with open-page policy and JEDEC timing — and the pipelined variant correctly
+        reflects where real designs put their latency (the datapath, not the decision).</p>
+    </section>
+
+    <!-- §10 LIMITS -->
+    <section class="card" id="limits">
+      <h2><span class="num">§10</span>Limitations &amp; open questions</h2>
+      <h3>Confidence / scope caveats</h3>
+      <ol class="notes">
+        <li>The richest microarch detail (look-ahead/CAM depth, page policy, ports, DFI ratios) is from <b>vendor
+          product pages</b> stating configurable <b>"up to" maxima</b> — not measured runtime behavior or internal
+          pipeline-stage breakdowns. True per-stage depth inside the IP is <b>proprietary</b>.</li>
+        <li>The only concrete latency <b>numbers</b> are AMD/Xilinx's <b>90/108 mem-clocks</b> (config-dependent) and
+          the <b>Alveo U280 229 ns / 182 ns</b> measurement — both <b>older Xilinx HBM2 hard IP</b>; they do <b>not</b>
+          generalize to Versal HBM, discrete-GPU HBM, or CPU/GPU IMCs.</li>
+        <li><b>Not gathered/verified this pass:</b> Cadence/Denali, Rambus, ARM CMN/DMC microarchitecture; refresh
+          specifics (per-bank refresh, postponement, DRFM/RFM granularity); write CRC; CA parity; link-ECC; and the
+          scheduling research literature beyond names. <b>Absence ≠ undocumented.</b></li>
+        <li>The 90/108-clock finding passed <b>2-1</b> (the dissent was a config-dependence caveat, not a factual
+          refutation) — vendor-published but configuration-specific. All other findings are <b>3-0</b> with primary
+          sources.</li>
+      </ol>
+      <h3>Open questions for a follow-up pass</h3>
+      <ul class="notes">
+        <li>Public/microbenchmark latency breakdowns of <b>CPU/GPU integrated memory controllers</b> (Intel/AMD IMC,
+          NVIDIA GPU HBM), split into front-end/CDC vs scheduler vs DFI/PHY.</li>
+        <li><b>Cadence/Denali, Rambus, ARM</b> reorder-depth / scheduling / refresh comparison.</li>
+        <li>Empirical row-buffer-locality vs bank-level-parallelism results from FR-FCFS/PAR-BS/TCM/BLISS/USIMM, and how
+          CAM-based vendor schedulers map onto them.</li>
+        <li>Concrete advanced refresh/RAS implementation (per-bank refresh, postponement, DRFM/RFM, RowHammer-aware,
+          write CRC, CA parity, on-die/link ECC) in shipping controllers.</li>
+      </ul>
+    </section>
+
+    <!-- §11 SOURCES -->
+    <section class="card" id="sources">
+      <h2><span class="num">§11</span>Sources</h2>
+      <h4>Primary / verified</h4>
+      <ul class="notes">
+        <li>Synopsys uMCTL2 (DDR) — <a href="https://www.synopsys.com/designware-ip/interface-ip/ddr/ddr-universal-umctl2.html">product page</a>, <a href="https://www.synopsys.com/dw/doc.php/wp/DDR_read_reorder_wp.pdf">read-reorder WP</a></li>
+        <li>Synopsys HBM3 controller — <a href="https://www.synopsys.com/designware-ip/interface-ip/hbm/hbm3-controller.html">page</a>, <a href="https://www.synopsys.com/glossary/what-is-high-bandwitdth-memory-3.html">"What is HBM3"</a></li>
+        <li>JEDEC JESD238 (HBM3) — <a href="https://www.jedec.org/news/pressreleases/jedec-publishes-hbm3-update-high-bandwidth-memory-hbm-standard">press release</a></li>
+        <li>AMD/Xilinx PG276 (AXI HBM) — <a href="https://docs.amd.com/r/en-US/pg276-axi-hbm/Core-Overview">Core Overview</a>; <a href="https://xilinx.github.io/Vitis-Tutorials/2021-1/build/html/docs/Hardware_Acceleration/Feature_Tutorials/07-using-hbm/1_overview.html">Vitis "Using HBM"</a></li>
+        <li>HBM benchmarking (U280 latency) — <a href="https://arxiv.org/abs/2010.06075">arXiv 2010.06075</a>; Shuhai — <a href="https://arxiv.org/abs/2005.04324">2005.04324</a>; ScalaBFS — <a href="https://arxiv.org/abs/2105.11754">2105.11754</a></li>
+        <li>Ramulator 2.0 — <a href="https://arxiv.org/abs/2308.11030">arXiv 2308.11030</a>, <a href="https://people.inf.ethz.ch/omutlu/pub/Ramulator2_arxiv23.pdf">PDF</a></li>
+      </ul>
+      <h4>Background / consulted (re-confirm specifics)</h4>
+      <ul class="notes">
+        <li>PAR-BS — <a href="https://people.inf.ethz.ch/omutlu/pub/parbs_isca08.pdf">PDF</a>; TCM — <a href="http://users.ece.cmu.edu/~omutlu/pub/tcm_micro10.pdf">PDF</a>; BLISS — <a href="https://people.inf.ethz.ch/omutlu/pub/bliss-memory-scheduler_iccd14.pdf">ICCD</a>/<a href="https://people.inf.ethz.ch/omutlu/pub/bliss-memory-scheduler_ieee-tpds16.pdf">TPDS</a>; USIMM — <a href="https://users.cs.utah.edu/~rajeev/pubs/usimm.pdf">PDF</a></li>
+        <li>Synopsys DDR5 features — <a href="https://www.synopsys.com/designware-ip/technical-bulletin/ddr5-features.html">link</a>; RFM/refresh — <a href="https://arxiv.org/html/2406.19094v1">arXiv</a>; ASPLOS 2025 refresh — <a href="https://fast.cc.gatech.edu/papers/ASPLOS_2025_1.pdf">PDF</a></li>
+        <li>Chips and Cheese (CPU memory latency) — <a href="https://chipsandcheese.com/p/pushing-amds-infinity-fabric-to-its">Infinity Fabric</a>, <a href="https://chipsandcheese.com/p/amds-ryzen-9950x-zen-5-on-desktop">Zen 5 9950X</a></li>
+      </ul>
+      <div class="footer">
+        <p>Research stats: 6 angles · 28 sources fetched · 129 claims extracted · 25 verified (25 confirmed / 0 killed)
+          · 10 findings · 111 agent calls. &nbsp;·&nbsp; author: yang-gon kim &nbsp;·&nbsp;
+          <a href="../../index.html">Report Archive</a> &nbsp;·&nbsp;
+          <a href="../00_cc/report.html">← the bit-exact HBM3 controller</a></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting) { links.forEach(function(a){ a.classList.remove('active'); });
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>

@@ -29,6 +29,10 @@ from the published site.
   SystemVerilog re-implementation that reproduces it bit-exactly (microarchitecture
   block diagram, 1:1 function→RTL mapping, side-by-side C++/SV pseudocode, timing,
   worked examples, and the bit-exact verification).
+- `02_HBM_MC/01_cx/report.html`: a cited literature/industry survey of how real
+  DDR/HBM memory controllers are implemented (Synopsys uMCTL2 & HBM3 controller,
+  AMD/Xilinx AXI HBM IP, JEDEC HBM3, Ramulator 2), with confidence labels and how
+  each fact maps onto the bit-exact controller in this project.
 
 ## Editing Rules
 
