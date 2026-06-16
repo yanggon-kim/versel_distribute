@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpMV on NVIDIA GPUs — Complete Visual Reference (Blackwell SASS Updated)</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--fg2:#555;--fg3:#888;--bdr:#e0e0e0;--bg2:#f7f7f5;--bg3:#fafaf8;--blue:#185FA5;--blue-bg:#E6F1FB;--teal:#0F6E56;--teal-bg:#E1F5EE;--coral:#993C1D;--coral-bg:#FAECE7;--purple:#534AB7;--purple-bg:#EEEDFE;--amber:#854F0B;--amber-bg:#FAEEDA;--red:#A32D2D;--red-bg:#FCEBEB;--green:#3B6D11;--green-bg:#E8F5D9;--cyan:#0E7490;--cyan-bg:#E0F7FA;--mono:'SF Mono','Fira Code','JetBrains Mono',monospace;--sans:system-ui,-apple-system,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a1a;--fg:#e8e8e4;--fg2:#aaa;--fg3:#777;--bdr:#333;--bg2:#232320;--bg3:#1e1e1c;--blue:#85B7EB;--blue-bg:#0C447C;--teal:#5DCAA5;--teal-bg:#085041;--coral:#F0997B;--coral-bg:#712B13;--purple:#AFA9EC;--purple-bg:#3C3489;--amber:#FAC775;--amber-bg:#633806;--red:#F09595;--red-bg:#791F1F;--green:#97C459;--green-bg:#2a4510;--cyan:#22D3EE;--cyan-bg:#0c4a5c}}
+*{box-sizing:border-box;margin:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--fg);max-width:960px;margin:0 auto;padding:32px 20px;line-height:1.7;font-size:15px}
+h1{font-size:24px;font-weight:700;margin:0 0 4px;letter-spacing:-0.02em}
+h2{font-size:19px;font-weight:600;margin:40px 0 12px;padding-top:20px;border-top:2px solid var(--bdr)}
+h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+p{margin:0 0 12px}
+.sub{color:var(--fg2);font-size:13px;margin-bottom:24px;line-height:1.6}
+code{font-family:var(--mono);font-size:12.5px;background:var(--bg2);padding:1px 5px;border-radius:4px}
+pre{background:var(--bg2);padding:14px;border-radius:8px;overflow-x:auto;font-size:11.5px;line-height:1.65;margin:8px 0 16px;border:1px solid var(--bdr)}
+pre code{background:none;padding:0}
+.card{border:1px solid var(--bdr);border-radius:10px;padding:16px 20px;margin:12px 0 20px}
+.card-t{font-size:11px;font-weight:600;letter-spacing:0.05em;margin-bottom:8px;font-family:var(--mono)}
+.note{background:var(--bg2);border-left:3px solid var(--bdr);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:13px;color:var(--fg2);line-height:1.6}
+.note.red{border-left-color:var(--red);background:var(--red-bg)}
+.note.blue{border-left-color:var(--blue);background:var(--blue-bg)}
+.note.green{border-left-color:var(--green);background:var(--green-bg)}
+.note.amber{border-left-color:var(--amber);background:var(--amber-bg)}
+.note.purple{border-left-color:var(--purple);background:var(--purple-bg)}
+table{border-collapse:collapse;width:100%;margin:8px 0 16px;font-size:13px}
+th,td{padding:6px 10px;border:1px solid var(--bdr);text-align:left}
+th{background:var(--bg2);font-weight:500;font-size:12px}
+svg{max-width:100%;height:auto;display:block;margin:12px auto}
+svg text{font-family:var(--sans)}
+.t14b{font-size:14px;fill:var(--fg);font-weight:500}
+.t12{font-size:12px;fill:var(--fg2)}
+.t12r{font-size:12px;fill:var(--red)}
+.t12g{font-size:12px;fill:var(--teal)}
+.t11{font-size:11px;fill:var(--fg3)}
+.t10{font-size:10px;fill:var(--fg3)}
+@media(max-width:800px){body{padding:20px 12px}}
+@media print{h2{page-break-before:always}svg,.card{page-break-inside:avoid}body{background:#fff;color:#111}.card{border-color:#ddd}}
+</style>
+</head>
+<body>
+
+<h1>SpMV on NVIDIA GPUs — Complete Visual Reference</h1>
+<p class="sub">
+  cuSPARSE <code>csrmv_v3_kernel</code> — Merge-path SpMV (Merrill–Garland).<br>
+  Updated with real SASS from Blackwell RTX 5080 (sm_120, CUDA 13.x). Incorporates content from 5 previous analysis artifacts.<br>
+  Matrices: cant (62K rows, 4M nnz, avg 64 nnz/row) on Blackwell; cage15 (5.15M rows, 99.2M nnz, avg 19.2 nnz/row) on H200 Hopper.
+</p>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>1. The Sparse Matrix and CSR Storage</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<p>A sparse matrix stores only nonzero elements. The CSR format uses three arrays:</p>
+
+<svg width="100%" viewBox="0 0 680 520">
+<defs><marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text class="t14b" x="140" y="26" text-anchor="middle">Sparse matrix A</text>
+<g transform="translate(60,42)">
+<rect x="0" y="0" width="160" height="160" fill="none" stroke="var(--bdr)" stroke-width="0.5"/>
+<line x1="20" y1="0" x2="20" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="40" y1="0" x2="40" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="60" y1="0" x2="60" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="80" y1="0" x2="80" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="100" y1="0" x2="100" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="120" y1="0" x2="120" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="140" y1="0" x2="140" y2="160" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/>
+<line x1="0" y1="20" x2="160" y2="20" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="0" y1="40" x2="160" y2="40" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="0" y1="60" x2="160" y2="60" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="0" y1="80" x2="160" y2="80" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="0" y1="100" x2="160" y2="100" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="0" y1="120" x2="160" y2="120" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/><line x1="0" y1="140" x2="160" y2="140" stroke="var(--bdr)" stroke-width="0.3" opacity="0.4"/>
+<circle cx="30" cy="10" r="4" fill="var(--blue)"/><circle cx="10" cy="30" r="4" fill="var(--blue)"/><circle cx="30" cy="30" r="4" fill="var(--blue)"/><circle cx="90" cy="30" r="4" fill="var(--blue)"/><circle cx="50" cy="50" r="4" fill="var(--blue)"/><circle cx="10" cy="70" r="4" fill="var(--blue)"/><circle cx="30" cy="70" r="4" fill="var(--blue)"/><circle cx="70" cy="70" r="4" fill="var(--blue)"/><circle cx="110" cy="70" r="4" fill="var(--blue)"/><circle cx="150" cy="70" r="4" fill="var(--blue)"/><circle cx="50" cy="110" r="4" fill="var(--blue)"/><circle cx="130" cy="110" r="4" fill="var(--blue)"/><circle cx="150" cy="130" r="4" fill="var(--blue)"/><circle cx="10" cy="150" r="4" fill="var(--blue)"/><circle cx="70" cy="150" r="4" fill="var(--blue)"/><circle cx="130" cy="150" r="4" fill="var(--blue)"/>
+<text class="t11" x="-8" y="12" text-anchor="end">0</text><text class="t11" x="-8" y="32" text-anchor="end">1</text><text class="t11" x="-8" y="52" text-anchor="end">2</text><text class="t11" x="-8" y="72" text-anchor="end">3</text><text class="t11" x="-8" y="92" text-anchor="end">4</text><text class="t11" x="-8" y="112" text-anchor="end">5</text><text class="t11" x="-8" y="132" text-anchor="end">6</text><text class="t11" x="-8" y="152" text-anchor="end">7</text>
+</g>
+<text class="t12" x="234" y="54">1 nnz</text><text class="t12" x="234" y="74">3 nnz</text><text class="t12" x="234" y="94">1 nnz</text><text x="234" y="114" font-size="12" fill="var(--coral)" font-weight="500">5 nnz</text><text x="234" y="134" font-size="12" fill="var(--red)" font-weight="500">0 nnz</text><text class="t12" x="234" y="154">2 nnz</text><text class="t12" x="234" y="174">1 nnz</text><text class="t12" x="234" y="194">3 nnz</text>
+<text class="t14b" x="370" y="26" text-anchor="middle">× x</text>
+<g transform="translate(360,42)"><rect x="0" y="0" width="20" height="160" fill="none" stroke="var(--bdr)" stroke-width="0.5"/><rect x="1" y="1" width="18" height="158" fill="var(--teal)" opacity="0.15"/></g>
+<text class="t14b" x="430" y="26" text-anchor="middle">= y</text>
+<g transform="translate(420,42)"><rect x="0" y="0" width="20" height="160" fill="none" stroke="var(--bdr)" stroke-width="0.5"/><rect x="1" y="1" width="18" height="158" fill="var(--coral)" opacity="0.15"/></g>
+<text class="t12" x="470" y="90">Row 3 has 5× the work of row 2.</text>
+<text class="t12" x="470" y="108">Row 4 is empty.</text>
+<text class="t12r" x="470" y="130">Naive row-per-thread</text>
+<text class="t12r" x="470" y="148">→ massive load imbalance</text>
+<text class="t14b" x="340" y="240" text-anchor="middle">CSR storage (3 arrays in memory)</text>
+<rect x="40" y="260" width="600" height="36" rx="6" fill="var(--amber-bg)" stroke="var(--amber)" stroke-width="0.5"/>
+<text x="52" y="282" font-size="14" font-weight="500" fill="var(--amber)" dominant-baseline="central">row_ptr (int32)</text>
+<text class="t12" x="200" y="282" dominant-baseline="central">0  1  4  5  10  10  12  13  16</text>
+<text class="t12" x="52" y="310">INT32 × (rows+1) — row 4→5 same offset (10=10) = empty row</text>
+<rect x="40" y="326" width="600" height="36" rx="6" fill="var(--blue-bg)" stroke="var(--blue)" stroke-width="0.5"/>
+<text x="52" y="348" font-size="14" font-weight="500" fill="var(--blue)" dominant-baseline="central">col_idx (int32)</text>
+<text class="t12" x="200" y="348" dominant-baseline="central">1  0  1  4  2  0  1  3  5  7  2  6  7  0  3  6</text>
+<text class="t12" x="52" y="376">INT32 × nnz — this is the "dependent load" source for x[col]</text>
+<rect x="40" y="396" width="600" height="36" rx="6" fill="var(--teal-bg)" stroke="var(--teal)" stroke-width="0.5"/>
+<text x="52" y="418" font-size="14" font-weight="500" fill="var(--teal)" dominant-baseline="central">values (float32)</text>
+<text class="t12" x="200" y="418" dominant-baseline="central">2.1  1.0  3.5  0.7  4.2  ...  ...  ...  ...  1.8</text>
+<text class="t12" x="52" y="446">FP32 × nnz — independent load, streams alongside col_idx</text>
+<rect x="40" y="466" width="600" height="36" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t12" x="340" y="488" text-anchor="middle" dominant-baseline="central">Total bytes per nnz ≈ 4 (val) + 4 (col) + 4 (x[col]) = 12 bytes load + ~1 byte store (amortised y)</text>
+</svg>
+
+<p>The key problem is visible in the matrix: row 3 has 5 nonzeros while row 4 has zero. Naive row-per-thread assignment leads to massive load imbalance. cuSPARSE solves this with the <strong>merge-path algorithm</strong>.</p>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>2. Merge-Path: Equal-Sized Warp Tiles</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<p>Merge-path (Merrill–Garland, PPoPP'16) transforms the 2D (rows × nnz) iteration space into a 1D "merged coordinate" array. Each position is either a row step (↓) or a nonzero step (→). This 1D array is sliced into <strong>equal tiles of 256 nonzeros</strong>, each assigned to one warp:</p>
+
+<svg width="100%" viewBox="0 0 700 380">
+<text class="t14b" x="350" y="20" text-anchor="middle">2D iteration space (rows × nonzeros per row)</text>
+<g transform="translate(60,36)">
+<text class="t12" x="-8" y="10" text-anchor="end">r0</text><rect x="0" y="0" width="22" height="16" rx="2" fill="var(--blue)" opacity="0.5" stroke="var(--blue)" stroke-width="0.5"/>
+<text class="t12" x="-8" y="30" text-anchor="end">r1</text><rect x="0" y="20" width="66" height="16" rx="2" fill="var(--blue)" opacity="0.5" stroke="var(--blue)" stroke-width="0.5"/>
+<text class="t12" x="-8" y="50" text-anchor="end">r2</text><rect x="0" y="40" width="22" height="16" rx="2" fill="var(--blue)" opacity="0.5" stroke="var(--blue)" stroke-width="0.5"/>
+<text class="t12" x="-8" y="70" text-anchor="end">r3</text><rect x="0" y="60" width="110" height="16" rx="2" fill="var(--blue)" opacity="0.7" stroke="var(--blue)" stroke-width="0.5"/>
+<text class="t12" x="-8" y="90" text-anchor="end">r4</text><rect x="0" y="80" width="2" height="16" rx="1" fill="var(--red)" opacity="0.5" stroke="var(--red)" stroke-width="0.5"/>
+<text class="t12" x="-8" y="110" text-anchor="end">r5</text><rect x="0" y="100" width="44" height="16" rx="2" fill="var(--blue)" opacity="0.5" stroke="var(--blue)" stroke-width="0.5"/>
+</g>
+<text class="t12" x="200" y="88">Uneven rows = unbalanced work</text>
+<line x1="350" y1="160" x2="350" y2="188" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<text class="t14b" x="370" y="182">flatten + slice into warp tiles</text>
+<text class="t14b" x="350" y="210" text-anchor="middle">Equal-size warp tiles → perfect load balance</text>
+<g transform="translate(40,226)">
+<rect x="0" y="0" width="185" height="40" rx="6" fill="var(--purple-bg)" stroke="var(--purple)" stroke-width="0.5"/>
+<text x="92" y="16" text-anchor="middle" dominant-baseline="central" fill="var(--purple)" font-size="12" font-weight="500">Warp Tile 0 (256 nnz)</text>
+<text x="92" y="32" text-anchor="middle" dominant-baseline="central" fill="var(--purple)" font-size="11">8 nnz/lane × 32 lanes</text>
+<rect x="195" y="0" width="185" height="40" rx="6" fill="var(--purple-bg)" stroke="var(--purple)" stroke-width="0.5"/>
+<text x="287" y="16" text-anchor="middle" dominant-baseline="central" fill="var(--purple)" font-size="12" font-weight="500">Warp Tile 1 (256 nnz)</text>
+<text x="287" y="32" text-anchor="middle" dominant-baseline="central" fill="var(--purple)" font-size="11">8 nnz/lane × 32 lanes</text>
+<text x="406" y="20" text-anchor="middle" dominant-baseline="central" font-size="14">...</text>
+<rect x="430" y="0" width="185" height="40" rx="6" fill="var(--purple-bg)" stroke="var(--purple)" stroke-width="0.5"/>
+<text x="522" y="16" text-anchor="middle" dominant-baseline="central" fill="var(--purple)" font-size="12" font-weight="500">Warp Tile N-1</text>
+<text x="522" y="32" text-anchor="middle" dominant-baseline="central" fill="var(--purple)" font-size="11">8 nnz/lane × 32 lanes</text>
+</g>
+<text class="t12" x="350" y="290" text-anchor="middle">Each warp gets exactly 256 nonzeros regardless of row boundaries</text>
+<text class="t12" x="350" y="310" text-anchor="middle">Rows that span tile boundaries → both warps contribute via atomic <code style="font-size:12px">RED.E.ADD</code></text>
+<rect x="40" y="326" width="620" height="36" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t12" x="350" y="348" text-anchor="middle" dominant-baseline="central">cant: 4M nnz ÷ 256 = 15,656 warp tiles = 3,914 blocks × 4 warps/block</text>
+</svg>
+
+<p>A companion <strong><code>csr_partition_kernel</code></strong> (72 instructions, trivially fast) binary-searches <code>row_ptr</code> to precompute the starting row for each warp tile. The main <code>csrmv_v3_kernel</code> reads this partition table and processes its 256 nonzeros.</p>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>3. The Dependent Load Chain — The Fundamental Bottleneck</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<p>The inner loop has a fundamental problem: <code>x[col]</code> cannot be loaded until <code>col_idx[j]</code> returns from DRAM, serializing two long-latency memory accesses. The kernel batches 8 iterations per lane to overlap the first halves, but the <code>col_idx → x[col]</code> dependency is inescapable.</p>
+
+<svg width="100%" viewBox="0 0 700 560">
+<rect x="40" y="20" width="290" height="52" rx="8" fill="var(--blue-bg)" stroke="var(--blue)" stroke-width="0.5"/>
+<text x="185" y="38" text-anchor="middle" dominant-baseline="central" fill="var(--blue)" font-size="14" font-weight="500">LOAD 1: col_idx[j]</text>
+<text x="185" y="56" text-anchor="middle" dominant-baseline="central" fill="var(--blue)" font-size="12">@!P1 LDG.E.EF R35, desc[UR6][R4.64]</text>
+<text class="t12" x="354" y="38">INT32 → register (vectorised, predicated)</text>
+<text class="t12" x="354" y="56">~400–500 cycles DRAM (Blackwell GDDR7)</text>
+<line x1="185" y1="72" x2="185" y2="108" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<text class="t12r" x="200" y="96">RAW hazard: must wait for R35</text>
+<rect x="40" y="108" width="290" height="52" rx="8" fill="var(--coral-bg)" stroke="var(--coral)" stroke-width="0.5"/>
+<text x="185" y="126" text-anchor="middle" dominant-baseline="central" fill="var(--coral)" font-size="14" font-weight="500">ADDRESS: &x[col]</text>
+<text x="185" y="144" text-anchor="middle" dominant-baseline="central" fill="var(--coral)" font-size="12">IMAD.WIDE R30, R35, 0x4, R30</text>
+<text class="t12" x="354" y="126">x_base + col × 4 (folded into IMAD.WIDE/LEA)</text>
+<text class="t12" x="354" y="144">~4 cycles (FMA pipe)</text>
+<line x1="185" y1="160" x2="185" y2="196" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<text class="t12r" x="200" y="184">RAW hazard: must wait for addr</text>
+<rect x="40" y="196" width="290" height="52" rx="8" fill="var(--blue-bg)" stroke="var(--blue)" stroke-width="0.5"/>
+<text x="185" y="214" text-anchor="middle" dominant-baseline="central" fill="var(--blue)" font-size="14" font-weight="500">LOAD 2: x[col] (the gather)</text>
+<text x="185" y="232" text-anchor="middle" dominant-baseline="central" fill="var(--blue)" font-size="12">@!P1 LD.E R11, desc[UR6][R30.64]</text>
+<text class="t12" x="354" y="214">FP32, scattered/indirect access</text>
+<text class="t12" x="354" y="232">~400–500 cycles if DRAM miss</text>
+<line x1="185" y1="248" x2="185" y2="360" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<rect x="370" y="288" width="270" height="52" rx="8" fill="var(--teal-bg)" stroke="var(--teal)" stroke-width="0.5"/>
+<text x="505" y="306" text-anchor="middle" dominant-baseline="central" fill="var(--teal)" font-size="14" font-weight="500">LOAD 3: values[j]</text>
+<text x="505" y="324" text-anchor="middle" dominant-baseline="central" fill="var(--teal)" font-size="12">@!P1 LDG.E.EF R20 (independent)</text>
+<text class="t12g" x="354" y="354">overlaps LOAD 1 freely — ready before needed</text>
+<path d="M505 340 L505 362 L330 362" fill="none" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<rect x="40" y="368" width="290" height="48" rx="8" fill="var(--amber-bg)" stroke="var(--amber)" stroke-width="0.5"/>
+<text x="185" y="384" text-anchor="middle" dominant-baseline="central" fill="var(--amber)" font-size="14" font-weight="500">COMPUTE: val × x[col]</text>
+<text x="185" y="400" text-anchor="middle" dominant-baseline="central" fill="var(--amber)" font-size="12">@!P1 FMUL R12, R11, R20 (NOT FFMA!)</text>
+<line x1="185" y1="416" x2="185" y2="444" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<rect x="40" y="444" width="290" height="48" rx="8" fill="var(--amber-bg)" stroke="var(--amber)" stroke-width="0.5"/>
+<text x="185" y="460" text-anchor="middle" dominant-baseline="central" fill="var(--amber)" font-size="14" font-weight="500">ACCUMULATE</text>
+<text x="185" y="476" text-anchor="middle" dominant-baseline="central" fill="var(--amber)" font-size="12">FADD R14, R12, R14 (separate from FMUL)</text>
+<rect x="40" y="510" width="620" height="36" rx="8" fill="var(--red-bg)" stroke="var(--red)" stroke-width="0.5"/>
+<text x="350" y="532" text-anchor="middle" font-size="13" fill="var(--red)" font-weight="500" dominant-baseline="central">Critical path: ~810–1,010 cycles. Compute (FMUL+FADD) = 8 of ~900 = 0.9%. The rest is memory.</text>
+</svg>
+
+<h3>The fully-unrolled Phase 4 in real SASS — 4 interleaved groups</h3>
+
+<p>In the csrmv_v3 binary, Phase 4 (PCs <code>0x0170–0x1300</code>, ~430 instructions) is <strong>fully unrolled</strong> — no backward branch wraps the per-nonzero body. The compiler does NOT generate 8 sequential iterations of the same chain. Instead, it deeply interleaves all 8 batches across <strong>4 functional groups</strong> to maximise memory-level parallelism:</p>
+
+<div class="card" style="border-left:3px solid var(--blue)">
+<div class="card-t" style="color:var(--blue)">GROUP 1: FIRE ALL STREAMING LOADS (PCs 0x0170–0x02b0)</div>
+<p style="font-size:13px">All 8 batches of col_idx[] loads + all 8 batches of values[] loads fire back-to-back. No data dependency between batches — maximum MLP. All ~16 loads are in-flight to DRAM simultaneously.</p>
+<pre><code><span style="color:var(--fg3)">── col_idx loads (one warp-width per batch, offset +0x80 = 32 lanes × 4B) ──</span>
+0x0170: @!P1 LDG.E.EF R35, desc[UR6][R4.64]         <span style="color:var(--fg3)">← batch 0: col_idx[nnz 0..31]</span>
+0x01a0: @!P4 LDG.E.EF R23, desc[UR6][R4.64+0x180]   <span style="color:var(--fg3)">← batch 3: col_idx[nnz 96..127]</span>
+0x01b0: @!P5 LDG.E.EF R21, desc[UR6][R4.64+0x200]   <span style="color:var(--fg3)">← batch 4: col_idx[nnz 128..159]</span>
+0x01d0: @!P2 LDG.E.EF R29, desc[UR6][R4.64+0x80]    <span style="color:var(--fg3)">← batch 1: col_idx[nnz 32..63]</span>
+0x01e0: @!P3 LDG.E.EF R25, desc[UR6][R4.64+0x100]   <span style="color:var(--fg3)">← batch 2: col_idx[nnz 64..95]</span>
+        <span style="color:var(--fg3)">(batches 5–7 at higher offsets follow in subsequent PCs)</span>
+
+<span style="color:var(--fg3)">── values loads (same structure, different base register R4 with offsets) ──</span>
+0x0280: @!P1 LDG.E.EF R20, desc[UR6][R4.64]         <span style="color:var(--fg3)">← batch 0: values[nnz 0..31]</span>
+0x0290: @!P2 LDG.E.EF R32, desc[UR6][R4.64+0x80]    <span style="color:var(--fg3)">← batch 1: values[nnz 32..63]</span>
+0x02a0: @!P3 LDG.E.EF R26, desc[UR6][R4.64+0x100]   <span style="color:var(--fg3)">← batch 2: values[nnz 64..95]</span>
+0x02b0: @!P5 LDG.E.EF R24, desc[UR6][R4.64+0x200]   <span style="color:var(--fg3)">← batch 4: values[nnz 128..159]</span>
+0x0300: @!P4 LDG.E.EF R8,  desc[UR6][R4.64+0x180]   <span style="color:var(--fg3)">← batch 3: values[nnz 96..127]</span>
+        <span style="color:var(--fg3)">(batches 5–7 follow)</span></code></pre>
+<p style="font-size:12px;color:var(--fg2)">Loads are predicated (<code>@!P1</code>..<code>@!P5</code>) for bounds checking — tiles near the end of the matrix may have fewer than 256 valid nonzeros. All loads fire within ~20 cycles. Batch ordering is NOT sequential (0,3,4,1,2...) — the compiler reorders to minimize register-file bank conflicts.</p>
+</div>
+
+<div class="card" style="border-left:3px solid var(--coral)">
+<div class="card-t" style="color:var(--coral)">GROUP 2: ADDRESS COMPUTATION + DEPENDENT GATHERS (PCs 0x02c0–0x0370)</div>
+<p style="font-size:13px">As col_idx results return from DRAM (~400–500 cycles later), compute gather addresses and issue dependent x[col] loads. <strong style="color:var(--red)">⚠ THIS IS WHERE THE WARP STALLS — long_scoreboard (65%).</strong></p>
+<pre><code><span style="color:var(--fg3)">── IMAD.WIDE: x_base + col_idx × 4 (needs col_idx result → STALLS!) ──</span>
+0x02c0: @!P4 IMAD.WIDE R16, R23, 0x4, R16           <span style="color:var(--fg3)">← batch 3: addr(x[col])</span>
+0x02d0: @!P5 IMAD.WIDE R22, R21, 0x4, R8            <span style="color:var(--fg3)">← batch 4: addr(x[col])</span>
+0x02f0: @!P1 IMAD.WIDE R30, R35, 0x4, R30           <span style="color:var(--fg3)">← batch 0: addr(x[col])</span>
+0x0310: @!P2 IMAD.WIDE R14, R29, 0x4, R14           <span style="color:var(--fg3)">← batch 1: addr(x[col])</span>
+0x0330: @!P3 IMAD.WIDE R18, R25, 0x4, R18           <span style="color:var(--fg3)">← batch 2: addr(x[col])</span>
+
+<span style="color:var(--fg3)">── LD.E: x[col] — the dependent gather loads (note: LD.E not LDG.E.EF) ──</span>
+0x0320: @!P1 LD.E R11, desc[UR6][R30.64]            <span style="color:var(--fg3)">← batch 0: x[col_0] (scattered)</span>
+0x0340: @!P2 LD.E R15, desc[UR6][R14.64]            <span style="color:var(--fg3)">← batch 1: x[col_1]</span>
+0x0350: @!P3 LD.E R18, desc[UR6][R18.64]            <span style="color:var(--fg3)">← batch 2: x[col_2]</span>
+0x0360: @!P4 LD.E R16, desc[UR6][R16.64]            <span style="color:var(--fg3)">← batch 3: x[col_3]</span>
+0x0370: @!P5 LD.E R22, desc[UR6][R22.64]            <span style="color:var(--fg3)">← batch 4: x[col_4]</span>
+        <span style="color:var(--fg3)">(batches 5–7 follow)</span></code></pre>
+<p style="font-size:12px;color:var(--fg2)">The compiler interleaves IMAD.WIDE and LD.E across batches: while batch 0's col_idx is still in-flight, batch 3's may have already returned. Each LD.E is a scattered, indirect load — these cause the 65% long_scoreboard stalls.</p>
+</div>
+
+<div class="card" style="border-left:3px solid var(--amber)">
+<div class="card-t" style="color:var(--amber)">GROUP 3: MULTIPLY (PCs 0x03e0–0x04a0)</div>
+<p style="font-size:13px">Once values[j] and x[col] are in registers, compute val × x[col] using two separate FMULs (NOT FFMA). The first FMUL multiplies by the alpha coefficient; the second multiplies by x[col].</p>
+<pre><code><span style="color:var(--fg3)">── FMUL pass 1: values[j] × alpha (R7 = alpha, reused across all batches) ──</span>
+0x03e0: @!P1 FMUL R20, R20, R7.reuse                <span style="color:var(--fg3)">← batch 0: val × alpha</span>
+0x03f0: @!P2 FMUL R32, R32, R7.reuse                <span style="color:var(--fg3)">← batch 1: val × alpha</span>
+0x0400: @!P3 FMUL R13, R26, R7.reuse                <span style="color:var(--fg3)">← batch 2: val × alpha</span>
+0x0410: @!P5 FMUL R19, R24, R7.reuse                <span style="color:var(--fg3)">← batch 4: val × alpha</span>
+0x0430: @!P4 FMUL R17, R8,  R7                      <span style="color:var(--fg3)">← batch 3: val × alpha</span>
+
+<span style="color:var(--fg3)">── FMUL pass 2: (val×alpha) × x[col] (the actual SpMV product) ──</span>
+0x0450: @!P1 FMUL R12, R11, R20                     <span style="color:var(--fg3)">← batch 0: (val×α) × x[col_0]</span>
+0x0470: @!P2 FMUL R11, R15, R32                     <span style="color:var(--fg3)">← batch 1: (val×α) × x[col_1]</span>
+0x0480: @!P3 FMUL R4,  R18, R13                     <span style="color:var(--fg3)">← batch 2: (val×α) × x[col_2]</span>
+0x0490: @!P4 FMUL R5,  R16, R17                     <span style="color:var(--fg3)">← batch 3: (val×α) × x[col_3]</span>
+0x04a0: @!P5 FMUL R14, R22, R19                     <span style="color:var(--fg3)">← batch 4: (val×α) × x[col_4]</span>
+        <span style="color:var(--fg3)">(batches 5–7 follow)</span></code></pre>
+<p style="font-size:12px;color:var(--fg2)">Two separate FMULs, not FFMA — the compiler chose split multiply because FMUL+FADD allows more scheduling freedom. The FADD is deferred to Group 4 where it's interleaved with row boundary detection.</p>
+</div>
+
+<div class="card" style="border-left:3px solid var(--purple)">
+<div class="card-t" style="color:var(--purple)">GROUP 4: ROW BOUNDARY DETECTION + ACCUMULATION (PCs 0x04b0–0x1300, ~350 instructions)</div>
+<p style="font-size:13px">The largest and most complex group. Per-lane binary search to find which row owns each nonzero, using SHFL.IDX across warp lanes. Short backward-BRA loops walk row boundaries in shared memory. FADD accumulates products per row segment. This is NOT a simple "FADD per nnz" — the structure depends on how many rows the tile spans.</p>
+<pre><code><span style="color:var(--fg3)">── Row boundary detection via SHFL.IDX (binary search, 5 steps = log2(32)) ──</span>
+0x05e0: SHFL.IDX PT, R8,  R16, 0x10, 0x1f          <span style="color:var(--fg3)">← bisection stride=16</span>
+0x0620: SHFL.IDX PT, R20, R16, R15, 0x1f           <span style="color:var(--fg3)">← bisection stride=8</span>
+0x0680: SHFL.IDX PT, R20, R16, R17, 0x1f           <span style="color:var(--fg3)">← bisection stride=4</span>
+0x06d0: SHFL.IDX PT, R18, R16, R19, 0x1f           <span style="color:var(--fg3)">← bisection stride=2</span>
+0x0730: SHFL.IDX PT, R20, R16, R21, 0x1f           <span style="color:var(--fg3)">← bisection stride=1</span>
+
+<span style="color:var(--fg3)">── STS/LDS: stage row boundary info + partial sums in shared memory ──</span>
+0x0750: STS [R19], R16                              <span style="color:var(--fg3)">← write row boundary to smem</span>
+0x07a0: LDS R18, [R18+0x4]                          <span style="color:var(--fg3)">← read next boundary from smem</span>
+0x0840: LDS R20, [R16+0x8]                          <span style="color:var(--fg3)">← read during boundary walk</span>
+0x0930: LDS R25, [R16+0x8]                          <span style="color:var(--fg3)">← repeated for subsequent rows</span>
+
+<span style="color:var(--fg3)">── Row boundary walk loops (the ONLY backward BRAs in Phase 4) ──</span>
+0x0860: @!P0 BRA 0x820                              <span style="color:var(--fg3)">← walk row boundary 1 (short loop)</span>
+0x0950: @!P0 BRA 0x910                              <span style="color:var(--fg3)">← walk row boundary 2</span>
+        <span style="color:var(--fg3)">...repeats for each row crossing within this tile (~4 for cant)...</span>
+
+<span style="color:var(--fg3)">── FADD accumulation (per row segment, deferred from Group 3) ──</span>
+        <span style="color:var(--fg3)">FADDs accumulate products for each row segment.</span>
+        <span style="color:var(--fg3)">The reduction structure depends on how many rows this warp tile spans.</span>
+        <span style="color:var(--fg3)">Pattern repeats for each of the ~4 row boundaries through PC 0x1300.</span></code></pre>
+<p style="font-size:12px;color:var(--fg2)">Group 4 is by far the largest (~350 of ~430 Phase 4 instructions) because the row boundary detection and reduction logic has many branches depending on how many rows the tile spans. For cant (avg 64 nnz/row), each warp tile spans ~4 rows.</p>
+</div>
+
+<div class="note red">
+  <strong>Key structural insight:</strong> Phase 4 is NOT "8 identical iterations." The compiler organizes it as:
+  (1) one big batch of streaming loads for maximum MLP →
+  (2) one big batch of dependent gathers, interleaved as col_idx results arrive →
+  (3) one big batch of FMULs →
+  (4) one complex row-boundary section with SHFL binary search, STS/LDS shared memory staging, short backward-BRA loops, and per-row-segment FADD accumulation.
+  The program order interleaves LSU and FMA pipes: <strong>LSU→LSU→FMA→LSU→FMA→FMA→LSU→FMA</strong> — not "all LSU then all FMA."
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>4. The 6 Phases of csrmv_v3_kernel</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<p>Each warp executes 6 sequential phases. Phase 4 (per-nonzero processing) dominates execution time.</p>
+
+<div class="card"><div class="card-t" style="color:var(--fg3)">PHASE 0: SETUP (PC 0x0000–0x0220, ~20 cycles)</div>
+<p style="font-size:13px">Load kernel parameters from constant memory (<code>LDC</code>, <code>LDCU</code>), compute warp_id, lane_id. <code>S2R</code> reads special registers. Constant cache hits at ~4 cycles. Not on critical path.</p>
+<pre><code>warp_id = blockIdx.x * 4 + (threadIdx.x >> 5)    // 4 warps per block
+lane_id = threadIdx.x & 31
+warp_nnz_start = warp_id * 256                    // 256 nnz per warp tile</code></pre>
+</div>
+
+<div class="card"><div class="card-t" style="color:var(--purple)">PHASE 1: LOAD PARTITION TUPLE (PC 0x0220–0x02e0)</div>
+<p style="font-size:13px">Read pre-computed partition data from <code>csr_partition_kernel</code>: the starting and ending row for this warp tile.</p>
+<pre><code>(row_lo, nnz_lo) = partitions[warp_id]
+(row_hi, nnz_hi) = partitions[warp_id + 1]</code></pre>
+</div>
+
+<div class="card"><div class="card-t" style="color:var(--blue)">PHASE 2: ROW_PTR WALK (PC 0x1310–0x1440, backward BRA)</div>
+<p style="font-size:13px">Walk <code>row_ptr</code> from row_lo to row_hi, staging segments into shared memory. One of only two backward branches in the kernel.</p>
+</div>
+
+<div class="card"><div class="card-t" style="color:var(--coral)">PHASE 3: SHARED-MEM BINARY SEARCH (PC 0x0820–0x0bc0)</div>
+<p style="font-size:13px">Each lane bisects <code>smem_row_ptr</code> to find which row owns its nnz_index. Uses <code>SHFL.IDX</code> and <code>LDS</code>. 4 backward BRAs for bisection steps.</p>
+<pre><code>my_nnz_idx = warp_nnz_start + lane_id * 8    // 8 nnz per lane
+my_row     = bsearch(smem_row_ptr, my_nnz_idx)</code></pre>
+</div>
+
+<div class="card" style="border-left:3px solid var(--amber)"><div class="card-t" style="color:var(--amber)">PHASE 4: FULLY-UNROLLED PER-NONZERO PROCESSING (PC 0x0170–0x1300, ~430 instructions)</div>
+<p style="font-size:13px"><strong>This is where the warp spends most of its time.</strong> The compiler interleaves all 8 batches across 4 functional groups (see §3 above). The per-nonzero instruction breakdown <strong>in program order</strong> (not sorted by pipe):</p>
+<table>
+<thead><tr><th>Step</th><th>Per nonzero</th><th>Pipe</th><th>Program order notes</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>LDG.E.EF col_idx[j]</code></td><td style="color:var(--blue);font-weight:500">LSU</td><td>All 8 batches fire back-to-back first (Group 1)</td></tr>
+<tr><td>2</td><td><code>LDG.E.EF values[j]</code></td><td style="color:var(--blue);font-weight:500">LSU</td><td>All 8 batches fire next, overlap step 1 in-flight (Group 1)</td></tr>
+<tr><td>3</td><td><code>IMAD.WIDE addr = x_base + col×4</code></td><td style="color:var(--amber);font-weight:500">FMA</td><td>⚠ <strong>Stalls ~400–500 cyc</strong> waiting for col_idx from step 1 (Group 2)</td></tr>
+<tr><td>4</td><td><code>LD.E x[col_idx[j]]</code> (dependent gather)</td><td style="color:var(--blue);font-weight:500">LSU</td><td>Issues after addr computed in step 3; scattered access (Group 2)</td></tr>
+<tr><td>5</td><td><code>FMUL val × alpha</code></td><td style="color:var(--amber);font-weight:500">FMA</td><td>Can fire once values from step 2 are ready (Group 3)</td></tr>
+<tr><td>6</td><td><code>FMUL (val×α) × x[col]</code></td><td style="color:var(--amber);font-weight:500">FMA</td><td>Needs both step 4 result (x[col]) and step 5 result (Group 3)</td></tr>
+<tr><td>7</td><td><code>STS/LDS</code> (row boundary mgmt)</td><td style="color:var(--blue);font-weight:500">LSU</td><td>Shared memory staging for row boundary detection (Group 4)</td></tr>
+<tr><td>8</td><td><code>FADD partial += product</code></td><td style="color:var(--amber);font-weight:500">FMA</td><td>Deferred accumulation during row boundary resolution (Group 4)</td></tr>
+</tbody>
+<tfoot><tr><td></td><td><strong>Total per nnz</strong></td><td colspan="2"><strong>5 LSU + 3 FMA = 8 instructions</strong> — pipe order: LSU→LSU→FMA→LSU→FMA→FMA→LSU→FMA</td></tr></tfoot>
+</table>
+</div>
+
+<div class="card"><div class="card-t" style="color:var(--teal)">PHASE 5: WARP-LEVEL REDUCTION (PC 0x1dd0–0x1e80)</div>
+<p style="font-size:13px"><code>SHFL.DOWN</code> butterfly across 32 lanes for each row segment. 5 steps: stride 16→8→4→2→1. Lane 0 gets the final sum for each row owned by this warp.</p>
+</div>
+
+<div class="card"><div class="card-t" style="color:var(--red)">PHASE 6: OUTPUT WRITE (PC 0x1700–0x36cc)</div>
+<p style="font-size:13px">Interior rows: <code>STG.E</code> to <code>y[row]</code>. Boundary rows (spanning warp tiles): <code>RED.E.ADD</code> or <code>ATOM.E.ADD.F32.FTZ.RN</code> atomic-add. Includes CAS-spin paths for boundary publication.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>5. GPU Hierarchy: Tiles to Hardware</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<svg width="100%" viewBox="0 0 700 440">
+<text class="t14b" x="350" y="18" text-anchor="middle">cant: 62K rows, 4M nnz → 3,914 blocks → 84 SMs</text>
+<rect x="40" y="36" width="620" height="56" rx="10" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t14b" x="350" y="56" text-anchor="middle" dominant-baseline="central">Blackwell RTX 5080 GPU</text>
+<text class="t12" x="350" y="74" text-anchor="middle" dominant-baseline="central">84 SMs, ~960 GB/s GDDR7, 16 GB VRAM</text>
+<line x1="350" y1="92" x2="350" y2="118" stroke="var(--fg2)" stroke-width="1.5" marker-end="url(#a1)"/>
+<text class="t12" x="366" y="110">block scheduler distributes 3,914 blocks</text>
+<rect x="60" y="120" width="260" height="100" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t14b" x="190" y="140" text-anchor="middle">SM #0</text>
+<text class="t12" x="190" y="158" text-anchor="middle">4 Processing Blocks</text>
+<text class="t12" x="190" y="176" text-anchor="middle">Register File: 256 KB</text>
+<text class="t12" x="190" y="194" text-anchor="middle">Achieved: 37.65 warps (78.4% occ.)</text>
+<rect x="190" y="204" width="8" height="8" rx="4" fill="var(--purple)"/><text class="t12" x="205" y="212">×37 active warps</text>
+<rect x="380" y="120" width="260" height="100" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t14b" x="510" y="140" text-anchor="middle">SM #1 ... SM #83</text>
+<text class="t12" x="510" y="158" text-anchor="middle">Same structure × 84 SMs</text>
+<text class="t12" x="510" y="176" text-anchor="middle">Total concurrent warps: ~3,163</text>
+<text class="t12" x="510" y="194" text-anchor="middle">Waves to drain grid: ~4.95</text>
+<line x1="190" y1="220" x2="190" y2="250" stroke="var(--fg2)" stroke-width="1" marker-end="url(#a1)"/>
+<rect x="40" y="252" width="300" height="80" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t14b" x="190" y="272" text-anchor="middle">Per warp: 256 nonzeros</text>
+<text class="t12" x="190" y="292" text-anchor="middle">32 lanes × 8 nnz/lane</text>
+<text class="t12" x="190" y="312" text-anchor="middle">~4 rows (cant avg 64 nnz/row)</text>
+<line x1="350" y1="292" x2="400" y2="292" stroke="var(--fg2)" stroke-width="1" marker-end="url(#a1)"/>
+<rect x="400" y="266" width="240" height="56" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t12" x="520" y="286" text-anchor="middle">Per nnz: 5 LSU + 3 FMA = 8 instr</text>
+<text class="t12" x="520" y="304" text-anchor="middle">~900 cyc dependent chain</text>
+<!-- Memory hierarchy -->
+<rect x="40" y="350" width="620" height="74" rx="8" fill="var(--bg3)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t14b" x="350" y="372" text-anchor="middle">Memory Access Pattern per SM wave (37 warps)</text>
+<text class="t12" x="80" y="394">col_idx, values: <strong style="font-size:12px;fill:var(--teal)">coalesced streaming</strong> → high BW efficiency</text>
+<text class="t12" x="80" y="412">x[col]: <strong style="font-size:12px;fill:var(--red)">scattered indirect gather</strong> → cache misses, DRAM latency-bound</text>
+</svg>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>6. Warp Execution Timeline — Stall Analysis</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<p>A single warp's life through the 6 phases. The rhythm is: <strong>issue burst</strong> (fire independent instructions at 1/cycle) → <strong>stall</strong> (hit register dependency on an outstanding DRAM load, ~450 cycles away) → <strong>swap</strong> (scheduler picks another of the ~37 resident warps) → <strong>resume</strong> (DRAM returns).</p>
+
+<svg width="100%" viewBox="0 0 700 72">
+<text class="t12" x="4" y="30">Warp 0</text>
+<text class="t12" x="4" y="42">(timeline)</text>
+<!-- Phase 0: setup -->
+<rect x="60" y="16" width="20" height="36" rx="3" fill="var(--fg3)" opacity="0.3"/>
+<text x="70" y="38" text-anchor="middle" font-size="9" font-weight="600" fill="var(--fg)">P0</text>
+<!-- Phase 1: partition load -->
+<rect x="82" y="16" width="14" height="36" rx="3" fill="var(--purple)" opacity="0.4"/>
+<text x="89" y="38" text-anchor="middle" font-size="9" font-weight="600" fill="var(--fg)">P1</text>
+<!-- Phase 2/3: row walk + bisect -->
+<rect x="98" y="16" width="36" height="36" rx="3" fill="var(--coral)" opacity="0.4"/>
+<text x="116" y="38" text-anchor="middle" font-size="9" font-weight="600" fill="var(--fg)">P2/3</text>
+<!-- Phase 4 background -->
+<rect x="136" y="16" width="400" height="36" rx="3" fill="var(--amber)" opacity="0.08"/>
+<!-- Phase 4 label top -->
+<text x="336" y="10" text-anchor="middle" font-size="11" fill="var(--amber)" font-weight="500" font-family="var(--sans)">Phase 4: per-nonzero processing (dominates)</text>
+<!-- Phase 4 blocks with letter markers only -->
+<rect x="136" y="16" width="22" height="36" rx="2" fill="var(--blue)" opacity="0.6"/>
+<text x="147" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">a</text>
+<rect x="158" y="16" width="80" height="36" rx="0" fill="var(--red)" opacity="0.12"/>
+<text x="198" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="var(--red)">b</text>
+<rect x="238" y="16" width="12" height="36" rx="1" fill="var(--purple)" opacity="0.5"/>
+<text x="244" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">c</text>
+<rect x="250" y="16" width="22" height="36" rx="2" fill="var(--blue)" opacity="0.6"/>
+<text x="261" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">d</text>
+<rect x="272" y="16" width="80" height="36" rx="0" fill="var(--red)" opacity="0.12"/>
+<text x="312" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="var(--red)">e</text>
+<rect x="352" y="16" width="12" height="36" rx="1" fill="var(--amber)" opacity="0.6"/>
+<text x="358" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">f</text>
+<rect x="366" y="16" width="10" height="36" rx="1" fill="var(--amber)" opacity="0.5"/>
+<text x="371" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">g</text>
+<!-- repeat pattern (next nnz, dimmer) -->
+<text x="388" y="38" text-anchor="middle" font-size="11" fill="var(--fg3)">···</text>
+<rect x="400" y="16" width="18" height="36" rx="2" fill="var(--blue)" opacity="0.35"/>
+<text x="409" y="38" text-anchor="middle" font-size="8" font-weight="600" fill="#fff">a</text>
+<rect x="418" y="16" width="55" height="36" rx="0" fill="var(--red)" opacity="0.07"/>
+<text x="445" y="38" text-anchor="middle" font-size="8" font-weight="600" fill="var(--red)">b</text>
+<rect x="473" y="16" width="8" height="36" rx="1" fill="var(--purple)" opacity="0.35"/>
+<rect x="481" y="16" width="16" height="36" rx="2" fill="var(--blue)" opacity="0.35"/>
+<rect x="497" y="16" width="30" height="36" rx="0" fill="var(--red)" opacity="0.05"/>
+<rect x="527" y="16" width="9" height="36" rx="1" fill="var(--amber)" opacity="0.4"/>
+<!-- Phase 5/6 -->
+<rect x="538" y="16" width="38" height="36" rx="3" fill="var(--teal)" opacity="0.4"/>
+<text x="557" y="38" text-anchor="middle" font-size="9" font-weight="600" fill="var(--fg)">P5</text>
+<rect x="578" y="16" width="48" height="36" rx="3" fill="var(--red)" opacity="0.25"/>
+<text x="602" y="38" text-anchor="middle" font-size="9" font-weight="600" fill="var(--fg)">P6</text>
+<!-- end marker -->
+<line x1="628" y1="16" x2="628" y2="52" stroke="var(--fg3)" stroke-width="1"/>
+<text x="636" y="38" font-size="9" fill="var(--fg3)" font-family="var(--mono)">EXIT</text>
+</svg>
+
+<div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:12.5px;margin:4px 0 8px;line-height:1.6;">
+  <code style="color:var(--blue);font-weight:600">a</code> <span><strong>LDG col_idx[j]</strong> — batch of 8 vectorised global loads for column indices. Issues back-to-back at 1/cycle. (LSU pipe)</span>
+  <code style="color:var(--red);font-weight:600">b</code> <span><strong>STALL ~400–500 cyc</strong> (long_scoreboard) — warp blocked waiting for col_idx to return from DRAM. Scheduler swaps in another warp.</span>
+  <code style="color:var(--purple);font-weight:600">c</code> <span><strong>IMAD.WIDE addr</strong> — compute gather address: <code>x_base + col × 4</code>. Fires immediately once col_idx register is ready. (~4 cyc, FMA pipe)</span>
+  <code style="color:var(--blue);font-weight:600">d</code> <span><strong>LDG x[col]</strong> — dependent gather load. Address was computed in (c). Issues to DRAM. (LSU pipe)</span>
+  <code style="color:var(--red);font-weight:600">e</code> <span><strong>STALL ~400–500 cyc</strong> (long_scoreboard) — warp blocked waiting for x[col] to return from DRAM. Scheduler swaps again.</span>
+  <code style="color:var(--amber);font-weight:600">f</code> <span><strong>FMUL val × x[col]</strong> — per-nonzero multiply. Fires once both val and x[col] are in registers. (~4 cyc, FMA pipe)</span>
+  <code style="color:var(--amber);font-weight:600">g</code> <span><strong>FADD partial += product</strong> — per-nonzero accumulate. Separate from FMUL (not fused). (~4 cyc, FMA pipe)</span>
+</div>
+<div style="display:flex;gap:16px;font-size:11px;color:var(--fg3);margin:4px 0 8px;font-family:var(--mono);">
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--blue);opacity:0.6;vertical-align:middle"></span> LDG</span>
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--red);opacity:0.15;vertical-align:middle"></span> STALL</span>
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--purple);opacity:0.5;vertical-align:middle"></span> AGEN</span>
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--amber);opacity:0.6;vertical-align:middle"></span> FMUL/FADD</span>
+</div>
+<p style="font-size:13px;color:var(--fg2);">The pattern <strong>a→b→c→d→e→f→g</strong> repeats for each nonzero. 65% of warp-cycles are spent in (b) and (e) — the long_scoreboard stalls. The SM interleaves ~37 warps to hide this latency, but cannot fully fill the pipeline because occupancy is register-limited at 78%.</p>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>7. Measured Hardware Metrics</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<h3>Blackwell RTX 5080 — cant matrix</h3>
+
+<div style="overflow-x:auto;">
+<table style="font-size:12px;">
+<thead><tr><th>Metric</th><th>Value</th><th>Numerator</th><th>Denominator</th><th>What it means</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>LSU pipe util.</strong><br><code style="font-size:10px">sm__inst_executed_pipe_lsu.avg.pct_of_peak_sustained_active</code></td>
+  <td><strong>29.06%</strong></td>
+  <td>Total LSU instructions issued, summed across all SMs and active cycles</td>
+  <td>Peak LSU issue rate (1 per warp scheduler per cycle, 4 schedulers/SM) × active cycles × #SMs</td>
+  <td>On 29% of active scheduler-cycles, an LSU instruction was dispatched. This is <em>issue-slot</em> utilisation, not byte throughput — a single LDG.E.128 issues once but pulls 16B × 32 lanes.</td>
+</tr>
+<tr>
+  <td><strong>FMA pipe util.</strong><br><code style="font-size:10px">sm__inst_executed_pipe_fma.avg.pct_of_peak_sustained_active</code></td>
+  <td><strong>3.34%</strong></td>
+  <td>FMA-pipe instructions issued, summed over SMs × active cycles</td>
+  <td>Peak FMA issue rate × active cycles × #SMs. FMA peak per SM is <em>higher</em> than LSU's (FMA is the dominant FP32 pipe → larger denominator).</td>
+  <td>Static count is 5 LSU : 3 FMA per nnz (1.67×), but dynamic ratio is ~9× because each pipe's denominator is its own peak issue rate, which differs. Direction agrees (LSU-heavy), magnitude doesn't.</td>
+</tr>
+<tr>
+  <td><strong>ALU pipe util.</strong><br><code style="font-size:10px">sm__inst_executed_pipe_alu.avg.pct_of_peak_sustained_active</code></td>
+  <td>9.33%</td>
+  <td>ALU-pipe ops (IMAD, IADD3, ISETP, LOP3, SEL, etc.) summed across SMs</td>
+  <td>Peak ALU issue rate × active cycles × #SMs</td>
+  <td>ALU work is in setup/control (phases 0–3): warp/lane/grid index compute, row_ptr walk, bisection. Per nonzero in Phase 4, there are 0 ALU ops.</td>
+</tr>
+<tr style="background:var(--red-bg);">
+  <td><strong>Top stall: long_scoreboard</strong><br><code style="font-size:10px">smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.pct</code></td>
+  <td><strong>65.28%</strong></td>
+  <td>Warp-cycles where the warp was eligible but stalled waiting on a long-scoreboard dependency (global LDG not yet returned)</td>
+  <td>Total warp-cycles sampled across all active warps (one sample per warp per cycle)</td>
+  <td>The smoking gun. Of every 100 warp-cycles spent waiting to issue, 65 were stuck on a pending global load. This is the dependent chain: <code>LDG col_idx → IMAD → LDG x[col]</code>. Pure latency, not bandwidth.</td>
+</tr>
+<tr>
+  <td><strong>DRAM throughput</strong><br><code style="font-size:10px">dram__throughput.avg.pct_of_peak_sustained_elapsed</code></td>
+  <td><strong>89.27%</strong></td>
+  <td>Bytes transferred across the DRAM interface during the kernel</td>
+  <td>Peak DRAM bandwidth (~960 GB/s) × <strong>elapsed</strong> cycles (wall-clock, not active cycles — note the <code>_elapsed</code> suffix)</td>
+  <td>Nearly saturated. LSU 29% and DRAM 89% coexist because they measure different things: LSU% = issue-slot utilisation; DRAM% = byte throughput. A single vectorised LDG issues once but pulls many bytes. Also, DRAM uses <em>elapsed</em> time while pipe utils use <em>active</em> time.</td>
+</tr>
+<tr>
+  <td><strong>Achieved occupancy</strong><br><code style="font-size:10px">sm__warps_active.avg.pct_of_peak_sustained_active</code></td>
+  <td>78.44%<br>(37.65 of 48)</td>
+  <td>Time-averaged number of resident active warps per SM, averaged over active cycles, averaged over SMs (= 37.65)</td>
+  <td>Hardware max warps/SM = 48 on Blackwell sm_120 (1,536 threads ÷ 32)</td>
+  <td>Register-limited: 40 regs/thread × 32 threads/warp × 40 warps = 51,200 ≤ 65,536 regs/SM. More warps would help hide long_scoreboard latency, but the register budget won't allow it — and shrinking regs/thread would spill to local memory (worse).</td>
+</tr>
+<tr>
+  <td><strong>LD:WR ratio</strong></td>
+  <td>3.44 : 1</td>
+  <td><code style="font-size:10px">l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum</code> (load requests through LSU)</td>
+  <td><code style="font-size:10px">..._op_st.sum + ..._op_red.sum + ..._op_atom.sum</code> (store + reduction + atomic requests)</td>
+  <td>Counts whole requests, not bytes. Inner loop is ~4:1 (load val, col_idx, x[col], store partial → reload). Boundary writes (STG/RED.E.ADD per row in Phase 6) drag the ratio down to 3.44.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="note amber">
+  <strong>Why LSU 29% and DRAM 89% don't contradict:</strong> They measure different things with different denominators.
+  LSU% = issue-slot utilisation (how often an LSU instruction is dispatched, normalised against per-pipe peak × active cycles).
+  DRAM% = byte throughput utilisation (how full the memory bus is, normalised against peak bandwidth × elapsed cycles).
+  A single vectorised <code>LDG.E.128</code> issues once but pulls 16B per lane × 32 lanes × queued-in-flight requests. Few issues, many bytes — that's exactly what an LSU 29% / DRAM 89% gap means. The two denominators also differ in time basis (active vs elapsed).
+</div>
+
+<div class="note red">
+  <strong>The double bind:</strong> SpMV on dense-row matrices like cant is <strong>simultaneously DRAM-bandwidth-bound (89% of peak)</strong> and <strong>memory-latency-bound (65% long_scoreboard)</strong>.
+  Adding more warps doesn't help (occupancy is at the register-limit ceiling).
+  Shrinking the per-nnz dependent chain is the only lever: the gather load on <code>x[col_idx]</code> determines everything.
+</div>
+
+<h3>Comparison across GPU generations</h3>
+<table>
+<thead><tr><th>Parameter</th><th>Blackwell RTX 5080 (sm_120)</th><th>Hopper H200 (sm_90, cage15)</th></tr></thead>
+<tbody>
+<tr><td>DRAM peak</td><td>~960 GB/s GDDR7</td><td>~4,800 GB/s HBM3e</td></tr>
+<tr><td>SMs</td><td>84</td><td>132</td></tr>
+<tr><td>Warp tile size</td><td>256 nnz</td><td>192 nnz (different cuSPARSE version)</td></tr>
+<tr><td>Batching</td><td>8 nnz/lane</td><td>6 nnz/lane</td></tr>
+<tr><td>DRAM latency</td><td>~400–500 cycles (~160–200 ns at ~2.5 GHz)</td><td>~600 cycles (~300 ns at ~2.0 GHz)</td></tr>
+<tr><td colspan="3" style="font-size:11px;color:var(--fg2);border-top:none;padding-top:0"><em>Note: cycle counts reflect different GPU core clock speeds, not inherently different DRAM latencies. Raw DRAM array access time (tRCD+CL) is similar between HBM and GDDR (~30–50 ns). HBM's advantage is bandwidth (wider bus), not latency. The nanosecond figures above include full round-trip: controller, NoC, DRAM array, and data return. Blackwell's lower ns figure may reflect GDDR7's shorter physical trace distance and/or different measurement methodology.</em></td></tr>
+<tr><td>Top stall</td><td>long_scoreboard 65%</td><td>long_scoreboard 38–65% (matrix-dependent)</td></tr>
+<tr><td>Compute op</td><td>FMUL + FADD</td><td>FMUL + FADD</td></tr>
+</tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>8. The x-Vector: The Shared Bottleneck</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<p>The CSR arrays (<code>values</code>, <code>col_idx</code>, <code>row_ptr</code>) are partitioned cleanly — each warp reads its own non-overlapping slice, coalesced and streaming. But <strong>every warp on every SM reads from the same x-vector</strong>, and the access pattern is determined by column indices — essentially random.</p>
+
+<svg width="100%" viewBox="0 0 700 180">
+<text class="t14b" x="350" y="18" text-anchor="middle">Memory access patterns across 37 warps on one SM</text>
+<rect x="30" y="34" width="200" height="52" rx="6" fill="var(--teal-bg)" stroke="var(--teal)" stroke-width="0.5"/>
+<text x="130" y="52" text-anchor="middle" fill="var(--teal)" font-size="12" font-weight="500">values[] + col_idx[]</text>
+<text x="130" y="70" text-anchor="middle" fill="var(--fg2)" font-size="11">Coalesced, streaming, non-overlapping</text>
+<text x="130" y="98" text-anchor="middle" fill="var(--teal)" font-size="11" font-weight="500">✓ High BW efficiency</text>
+<rect x="260" y="34" width="200" height="52" rx="6" fill="var(--red-bg)" stroke="var(--red)" stroke-width="0.5"/>
+<text x="360" y="52" text-anchor="middle" fill="var(--red)" font-size="12" font-weight="500">x[col_idx[j]]</text>
+<text x="360" y="70" text-anchor="middle" fill="var(--fg2)" font-size="11">Scattered, dependent, ALL warps share</text>
+<text x="360" y="98" text-anchor="middle" fill="var(--red)" font-size="11" font-weight="500">✗ Low cache hit, high latency</text>
+<rect x="490" y="34" width="170" height="52" rx="6" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text x="575" y="52" text-anchor="middle" fill="var(--fg2)" font-size="12" font-weight="500">y[row]</text>
+<text x="575" y="70" text-anchor="middle" fill="var(--fg2)" font-size="11">Sparse writes + boundary atomics</text>
+<text x="575" y="98" text-anchor="middle" fill="var(--fg2)" font-size="11">Minimal bandwidth impact</text>
+<rect x="30" y="116" width="630" height="48" rx="8" fill="var(--bg2)" stroke="var(--bdr)" stroke-width="0.5"/>
+<text class="t12" x="350" y="134" text-anchor="middle">cant: x = 62K × 4B = 250 KB → fits in L2. But access pattern is so scattered that</text>
+<text class="t12" x="350" y="152" text-anchor="middle">many requests miss L2 and go to GDDR7 at ~400–500 cycle latency, serialized behind col_idx.</text>
+</svg>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<h2>9. Where the Time Goes — Cycle Budget Summary</h2>
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<svg width="100%" viewBox="0 0 700 200">
+<text class="t14b" x="350" y="18" text-anchor="middle">Per-nonzero cycle budget (single-warp view)</text>
+<!-- LDG col_idx -->
+<rect x="60" y="36" width="260" height="28" rx="4" fill="var(--blue)" opacity="0.4"/>
+<text x="190" y="54" text-anchor="middle" fill="var(--fg)" font-size="11" font-weight="500">LDG col_idx[j] — ~450 cyc DRAM</text>
+<!-- IMAD -->
+<rect x="320" y="36" width="12" height="28" rx="2" fill="var(--purple)" opacity="0.5"/>
+<text x="326" y="54" text-anchor="middle" fill="#fff" font-size="8">4</text>
+<!-- LDG x[col] -->
+<rect x="332" y="36" width="260" height="28" rx="4" fill="var(--amber)" opacity="0.5"/>
+<text x="462" y="54" text-anchor="middle" fill="var(--fg)" font-size="11" font-weight="500">LDG x[col] — ~450 cyc DRAM (gather)</text>
+<!-- FMUL + FADD -->
+<rect x="592" y="36" width="12" height="28" rx="2" fill="var(--green)" opacity="0.6"/>
+<text x="598" y="54" text-anchor="middle" fill="#fff" font-size="7">8</text>
+<!-- values load overlaps -->
+<rect x="60" y="72" width="260" height="20" rx="3" fill="var(--teal)" opacity="0.25"/>
+<text x="190" y="86" text-anchor="middle" fill="var(--teal)" font-size="10">LDG values[j] — overlaps col_idx load freely</text>
+<!-- Scale -->
+<line x1="60" y1="104" x2="604" y2="104" stroke="var(--fg3)" stroke-width="0.5"/>
+<text class="t10" x="60" y="118">0</text><text class="t10" x="190" y="118">~450</text><text class="t10" x="462" y="118">~900</text><text class="t10" x="604" y="118">~912 cycles</text>
+<!-- Summary -->
+<rect x="60" y="130" width="544" height="24" rx="4" fill="var(--red)" opacity="0.08"/>
+<text x="332" y="146" text-anchor="middle" fill="var(--red)" font-size="11" font-weight="500">Memory: 904 cycles (99.1%)</text>
+<rect x="592" y="130" width="12" height="24" rx="2" fill="var(--green)" opacity="0.2"/>
+<text x="622" y="146" fill="var(--green)" font-size="11" font-weight="500">Compute: 8 cycles (0.9%)</text>
+<text class="t12" x="350" y="180" text-anchor="middle">This ratio — 0.9% compute, 99.1% memory — is why more compute overlap cannot help SpMV.</text>
+<text class="t12" x="350" y="196" text-anchor="middle">Only reducing the gather latency itself (prefetching, caching, compression) can improve performance.</text>
+</svg>
+
+<div class="note amber">
+  <strong>Bottom line for researchers:</strong> SpMV's arithmetic intensity is ~0.17 FLOP/byte. The FMA pipe runs at 3.34% utilisation.
+  The kernel is 99% memory-bound. Any acceleration technique that works by "overlapping compute with memory"
+  (including warp specialization / WASP) has a maximum theoretical benefit of <strong>&lt;1%</strong> from the overlap itself.
+  The only path to meaningful speedup is reducing the memory bottleneck directly: fewer bytes, lower latency, better cache hits.
+</div>
+
+<div style="text-align:center;color:var(--fg3);font-size:11px;margin-top:40px;font-family:var(--mono)">
+  SpMV on NVIDIA GPUs — Complete Visual Reference<br>
+  cuSPARSE csrmv_v3_kernel — Blackwell RTX 5080 (sm_120) + Hopper H200 (sm_90)<br>
+  Updated 2026-05-07 with real SASS from cuobjdump
+</div>
+
+</body>
+</html>
