@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HBM Memory Controller — Ramulator model → bit-exact RTL</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --stream:#1a7f37; --stream-bg:#e7f5ec; --random:#b54708; --random-bg:#fdf0e6; --code:#0b1020;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:Arial,Helvetica,sans-serif; color:var(--text); background:var(--bg); line-height:1.6; }
+  a { color:var(--accent); }
+  .wrap { display:grid; grid-template-columns:232px minmax(0,1fr); gap:28px; width:min(100%,1180px); margin:0 auto; padding:36px 24px 64px; }
+  nav.toc { position:sticky; top:24px; align-self:start; font-size:.92rem; }
+  nav.toc .crumb { color:var(--muted); font-size:.8rem; margin-bottom:14px; }
+  nav.toc a { display:block; padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+  nav.toc a:hover { background:#eef5ff; color:var(--accent); }
+  nav.toc a.active { color:var(--accent); border-left-color:var(--accent); background:#eef5ff; font-weight:700; }
+  main { min-width:0; }
+  header.page h1 { font-size:clamp(1.7rem,3.6vw,2.5rem); line-height:1.12; margin:0; }
+  header.page .sub { color:var(--muted); margin-top:10px; font-size:1.02rem; }
+  .tags { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+  .tag { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:999px; background:#eef2f7; color:#43506a; border:1px solid var(--border); }
+  .tag.live { background:var(--stream-bg); color:var(--stream); }
+  section.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 28px rgba(23,32,51,.06); padding:26px; margin-bottom:22px; scroll-margin-top:20px; }
+  section.card > h2 { margin:0 0 6px; font-size:1.35rem; }
+  section.card > h2 .num { color:var(--accent); font-weight:800; margin-right:8px; }
+  .lead { color:var(--muted); margin:0 0 18px; }
+  h3 { font-size:1.05rem; margin:22px 0 8px; }
+  h4 { font-size:.95rem; margin:14px 0 6px; }
+  p { margin:10px 0; }
+  code.k { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em; background:#eef2f7; border:1px solid var(--border); border-radius:4px; padding:1px 5px; color:#33415c; }
+  .pill { display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:.82rem; padding:4px 12px; border-radius:999px; }
+  .pill.stream { background:var(--stream-bg); color:var(--stream); }
+  .pill.random { background:var(--random-bg); color:var(--random); }
+  .pill.big { font-size:1rem; padding:8px 18px; }
+  .headline { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin:4px 0 8px; }
+  .kpi { border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:#fbfcff; }
+  .kpi .v { font-size:1.5rem; font-weight:800; }
+  .kpi .l { font-size:.8rem; color:var(--muted); margin-top:2px; }
+  .callout { border-left:4px solid var(--accent); background:#f3f8ff; padding:14px 18px; border-radius:0 8px 8px 0; margin:16px 0; }
+  .callout.win { border-left-color:var(--stream); background:var(--stream-bg); }
+  .callout.warn { border-left-color:var(--random); background:var(--random-bg); }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; margin:8px 0 4px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f1f4f9; font-size:.82rem; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tbody tr:hover { background:#f7faff; }
+  td.rowlabel { text-align:left; font-weight:700; white-space:nowrap; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82em; }
+  .chartbox { width:100%; overflow:auto; }
+  svg.chart { width:100%; height:auto; display:block; min-width:640px; }
+  .callbox { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:12px 0; }
+  .stat { border:1px solid var(--border); border-radius:7px; padding:10px 12px; background:#fbfcff; }
+  .stat .sv { font-size:1.15rem; font-weight:800; }
+  .stat .sl { font-size:.74rem; color:var(--muted); }
+  .steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:12px 0; counter-reset:s; }
+  .step { border:1px solid var(--border); border-radius:8px; padding:12px 14px 12px; background:#fbfcff; position:relative; }
+  .step::before { counter-increment:s; content:counter(s); position:absolute; top:-10px; left:12px; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:.78rem; font-weight:800; display:grid; place-items:center; }
+  .step b { display:block; margin:4px 0 2px; }
+  .step span { font-size:.84rem; color:var(--muted); }
+  pre.cmd { background:var(--code); color:#d5e0ff; padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:.8rem; line-height:1.5; margin:0; }
+  pre.cmd .c { color:#7f8db3; }
+  pre.cmd .kw { color:#9ecbff; }
+  .cmp { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:10px 0 6px; }
+  .cmp .lab { font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; margin-bottom:5px; color:var(--muted); }
+  .cmp .lab.raml::before { content:"●"; color:#b07; margin-right:6px; }
+  .cmp .lab.rtl::before { content:"●"; color:var(--stream); margin-right:6px; }
+  @media (max-width:880px){ .cmp{ grid-template-columns:1fr; } }
+  ul.notes { margin:6px 0; padding-left:20px; }
+  ul.notes li { margin:5px 0; }
+  .fncard { border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin:16px 0; background:#fcfdff; }
+  .fncard > h3 { margin-top:0; }
+  .why { font-size:.9rem; }
+  .why b { color:#43506a; }
+  .footer { color:var(--muted); font-size:.9rem; border-top:1px solid var(--border); margin-top:26px; padding-top:18px; }
+  .footer a { text-decoration:none; }
+  @media (max-width:880px){ .wrap{ grid-template-columns:1fr; } nav.toc{ position:static; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#tldr">TL;DR</a>
+    <a href="#what">§1 What a controller does</a>
+    <a href="#raml">§2 Ramulator's model &amp; limits</a>
+    <a href="#pipe">§3 Deciding the RTL pipeline</a>
+    <a href="#diagram">§4 Microarchitecture diagram</a>
+    <a href="#map">§5 1:1 mapping table</a>
+    <a href="#deep">§6 Function-by-function</a>
+    <a href="#examples">§7 Worked examples</a>
+    <a href="#numbers">§8 Org, timing &amp; address</a>
+    <a href="#refs">§9 Design references</a>
+    <a href="#verify">§10 Bit-exact &amp; the 3 bugs</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>HBM3 Memory Controller: from Ramulator's model to bit-exact RTL</h1>
+      <p class="sub">A from-scratch tour of how a DRAM memory controller works — taught through Ramulator&nbsp;2's
+        behavioral C++ model and a synthesizable SystemVerilog re-implementation that reproduces it
+        <strong>command-for-command, cycle-for-cycle</strong>.</p>
+      <div class="tags">
+        <span class="tag live">bit-exact: 6/6 traces</span>
+        <span class="tag">HBM3_8Gb · HBM3_2Gbps</span>
+        <span class="tag">Verilator</span>
+        <span class="tag">Ramulator 2 oracle</span>
+      </div>
+    </header>
+
+    <!-- ================= TL;DR ================= -->
+    <section class="card" id="tldr">
+      <h2><span class="num">¶</span>TL;DR</h2>
+      <p class="lead">Ramulator 2 is a fast, accurate DRAM simulator — but its memory controller is a
+        <strong>behavioral model</strong>: it does everything in one C++ function per cycle (<code class="k">tick()</code>),
+        i.e. effectively a <strong>single pipeline stage</strong>. A real controller is a 5–18-stage pipeline.
+        This page rebuilds Ramulator's controller as <strong>synthesizable RTL</strong> and proves the RTL is
+        functionally identical by diffing its issued DRAM command stream against Ramulator's, byte-for-byte.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">≈1 → RTL</div><div class="l">Ramulator behavioral stage rebuilt as real hardware</div></div>
+        <div class="kpi"><div class="v">6 / 6</div><div class="l">workload traces match bit-exactly</div></div>
+        <div class="kpi"><div class="v">575,632</div><div class="l">issued commands identical (clk + op + address)</div></div>
+        <div class="kpi"><div class="v">3</div><div class="l">subtle timing bugs the diff caught &amp; fixed</div></div>
+      </div>
+      <p class="why" style="margin-top:14px"><b>How to read this page.</b> §1 plants the vocabulary (banks, rows,
+        ACT/PRE/RD/WR). §2 shows what Ramulator's controller is and why "1 cycle" is a simplification. §3 explains how
+        the RTL pipeline was chosen. §4 is the block diagram. §5 maps every Ramulator function to its RTL module.
+        §6 is the heart: each function explained with <em>side-by-side C++ vs SystemVerilog</em>. §7 walks real
+        cycle-by-cycle examples, §8 lists the exact numbers, §9 the design references, §10 the verification.</p>
+    </section>
+
+    <!-- ================= §1 WHAT A CONTROLLER DOES ================= -->
+    <section class="card" id="what">
+      <h2><span class="num">§1</span>What a memory controller actually does</h2>
+      <p class="lead">A CPU/GPU core issues simple <em>loads</em> and <em>stores</em> to byte addresses. DRAM does
+        not speak loads/stores — it speaks a small command language over a shared bus, and it has strict timing rules.
+        The memory controller is the translator and scheduler in between.</p>
+
+      <h3>The DRAM the controller drives</h3>
+      <p>One HBM3 channel here is an array of <strong>32 banks</strong> (2 pseudochannels × 4 bankgroups × 4 banks).
+        Each bank is a 2-D grid of <strong>32,768 rows</strong> × columns. A bank has <em>one</em> "row buffer": to
+        read any byte you must first <strong>copy a whole row into the row buffer</strong>, then read columns from it.</p>
+      <table>
+        <thead><tr><th>Command</th><th>Meaning</th><th>When the controller issues it</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">ACT</td><td>Activate — open a row into the bank's row buffer</td><td>bank is closed and you need a row from it</td></tr>
+          <tr><td class="rowlabel">RD / WR</td><td>Read / Write a column from/to the open row buffer</td><td>the wanted row is already open (a "row hit")</td></tr>
+          <tr><td class="rowlabel">PRE</td><td>Precharge — close the open row</td><td>you need a <em>different</em> row in that bank (a "row conflict")</td></tr>
+          <tr><td class="rowlabel">REF</td><td>Refresh — recharge leaking cells</td><td>periodically (disabled in this HBM3 config — see §6)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>The three outcomes of every access</h3>
+      <div class="callbox">
+        <div class="stat"><div class="sv" style="color:var(--stream)">Row hit</div><div class="sl">wanted row already open → just <b>RD</b>. Fastest.</div></div>
+        <div class="stat"><div class="sv" style="color:var(--random)">Row conflict</div><div class="sl">wrong row open → <b>PRE → ACT → RD</b>. Slowest.</div></div>
+        <div class="stat"><div class="sv">Row miss</div><div class="sl">bank closed → <b>ACT → RD</b>. Medium.</div></div>
+      </div>
+      <p class="why">Maximizing row hits (and obeying ~20 timing constraints across banks) <em>is</em> the controller's
+        job. Everything below is machinery for that.</p>
+
+      <h3>The universal controller pipeline</h3>
+      <p>Every real controller — from a 200-line SDRAM FSM to an HBM design — is the same chain, with more or less of
+        each stage:</p>
+      <div class="chartbox">
+        <svg class="chart" viewBox="0 0 960 150" role="img" aria-label="memory controller pipeline">
+          <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#7c8aa5"/></marker></defs>
+          <g font-family="Arial" font-size="12.5">
+            <!-- boxes -->
+            <g>
+              <rect x="8"   y="46" width="118" height="48" rx="7" fill="#eef5ff" stroke="#9db8e8"/>
+              <rect x="142" y="46" width="100" height="48" rx="7" fill="#eef5ff" stroke="#9db8e8"/>
+              <rect x="258" y="46" width="104" height="48" rx="7" fill="#eef5ff" stroke="#9db8e8"/>
+              <rect x="378" y="46" width="118" height="48" rx="7" fill="#fff6e9" stroke="#e3b877"/>
+              <rect x="512" y="46" width="110" height="48" rx="7" fill="#fff6e9" stroke="#e3b877"/>
+              <rect x="638" y="46" width="118" height="48" rx="7" fill="#e9f7ee" stroke="#86c79e"/>
+              <rect x="772" y="46" width="92"  height="48" rx="7" fill="#f1eefb" stroke="#b3a4e0"/>
+              <rect x="880" y="46" width="72"  height="48" rx="7" fill="#f4f6f8" stroke="#c2cad6"/>
+            </g>
+            <g fill="#33415c" text-anchor="middle" font-weight="700">
+              <text x="67"  y="66">front-end</text><text x="67" y="82" font-weight="400" fill="#647083">accept / CDC</text>
+              <text x="192" y="66">address</text><text x="192" y="82" font-weight="400" fill="#647083">→ bank,row,col</text>
+              <text x="310" y="66">queues</text><text x="310" y="82" font-weight="400" fill="#647083">read / write</text>
+              <text x="437" y="66">bank FSM</text><text x="437" y="82" font-weight="400" fill="#647083">×32 open-row</text>
+              <text x="567" y="66">timing</text><text x="567" y="82" font-weight="400" fill="#647083">legality</text>
+              <text x="697" y="66">arbiter</text><text x="697" y="82" font-weight="400" fill="#647083">FR-FCFS</text>
+              <text x="818" y="66">command</text><text x="818" y="82" font-weight="400" fill="#647083">DFI</text>
+              <text x="916" y="70">PHY</text>
+            </g>
+            <g stroke="#7c8aa5" stroke-width="1.6" marker-end="url(#ar)">
+              <line x1="126" y1="70" x2="140" y2="70"/><line x1="242" y1="70" x2="256" y2="70"/>
+              <line x1="362" y1="70" x2="376" y2="70"/><line x1="496" y1="70" x2="510" y2="70"/>
+              <line x1="622" y1="70" x2="636" y2="70"/><line x1="756" y1="70" x2="770" y2="70"/>
+              <line x1="864" y1="70" x2="878" y2="70"/>
+            </g>
+            <text x="8" y="28" fill="#43506a" font-weight="700" font-size="13">core load/store  ▸</text>
+            <text x="952" y="28" text-anchor="end" fill="#43506a" font-weight="700" font-size="13">▸  DRAM pins</text>
+            <text x="8" y="124" fill="#647083" font-size="11.5">blue = digital front/decode/queue · amber = per-bank state + JEDEC timing · green = arbitration · purple/grey = command bus + analog PHY</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <!-- ================= §2 RAMULATOR LIMITS ================= -->
+    <section class="card" id="raml">
+      <h2><span class="num">§2</span>Ramulator's controller — and why it is "everything in one cycle"</h2>
+      <p class="lead">Ramulator&nbsp;2's <code class="k">GenericDRAMController</code> models that whole pipeline as a
+        single behavioral function called once per DRAM clock. It is wonderfully accurate for <em>DRAM</em> timing,
+        but it deliberately collapses the <em>controller's own pipeline</em> to zero.</p>
+
+      <div class="cmp">
+        <div><div class="lab raml">Ramulator — generic_dram_controller.cpp <code class="k">tick()</code></div>
+<pre class="cmd"><span class="c">// one call == one DRAM cycle == "the whole pipeline"</span>
+void tick() {
+  m_clk++;
+  serve_completed_reads();         <span class="c">// return finished reads</span>
+  m_refresh-&gt;tick();               <span class="c">// maybe inject refresh</span>
+  auto req = schedule_request();   <span class="c">// pick ONE request:</span>
+                                   <span class="c">//   active → priority → read/write</span>
+  m_rowpolicy-&gt;update(req);         <span class="c">// open-page = no-op</span>
+  if (req) {
+    update_request_stats(req);     <span class="c">// classify hit/miss/conflict</span>
+    issue_command(req);            <span class="c">// drive ONE command to DRAM</span>
+  }
+}</pre></div>
+        <div><div class="lab rtl">What real hardware spreads across stages</div>
+<pre class="cmd"><span class="c">// each [..] is a registered pipeline stage, ~5-18 deep</span>
+[accept + clock-domain-cross]
+[decode address → bank,row,col]
+[look up request queue]
+[per-bank FSM: hit? miss? conflict?]
+[timing legality check]
+[arbitrate: which command this cycle]
+[generate DFI command]
+[PHY: serialize to DRAM pins]
+
+<span class="c">// Ramulator folds ALL of these into one tick()</span></pre></div>
+      </div>
+
+      <div class="callout warn">
+        <strong>The limitation, precisely.</strong> Ramulator's controller is <strong>~1 pipeline stage</strong>:
+        a single combinational decision over registered state, one command per cycle, on a <em>unified</em> command
+        path. It models none of: the front-end accept pipeline, clock-domain crossing, the DFI sequencer, the PHY, or
+        HBM's <em>separate</em> RAS/CAS command buses. Its JEDEC timing, however, is exact — encoded as per-node
+        "earliest-issuable-clock" registers (§6). <em>That</em> is what we must reproduce.
+      </div>
+      <p class="why">This is the right tradeoff for a <em>simulator</em> (you want speed and correct DRAM timing, not
+        a gate-level controller). But it means Ramulator cannot answer "how deep is the controller, what does it cost
+        in real cycles/area." Rebuilding it as RTL does — and the RTL becomes a reference design whose behavior is
+        <em>provably</em> the same.</p>
+    </section>
+
+    <!-- ================= §3 DECIDING THE PIPELINE ================= -->
+    <section class="card" id="pipe">
+      <h2><span class="num">§3</span>Deciding the RTL pipeline (and its depth)</h2>
+      <p class="lead">Goal: a synthesizable controller whose issued command stream is <strong>identical</strong> to
+        Ramulator's. The key design decision is how to map a behavioral <code class="k">tick()</code> onto clocked
+        hardware without changing <em>when</em> each command is issued.</p>
+
+      <h3>Principle: the decision loop is combinational over registered state</h3>
+      <p>Ramulator's <code class="k">tick()</code> reads registered state (queues, bank states, timing clocks) and
+        produces one command, all "instantly" within a cycle. The RTL mirrors this exactly: the
+        <strong>arbitration decision is a combinational cone</strong> over registered state, and only the
+        <em>effects</em> (issue, state updates) are clocked. This guarantees the crucial invariant:</p>
+      <div class="callout"><strong>ready@T ⇒ issued@T.</strong> If a command becomes legal on cycle T, it is issued
+        on cycle T — never one cycle late. Any fixed pipeline delay would shift the command stream and break the
+        bit-exact match.</div>
+
+      <h3>The send / tick split (the trick that makes it bit-exact)</h3>
+      <p>Ramulator's main loop runs the frontend and the controller at different clock ratios (frontend
+        <span class="mono">8</span> : memory <span class="mono">3</span>) and always does
+        <code class="k">frontend-&gt;tick()</code> (enqueue a request) <em>before</em>
+        <code class="k">memory-&gt;tick()</code> (decide). The RTL gives these two actions <strong>separate clock
+        phases</strong> so a just-enqueued request is visible to the very next decision — and uses
+        <code class="k">cur_clk = clk_cnt + do_tick</code> so the decision sees the post-increment clock, exactly like
+        <code class="k">m_clk++</code> at the top of <code class="k">tick()</code>.</p>
+
+      <h3>The ~4-stage logical datapath &amp; pipeline depth</h3>
+      <div class="steps">
+        <div class="step"><b>S0 · Accept</b><span>front-end gate: enqueue a request if there is room (non-active occupancy ≤ 32)</span></div>
+        <div class="step"><b>S1 · Preq + Ready</b><span>per-entry: needed command (ACT/PRE/RD/WR) + is it legal now (timing)</span></div>
+        <div class="step"><b>S2 · Arbitrate</b><span>FR-FCFS: prefer a ready command, then oldest; active-buffer first</span></div>
+        <div class="step"><b>S3 · Issue</b><span>drive one command; update bank FSM, timing clocks, buffers, stats</span></div>
+      </div>
+      <table>
+        <thead><tr><th>Design</th><th class="num">Pipeline depth (entry → command)</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Ramulator behavioral</td><td class="num">≈ 1</td><td>one combinational <code class="k">tick()</code></td></tr>
+          <tr><td class="rowlabel">This RTL (bit-exact)</td><td class="num">1 decision cycle</td><td>S1–S3 combinational; only effects registered, so it matches Ramulator. Read-data return is a separate <code class="k">11</code>-deep shift pipe (a documented constant, not in the command stream).</td></tr>
+          <tr><td class="rowlabel">Production HBM controller</td><td class="num">~5–18 (+PHY)</td><td>S0–S3 would each be registered for timing closure; adds front-end/CDC/DFI/PHY</td></tr>
+        </tbody>
+      </table>
+      <p class="why"><b>Why keep the decision combinational rather than pipeline S1–S3?</b> Because the goal is
+        <em>behavioral equivalence to Ramulator</em>, not maximum clock frequency. A real product would register
+        S1→S2→S3 and absorb the resulting constant latency offset; here we keep them in one cycle so the command
+        cycles match Ramulator with zero offset. The microarchitecture is otherwise identical, so the pipelined and
+        bit-exact variants differ only by a known constant.</p>
+    </section>
+
+    <!-- ================= §4 BLOCK DIAGRAM ================= -->
+    <section class="card" id="diagram">
+      <h2><span class="num">§4</span>Microarchitecture block diagram</h2>
+      <p class="lead">The RTL is five reusable modules plus a top that wires the <code class="k">tick()</code> decision
+        loop. Registered state in boxes; the combinational decision cone is the green arbiter.</p>
+      <div class="chartbox">
+        <svg class="chart" viewBox="0 0 980 470" role="img" aria-label="HBM3 controller microarchitecture">
+          <defs><marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#7c8aa5"/></marker>
+            <marker id="a3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#1a7f37"/></marker></defs>
+          <g font-family="Arial" font-size="12">
+            <!-- request in -->
+            <rect x="12" y="196" width="120" height="60" rx="8" fill="#eef2f7" stroke="#9aa6bb"/>
+            <text x="72" y="220" text-anchor="middle" font-weight="700" fill="#33415c">request in</text>
+            <text x="72" y="238" text-anchor="middle" fill="#647083">LD/ST addr, id</text>
+
+            <!-- addr mapper -->
+            <rect x="156" y="196" width="124" height="60" rx="8" fill="#eef5ff" stroke="#9db8e8"/>
+            <text x="218" y="218" text-anchor="middle" font-weight="700" fill="#33415c">addr_mapper</text>
+            <text x="218" y="234" text-anchor="middle" fill="#647083">RoBaRaCoCh (comb)</text>
+            <text x="218" y="249" text-anchor="middle" fill="#647083">→ pch,bg,ba,row,col</text>
+
+            <!-- queues -->
+            <rect x="306" y="170" width="150" height="112" rx="8" fill="#eef5ff" stroke="#9db8e8"/>
+            <text x="381" y="190" text-anchor="middle" font-weight="700" fill="#33415c">request_queue</text>
+            <text x="381" y="208" text-anchor="middle" fill="#647083">rq[ ] read · wq[ ] write</text>
+            <text x="381" y="226" text-anchor="middle" fill="#647083">entry: valid, we,</text>
+            <text x="381" y="241" text-anchor="middle" fill="#647083">row, col, id,</text>
+            <text x="381" y="256" text-anchor="middle" fill="#647083"><tspan font-weight="700">active</tspan> flag, <tspan font-weight="700">seq</tspan></text>
+
+            <!-- bank state -->
+            <rect x="500" y="120" width="170" height="78" rx="8" fill="#fff6e9" stroke="#e3b877"/>
+            <text x="585" y="142" text-anchor="middle" font-weight="700" fill="#33415c">bank_state [32]</text>
+            <text x="585" y="160" text-anchor="middle" fill="#647083">FSM: Closed/Opened</text>
+            <text x="585" y="176" text-anchor="middle" fill="#647083">open_row[b] · hit/miss/</text>
+            <text x="585" y="191" text-anchor="middle" fill="#647083">conflict · preq cmd</text>
+
+            <!-- timing engine -->
+            <rect x="500" y="254" width="170" height="92" rx="8" fill="#fff6e9" stroke="#e3b877"/>
+            <text x="585" y="276" text-anchor="middle" font-weight="700" fill="#33415c">timing_engine</text>
+            <text x="585" y="293" text-anchor="middle" fill="#647083">ready-clock regs / bank,</text>
+            <text x="585" y="308" text-anchor="middle" fill="#647083">bankgroup, pch, channel</text>
+            <text x="585" y="323" text-anchor="middle" fill="#647083">FAW shift · ch 2-cyc ACT</text>
+            <text x="585" y="338" text-anchor="middle" fill="#647083">→ act/rd/wr/pre _ready[32]</text>
+
+            <!-- arbiter -->
+            <rect x="704" y="168" width="158" height="116" rx="8" fill="#e9f7ee" stroke="#86c79e"/>
+            <text x="783" y="190" text-anchor="middle" font-weight="800" fill="#1a7f37">frfcfs_arbiter</text>
+            <text x="783" y="208" text-anchor="middle" fill="#43506a">(combinational)</text>
+            <text x="783" y="226" text-anchor="middle" fill="#647083">tier A: active buffer</text>
+            <text x="783" y="241" text-anchor="middle" fill="#647083">tier C: read/write</text>
+            <text x="783" y="256" text-anchor="middle" fill="#647083">prefer-ready, oldest seq</text>
+            <text x="783" y="271" text-anchor="middle" fill="#647083">close-vs-active guard</text>
+
+            <!-- command issue -->
+            <rect x="704" y="312" width="158" height="62" rx="8" fill="#f1eefb" stroke="#b3a4e0"/>
+            <text x="783" y="334" text-anchor="middle" font-weight="700" fill="#33415c">command_issue</text>
+            <text x="783" y="351" text-anchor="middle" fill="#647083">1 cmd/cycle → DFI bus</text>
+            <text x="783" y="366" text-anchor="middle" fill="#647083">clk,op,pch,bg,ba,row,col</text>
+
+            <!-- read return -->
+            <rect x="306" y="312" width="280" height="56" rx="8" fill="#f4f6f8" stroke="#c2cad6"/>
+            <text x="446" y="334" text-anchor="middle" font-weight="700" fill="#33415c">read_return_pipe</text>
+            <text x="446" y="351" text-anchor="middle" fill="#647083">11-deep shift (nCL+nBL) → rd_resp</text>
+
+            <!-- arrows -->
+            <g stroke="#7c8aa5" stroke-width="1.6" marker-end="url(#a2)" fill="none">
+              <line x1="132" y1="226" x2="154" y2="226"/>
+              <line x1="280" y1="226" x2="304" y2="226"/>
+              <path d="M456,206 H478 V159 H498"/>     <!-- queue → bank -->
+              <path d="M456,250 H478 V300 H498"/>     <!-- queue → timing -->
+              <path d="M670,159 H688 V214 H702"/>     <!-- bank → arb -->
+              <path d="M670,300 H688 V250 H702"/>     <!-- timing → arb -->
+              <line x1="783" y1="284" x2="783" y2="310"/> <!-- arb → issue -->
+            </g>
+            <!-- issue feedback (green): updates state + return -->
+            <g stroke="#1a7f37" stroke-width="1.5" marker-end="url(#a3)" fill="none" stroke-dasharray="5 3">
+              <path d="M783,374 V404 H446 V370"/>      <!-- issue → read return -->
+              <path d="M704,343 H690 V392 H585 V348"/> <!-- issue → timing update -->
+              <path d="M740,312 V300 H672"/>           <!-- issue → bank update (short) -->
+            </g>
+            <text x="446" y="420" text-anchor="middle" fill="#1a7f37" font-size="11">green dashed = issue effects: update bank FSM + timing clocks, schedule read return</text>
+
+            <!-- phase legend -->
+            <rect x="12" y="40" width="430" height="40" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+            <text x="24" y="58" fill="#43506a" font-weight="700">SEND phase</text>
+            <text x="24" y="73" fill="#647083" font-size="11">enqueue into rq/wq (gated by non-active ≤ 32)</text>
+            <text x="232" y="58" fill="#43506a" font-weight="700">TICK phase</text>
+            <text x="232" y="73" fill="#647083" font-size="11">cur_clk=clk_cnt+1 · run the decision, issue 1 cmd</text>
+          </g>
+        </svg>
+      </div>
+      <table>
+        <thead><tr><th>Module</th><th>Role</th><th>File</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">addr_mapper</td><td>combinational RoBaRaCoCh address decode → (pch,bg,ba,row,col)</td><td class="mono">rtl/addr_mapper.sv</td></tr>
+          <tr><td class="rowlabel">bank_state [32]</td><td>per-bank open/closed FSM + open-row register; emits hit/miss/conflict + needed command</td><td class="mono">rtl/bank_state.sv</td></tr>
+          <tr><td class="rowlabel">timing_engine</td><td>JEDEC legality: per-bank/bankgroup/pseudochannel/channel "earliest-issuable-clock" + FAW shift register</td><td class="mono">rtl/timing_engine.sv</td></tr>
+          <tr><td class="rowlabel">hbm3_ctrl_be</td><td>bit-exact top: send/tick phases, queues, active-buffer, FR-FCFS arbiter, classify, read-return</td><td class="mono">rtl/hbm3_ctrl_be.sv</td></tr>
+          <tr><td class="rowlabel">hbm3_pkg</td><td>organization params, HBM3_2Gbps timing constants, request struct, command enum</td><td class="mono">rtl/hbm3_pkg.sv</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ================= §5 MAPPING ================= -->
+    <section class="card" id="map">
+      <h2><span class="num">§5</span>1:1 mapping — every Ramulator piece → its RTL equivalent</h2>
+      <p class="lead">Each behavioral concept in Ramulator's controller has a direct structural counterpart in the RTL.</p>
+      <table>
+        <thead><tr><th>Ramulator (C++)</th><th>RTL module / signal</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel mono">tick()</td><td class="mono">do_tick phase, cur_clk</td><td>the once-per-cycle decision loop</td></tr>
+          <tr><td class="rowlabel mono">send()</td><td class="mono">do_send phase + send_accept</td><td>enqueue a request from the frontend</td></tr>
+          <tr><td class="rowlabel mono">m_read_buffer / m_write_buffer</td><td class="mono">rq[ ] / wq[ ]</td><td>pending request queues</td></tr>
+          <tr><td class="rowlabel mono">m_active_buffer</td><td class="mono">active flag in entry; non-active occupancy</td><td>requests whose ACT already fired</td></tr>
+          <tr><td class="rowlabel mono">AddrMapper (RoBaRaCoCh)</td><td class="mono">addr_mapper</td><td>physical address → bank/row/col</td></tr>
+          <tr><td class="rowlabel mono">node row state + RequireRowOpen</td><td class="mono">bank_state (st[ ], orow[ ])</td><td>per-bank FSM + needed command</td></tr>
+          <tr><td class="rowlabel mono">m_cmd_ready_clk[ ] / check_ready()</td><td class="mono">timing_engine ready bits</td><td>JEDEC timing legality</td></tr>
+          <tr><td class="rowlabel mono">update_timing() + history window</td><td class="mono">mx() reload + faw[ ] shift + ch_act</td><td>advance timing on each issue</td></tr>
+          <tr><td class="rowlabel mono">schedule_request()</td><td class="mono">arbiter: tier A → tier C</td><td>pick one command this cycle</td></tr>
+          <tr><td class="rowlabel mono">FRFCFS get_best_request()</td><td class="mono">prefer-ready then min seq</td><td>scheduling policy</td></tr>
+          <tr><td class="rowlabel mono">set_write_mode() watermark</td><td class="mono">write_mode (WHI=25/WLO=6)</td><td>read/write turnaround control</td></tr>
+          <tr><td class="rowlabel mono">closing-vs-active guard</td><td class="mono">c_conflict_active check</td><td>don't close a row an active req needs</td></tr>
+          <tr><td class="rowlabel mono">update_request_stats() (once)</td><td class="mono">classified flag + stat_*</td><td>count hit/miss/conflict once per req</td></tr>
+          <tr><td class="rowlabel mono">pending queue, m_read_latency</td><td class="mono">rp_v[ ]/rp_id[ ] 11-deep shift</td><td>return read data after nCL+nBL</td></tr>
+          <tr><td class="rowlabel mono">OpenRowPolicy</td><td class="mono">(no close logic)</td><td>leave rows open between accesses</td></tr>
+          <tr><td class="rowlabel mono">AllBank refresh</td><td class="mono">disabled (see §6)</td><td>HBM3 has no "rank" → Ramulator issues none</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ================= §6 FUNCTION BY FUNCTION ================= -->
+    <section class="card" id="deep">
+      <h2><span class="num">§6</span>Function-by-function: how each works, in C++ and in RTL</h2>
+      <p class="lead">Each block below: <b>why we need it</b>, <b>how Ramulator does it</b>, <b>the equivalent RTL</b>
+        side-by-side, and <b>the difference</b> (if any). Snippets are simplified pseudocode of the real source.</p>
+
+      <!-- 6.1 addr map -->
+      <div class="fncard">
+        <h3>6.1 Address mapping — RoBaRaCoCh</h3>
+        <p class="why"><b>Why:</b> a flat byte address must become <em>(pseudochannel, bankgroup, bank, row, column)</em>
+          so the rest of the controller can track per-bank rows and timing. The <em>bit order</em> chosen
+          (RoBaRaCoCh = Row high, Column low) keeps nearby addresses in the <em>same row</em> → more row hits.</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — linear_mappers.cpp</div>
+<pre class="cmd">addr &gt;&gt;= TX_OFF;        <span class="c">// drop low 4 bits (16B grain)</span>
+col = addr & 0x1f;     <span class="c">// 5 bits</span>
+pch = (addr&gt;&gt;5) & 1;
+bg  = (addr&gt;&gt;6) & 3;
+ba  = (addr&gt;&gt;8) & 3;
+row = (addr&gt;&gt;10) & 0x7fff;</pre></div>
+          <div><div class="lab rtl">RTL — addr_mapper.sv (pure comb)</div>
+<pre class="cmd"><span class="kw">always_comb</span> <span class="kw">begin</span>
+  a   = addr &gt;&gt; TX_OFF;
+  col = a[4:0];
+  pch = a[5];
+  bg  = a[7:6];
+  ba  = a[9:8];
+  row = a[24:10];
+<span class="kw">end</span></pre></div>
+        </div>
+        <p class="why"><b>Difference:</b> none — bit-identical. The 4-bit shift is because one DRAM access moves 16 B
+          (prefetch 2 × 8-byte half-bus), so the low 4 address bits never reach the bank.</p>
+      </div>
+
+      <!-- 6.2 bank FSM -->
+      <div class="fncard">
+        <h3>6.2 Bank FSM &amp; the hit/miss/conflict decision (RequireRowOpen)</h3>
+        <p class="why"><b>Why:</b> before any RD/WR you must know whether the target row is open. This is the single
+          most important decision — it picks the command (ACT, PRE, or RD/WR) and decides the access cost.</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — RequireRowOpen (lambda)</div>
+<pre class="cmd"><span class="kw">if</span> (bank.state == Closed)
+  preq = ACT;                 <span class="c">// miss</span>
+<span class="kw">else if</span> (bank.open_row == row)
+  preq = final_cmd;           <span class="c">// hit → RD/WR</span>
+<span class="kw">else</span>
+  preq = PRE;                 <span class="c">// conflict → close first</span></pre></div>
+          <div><div class="lab rtl">RTL — bank_state.sv / dec()</div>
+<pre class="cmd">open = o_open[b];
+hit  = open && (o_row[b] == row);
+cls  = hit ? HIT : (open ? CONFLICT : MISS);
+<span class="kw">if</span>      (!open) preq = CMD_ACT;
+<span class="kw">else if</span> (!hit) preq = CMD_PRE;
+<span class="kw">else</span>          preq = we ? CMD_WR : CMD_RD;</pre></div>
+        </div>
+        <p class="why"><b>How it works:</b> ACT sets <code class="k">state=Opened, open_row=row</code>; PRE/PRECHARGE
+          sets <code class="k">state=Closed</code>. <b>Difference:</b> none functionally; the RTL exposes all 32 banks'
+          state as arrays so the arbiter can evaluate every queued request in parallel.</p>
+      </div>
+
+      <!-- 6.3 timing -->
+      <div class="fncard">
+        <h3>6.3 Timing engine — "earliest-issuable-clock" registers</h3>
+        <p class="why"><b>Why:</b> DRAM has ~20 minimum gaps between commands (e.g. ACT→RD is
+          <code class="k">tRCD=7</code> cycles; ACT→ACT same bank is <code class="k">tRC=19</code>). The controller may
+          only issue a command when <em>all</em> relevant gaps have elapsed at the bank, bankgroup, pseudochannel and
+          channel levels.</p>
+        <p class="why"><b>How Ramulator does it:</b> every node keeps <code class="k">m_cmd_ready_clk[cmd]</code> = the
+          earliest clock that command may issue. On each issue, for every timing edge it sets
+          <code class="k">ready_clk[follow] = max(ready_clk[follow], now + latency)</code>;
+          <code class="k">check_ready</code> is just <code class="k">clk &gt;= ready_clk[cmd]</code>. The RTL uses the
+          same absolute-clock scheme (chosen over down-counters because it is simpler to make bit-exact).</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — node.h update_timing / check_ready</div>
+<pre class="cmd"><span class="c">// on issuing `cmd` at clock `clk`:</span>
+push_history(cmd, clk);
+<span class="kw">for</span> (edge : timing[level][cmd])
+  rc[edge.follow] =
+     max(rc[edge.follow],
+         history[edge.window-1] + edge.latency);
+
+<span class="c">// legality:</span>
+ready = (clk &gt;= rc[cmd]);   <span class="c">// AND over all levels</span></pre></div>
+          <div><div class="lab rtl">RTL — timing_engine.sv (per bank shown)</div>
+<pre class="cmd"><span class="c">// ready = clk has reached every level's rc</span>
+act_ready[b] = (cur_clk &gt;= bnk_act[b]) &amp;
+   (cur_clk &gt;= bg_act[g]) &amp; (cur_clk &gt;= pch_act[p]) &amp;
+   (cur_clk &gt;= faw_oldest + T_FAW) &amp;
+   (cur_clk &gt;= ch_act);
+
+<span class="c">// on ACT issue, reload follows with max():</span>
+bnk_rd[b]  &lt;= mx(bnk_rd[b],  T_RCDRD); <span class="c">// 7</span>
+bnk_act[b] &lt;= mx(bnk_act[b], T_RC);    <span class="c">// 19</span>
+ch_act     &lt;= mx(ch_act, 2);           <span class="c">// channel ACT edge</span></pre></div>
+        </div>
+        <p class="why"><b>Two HBM3 subtleties</b> the RTL must reproduce (both later showed up as bugs, §10):
+          the <b>4-activation window (FAW)</b> — no more than 4 ACTs in any 15 cycles, modeled as a 4-deep shift
+          register of ACT clocks; and the <b>channel 2-cycle ACT edge</b> — after <em>any</em> ACT, the next ACT or
+          PRE on the whole channel waits 2 cycles (<span class="mono">HBM3.cpp:305</span>, "ACT happens on its 2nd
+          cycle").</p>
+      </div>
+
+      <!-- 6.4 arbiter -->
+      <div class="fncard">
+        <h3>6.4 The scheduler — FR-FCFS (First-Ready, First-Come-First-Served)</h3>
+        <p class="why"><b>Why:</b> across 32 banks and 60+ queued requests, many are blocked by timing each cycle. The
+          arbiter must pick <em>one</em> command that is legal now and makes the most progress. FR-FCFS = prefer any
+          ready command, break ties by oldest arrival.</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — generic_scheduler.cpp compare()</div>
+<pre class="cmd"><span class="kw">for</span> each pair (a,b) in buffer:
+  <span class="kw">if</span> (ready(a) != ready(b))
+     keep the ready one;          <span class="c">// First-Ready</span>
+  <span class="kw">else if</span> (a.arrive &lt;= b.arrive)
+     keep a;                      <span class="c">// then FCFS (oldest)</span>
+<span class="c">// active_buffer is searched FIRST, then read/write</span></pre></div>
+          <div><div class="lab rtl">RTL — hbm3_ctrl_be.sv arbiter</div>
+<pre class="cmd"><span class="c">// tier A: active entries, oldest ready (both queues)</span>
+<span class="kw">for</span> i: <span class="kw">if</span> (active[i] &amp; rdy[i] &amp; seq[i]&lt;seqA) bestA=i;
+<span class="c">// tier C: non-active, mode-selected queue, oldest ready</span>
+<span class="kw">for</span> i: <span class="kw">if</span> (!active[i] &amp; rdy[i] &amp; seq[i]&lt;seqC) bestC=i;
+<span class="c">// pick A if any, else C (with closing guard)</span>
+sel = (bestA&gt;=0) ? bestA : bestC;</pre></div>
+        </div>
+        <p class="why"><b>Note:</b> FCFS uses a monotonically increasing <code class="k">seq</code> stamped at enqueue
+          (equivalent to Ramulator's list/arrival order). <b>Difference:</b> Ramulator searches one combined buffer;
+          the RTL splits into "active" (tier A) and "non-active" (tier C) tiers, which is exactly Ramulator's
+          "active_buffer first, then read/write" order.</p>
+      </div>
+
+      <!-- 6.5 active buffer -->
+      <div class="fncard">
+        <h3>6.5 The active buffer — and why it changes who gets enqueued</h3>
+        <p class="why"><b>Why:</b> once a request's ACT has fired, Ramulator <em>moves</em> it out of the read buffer
+          into a separate <code class="k">m_active_buffer</code>. That frees a read-buffer slot, so the frontend can
+          send more requests. This is performance-relevant — and getting it wrong throttles injection (bug #3, §10).</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — after ACT</div>
+<pre class="cmd"><span class="kw">if</span> (cmd.is_opening) {          <span class="c">// ACT</span>
+  active_buffer.enqueue(req);
+  read_buffer.remove(req);    <span class="c">// frees a slot!</span>
+}
+<span class="c">// accept new send while read_buffer.size() &lt;= 32</span></pre></div>
+          <div><div class="lab rtl">RTL — active flag + non-active accept</div>
+<pre class="cmd"><span class="kw">if</span> (sel_act) rq[i].active &lt;= 1;   <span class="c">// don't move, just flag</span>
+<span class="c">// count only NON-active toward the limit:</span>
+na_rq = count(valid &amp; !active);
+send_accept = (na_rq &lt;= 32) &amp; has_free_slot;</pre></div>
+        </div>
+        <p class="why"><b>Difference:</b> instead of physically moving entries, the RTL keeps them in place with an
+          <code class="k">active</code> bit and gates <code class="k">send_accept</code> on the <em>non-active</em>
+          count — behaviorally identical, simpler in hardware. (The physical array is enlarged to hold active +
+          non-active entries.)</p>
+      </div>
+
+      <!-- 6.6 write mode -->
+      <div class="fncard">
+        <h3>6.6 Write-mode watermark</h3>
+        <p class="why"><b>Why:</b> switching between reads and writes costs bus turnaround cycles. So the controller
+          stays in read-mode and lets writes pile up, then drains them in a burst — switch to write-mode at 80% full,
+          switch back below 20%.</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — set_write_mode()</div>
+<pre class="cmd"><span class="kw">if</span> (!write_mode) {
+  <span class="kw">if</span> (wq.size() &gt; 0.8*max || rq.size()==0)
+     write_mode = true;
+} <span class="kw">else</span> {
+  <span class="kw">if</span> (wq.size() &lt; 0.2*max &amp;&amp; rq.size()!=0)
+     write_mode = false;
+}</pre></div>
+          <div><div class="lab rtl">RTL — write_mode (WHI=25, WLO=6)</div>
+<pre class="cmd"><span class="kw">if</span> (!write_mode)
+  <span class="kw">if</span> (na_wq &gt; WHI || na_rq==0) write_mode &lt;= 1;
+<span class="kw">else</span>
+  <span class="kw">if</span> (na_wq &lt; WLO &amp;&amp; na_rq!=0) write_mode &lt;= 0;</pre></div>
+        </div>
+        <p class="why"><b>Difference:</b> none — same 0.8/0.2 thresholds against the logical buffer size 32. (Our
+          loads-only traces never enter write-mode, but it is implemented for completeness.)</p>
+      </div>
+
+      <!-- 6.7 classify -->
+      <div class="fncard">
+        <h3>6.7 Classify-once (hit / miss / conflict statistics)</h3>
+        <p class="why"><b>Why:</b> the hit/miss/conflict counts are the headline performance metric and the thing the
+          bit-exact check compares. Each request must be counted exactly once, from the bank state <em>before</em> its
+          first command takes effect.</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — update_request_stats (guarded once)</div>
+<pre class="cmd"><span class="kw">if</span> (!req.is_stat_updated) {
+  req.is_stat_updated = true;
+  <span class="kw">if</span>      (is_row_hit(req))  hits++;
+  <span class="kw">else if</span> (is_row_open(req)) conflicts++;
+  <span class="kw">else</span>                     misses++;
+}</pre></div>
+          <div><div class="lab rtl">RTL — classified flag</div>
+<pre class="cmd"><span class="kw">if</span> (sel_valid &amp; !rq[i].classified) {
+  rq[i].classified &lt;= 1;
+  <span class="kw">case</span> (cls)
+    HIT:      stat_hits      &lt;= stat_hits+1;
+    CONFLICT: stat_conflicts &lt;= stat_conflicts+1;
+    MISS:     stat_misses    &lt;= stat_misses+1;
+}</pre></div>
+        </div>
+        <p class="why"><b>Difference:</b> none — the <code class="k">classified</code> bit is the hardware twin of
+          <code class="k">is_stat_updated</code>.</p>
+      </div>
+
+      <!-- 6.8 read latency -->
+      <div class="fncard">
+        <h3>6.8 Read-data return (read latency)</h3>
+        <p class="why"><b>Why:</b> data does not come back the instant RD issues — it takes
+          <code class="k">nCL+nBL = 11</code> cycles. The controller tracks in-flight reads and returns them on time.</p>
+        <div class="cmp">
+          <div><div class="lab raml">Ramulator — pending queue</div>
+<pre class="cmd"><span class="c">// on RD issue</span>
+req.depart = clk + m_read_latency;  <span class="c">// 11</span>
+pending.push_back(req);
+<span class="c">// each tick</span>
+<span class="kw">if</span> (pending[0].depart &lt;= clk) callback(pop());</pre></div>
+          <div><div class="lab rtl">RTL — 11-deep shift register</div>
+<pre class="cmd"><span class="c">// on RD issue: drop a token at stage 11</span>
+rp_v[READ_LAT] &lt;= 1;  rp_id[READ_LAT] &lt;= id;
+<span class="c">// every tick: shift down; stage 0 → rd_resp</span>
+<span class="kw">for</span> k: rp_v[k] &lt;= rp_v[k+1];
+rd_resp_valid &lt;= rp_v[0];</pre></div>
+        </div>
+        <p class="why"><b>Difference:</b> a FIFO/queue in C++ becomes a fixed-depth shift register in hardware (all
+          reads share the same latency, so order is preserved). Not part of the command stream, so it does not affect
+          the bit-exact command diff.</p>
+      </div>
+
+      <!-- 6.9 refresh -->
+      <div class="fncard">
+        <h3>6.9 Refresh — present in the model, but disabled here</h3>
+        <p class="why"><b>Why it matters:</b> real DRAM must refresh every cell periodically (<code class="k">nREFI=3900</code>
+          cycles). <b>The twist:</b> Ramulator's AllBank refresh manager loops over "ranks", but HBM3's hierarchy has
+          <em>no rank level</em>, so it issues <strong>zero</strong> refreshes in this config — verified: the golden
+          command stream contains only ACT/PRE/RD. To match bit-exactly, the RTL therefore <strong>does not</strong>
+          issue refresh either. (The general-purpose controller variant <code class="k">hbm3_ctrl_top.sv</code> does
+          implement a refresh manager.)</p>
+      </div>
+    </section>
+
+    <!-- ================= §7 EXAMPLES ================= -->
+    <section class="card" id="examples">
+      <h2><span class="num">§7</span>Worked examples — cycle by cycle, with real numbers</h2>
+      <p class="lead">Using the HBM3_2Gbps timings (tCK = 1 ns): <code class="k">tRCD=7</code> (ACT→RD),
+        <code class="k">tRP=7</code> (PRE→ACT), <code class="k">tRAS=17</code> (ACT→PRE), read latency
+        <code class="k">nCL+nBL=11</code>.</p>
+      <div class="chartbox">
+        <svg class="chart" viewBox="0 0 940 230" role="img" aria-label="three access timelines">
+          <g font-family="Arial" font-size="12">
+            <!-- axis -->
+            <line x1="120" y1="20" x2="120" y2="210" stroke="#d8dee8"/>
+            <text x="60" y="55"  fill="#1a7f37" font-weight="700">HIT</text>
+            <text x="60" y="115" fill="#b54708" font-weight="700">CONFLICT</text>
+            <text x="60" y="175" fill="#33415c" font-weight="700">MISS</text>
+            <!-- HIT row: RD now -->
+            <g>
+              <rect x="140" y="38" width="40" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+              <text x="160" y="55" text-anchor="middle" fill="#1a7f37" font-weight="700">RD</text>
+              <line x1="180" y1="51" x2="470" y2="51" stroke="#86c79e" stroke-dasharray="4 3"/>
+              <rect x="470" y="38" width="56" height="26" rx="4" fill="#fbfcff" stroke="#86c79e"/>
+              <text x="498" y="55" text-anchor="middle" fill="#1a7f37">data</text>
+              <text x="540" y="55" fill="#647083">+11 cyc → ~11 cycles total</text>
+            </g>
+            <!-- MISS row: ACT then RD -->
+            <g>
+              <rect x="140" y="158" width="44" height="26" rx="4" fill="#fff6e9" stroke="#e3b877"/>
+              <text x="162" y="175" text-anchor="middle" fill="#b07d2a" font-weight="700">ACT</text>
+              <line x1="184" y1="171" x2="320" y2="171" stroke="#e3b877" stroke-dasharray="4 3"/>
+              <text x="250" y="166" text-anchor="middle" fill="#647083" font-size="10.5">tRCD=7</text>
+              <rect x="320" y="158" width="40" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+              <text x="340" y="175" text-anchor="middle" fill="#1a7f37" font-weight="700">RD</text>
+              <line x1="360" y1="171" x2="630" y2="171" stroke="#86c79e" stroke-dasharray="4 3"/>
+              <rect x="630" y="158" width="56" height="26" rx="4" fill="#fbfcff" stroke="#86c79e"/>
+              <text x="658" y="175" text-anchor="middle" fill="#1a7f37">data</text>
+              <text x="700" y="175" fill="#647083">7 + 11 = 18 cycles</text>
+            </g>
+            <!-- CONFLICT row: PRE ACT RD -->
+            <g>
+              <rect x="140" y="98" width="44" height="26" rx="4" fill="#fdf0e6" stroke="#b54708"/>
+              <text x="162" y="115" text-anchor="middle" fill="#b54708" font-weight="700">PRE</text>
+              <line x1="184" y1="111" x2="300" y2="111" stroke="#e3b877" stroke-dasharray="4 3"/>
+              <text x="240" y="106" text-anchor="middle" fill="#647083" font-size="10.5">tRP=7</text>
+              <rect x="300" y="98" width="44" height="26" rx="4" fill="#fff6e9" stroke="#e3b877"/>
+              <text x="322" y="115" text-anchor="middle" fill="#b07d2a" font-weight="700">ACT</text>
+              <line x1="344" y1="111" x2="460" y2="111" stroke="#e3b877" stroke-dasharray="4 3"/>
+              <text x="402" y="106" text-anchor="middle" fill="#647083" font-size="10.5">tRCD=7</text>
+              <rect x="460" y="98" width="40" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+              <text x="480" y="115" text-anchor="middle" fill="#1a7f37" font-weight="700">RD</text>
+              <line x1="500" y1="111" x2="770" y2="111" stroke="#86c79e" stroke-dasharray="4 3"/>
+              <rect x="770" y="98" width="56" height="26" rx="4" fill="#fbfcff" stroke="#86c79e"/>
+              <text x="798" y="115" text-anchor="middle" fill="#1a7f37">data</text>
+              <text x="840" y="115" fill="#647083" font-size="11">25 cyc</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <p class="why">Same byte, three very different costs depending only on what was already in the row buffer. The
+        controller's whole purpose is to turn conflicts and misses into hits — and the RTL reproduces these exact
+        cycle counts because it carries the same <code class="k">tRCD/tRP/tRAS</code> ready-clock arithmetic as
+        Ramulator.</p>
+    </section>
+
+    <!-- ================= §8 NUMBERS ================= -->
+    <section class="card" id="numbers">
+      <h2><span class="num">§8</span>Reference: organization, timing &amp; address layout</h2>
+      <h3>HBM3_8Gb organization (one channel)</h3>
+      <table>
+        <thead><tr><th>Level</th><th class="num">Count</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">pseudochannel</td><td class="num">2</td><td rowspan="4">2 × 4 × 4 = <b>32 banks</b></td></tr>
+          <tr><td class="rowlabel">bankgroup</td><td class="num">4</td></tr>
+          <tr><td class="rowlabel">bank</td><td class="num">4</td></tr>
+          <tr><td class="rowlabel">row</td><td class="num">32,768</td></tr>
+          <tr><td class="rowlabel">column (addressable)</td><td class="num">32</td><td>64 physical, prefetch 2 → 5 address bits</td></tr>
+          <tr><td class="rowlabel">DQ / min access</td><td class="num">128 / 16 B</td><td>tx_offset = 4 low bits dropped</td></tr>
+        </tbody>
+      </table>
+      <h3>Address layout (RoBaRaCoCh), bits above the 4-bit transaction offset</h3>
+      <div class="chartbox">
+        <svg class="chart" viewBox="0 0 900 70" role="img" aria-label="address bit layout">
+          <g font-family="ui-monospace,monospace" font-size="12">
+            <rect x="10"  y="20" width="300" height="34" fill="#eef5ff" stroke="#9db8e8"/><text x="160" y="42" text-anchor="middle" fill="#33415c" font-weight="700">row  [24:10]  (15)</text>
+            <rect x="310" y="20" width="90"  height="34" fill="#fff6e9" stroke="#e3b877"/><text x="355" y="42" text-anchor="middle" fill="#33415c" font-weight="700">ba [9:8]</text>
+            <rect x="400" y="20" width="90"  height="34" fill="#fff6e9" stroke="#e3b877"/><text x="445" y="42" text-anchor="middle" fill="#33415c" font-weight="700">bg [7:6]</text>
+            <rect x="490" y="20" width="70"  height="34" fill="#f1eefb" stroke="#b3a4e0"/><text x="525" y="42" text-anchor="middle" fill="#33415c" font-weight="700">pch[5]</text>
+            <rect x="560" y="20" width="220" height="34" fill="#e9f7ee" stroke="#86c79e"/><text x="670" y="42" text-anchor="middle" fill="#33415c" font-weight="700">col [4:0]  (5)</text>
+            <rect x="780" y="20" width="110" height="34" fill="#f4f6f8" stroke="#c2cad6"/><text x="835" y="42" text-anchor="middle" fill="#647083">tx_off (4)</text>
+            <text x="10" y="14" fill="#647083" font-size="10.5">MSB</text><text x="890" y="14" text-anchor="end" fill="#647083" font-size="10.5">LSB</text>
+          </g>
+        </svg>
+      </div>
+      <h3>HBM3_2Gbps timing (command-clock cycles, tCK = 1 ns)</h3>
+      <table>
+        <thead><tr><th>Param</th><th class="num">cyc</th><th>Param</th><th class="num">cyc</th><th>Param</th><th class="num">cyc</th></tr></thead>
+        <tbody>
+          <tr><td>nBL (burst)</td><td class="num">4</td><td>nCL</td><td class="num">7</td><td>nRCDRD (ACT→RD)</td><td class="num">7</td></tr>
+          <tr><td>nRCDWR</td><td class="num">7</td><td>nRP (PRE→ACT)</td><td class="num">7</td><td>nRAS (ACT→PRE)</td><td class="num">17</td></tr>
+          <tr><td>nRC (ACT→ACT)</td><td class="num">19</td><td>nWR</td><td class="num">8</td><td>nCWL</td><td class="num">2</td></tr>
+          <tr><td>nCCDS / nCCDL</td><td class="num">1 / 2</td><td>nRRDS / nRRDL</td><td class="num">2 / 3</td><td>nWTRS / nWTRL</td><td class="num">3 / 4</td></tr>
+          <tr><td>nRTPS / nRTPL</td><td class="num">2 / 3</td><td>nFAW</td><td class="num">15</td><td>channel ACT edge</td><td class="num">2</td></tr>
+          <tr><td>read latency (nCL+nBL)</td><td class="num">11</td><td>nRFC</td><td class="num">160</td><td>nREFI</td><td class="num">3900</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ================= §9 REFERENCES ================= -->
+    <section class="card" id="refs">
+      <h2><span class="num">§9</span>RTL design references — and how each was applied</h2>
+      <p class="lead">The microarchitecture was informed by four open-source DRAM controllers that were built and
+        studied first (three actually run under Icarus/Python; the HBM one is study-only).</p>
+      <table>
+        <thead><tr><th>Reference</th><th>What it teaches</th><th>What was borrowed into this RTL</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">litedram<br><span class="mono" style="font-size:.78em">DDR2-5</span></td>
+            <td>per-bank state machines + a central multiplexer/arbiter with read/write turnaround &amp; anti-starvation; a refresher with a postponer</td>
+            <td>the core shape: <b>32 independent bank_state machines feeding one FR-FCFS arbiter</b>; the read/write-mode watermark idea</td></tr>
+          <tr><td class="rowlabel">core_ddr3_controller<br><span class="mono" style="font-size:.78em">DDR3</span></td>
+            <td>compact open-page controller with per-bank <code class="k">row_open/active_row</code> tracking and a DFI sequencer using <em>shift-register</em> read/write-enable pipelines</td>
+            <td>the per-bank open-row tracking in <code class="k">bank_state</code>, and the <b>shift-register read-return pipe</b></td></tr>
+          <tr><td class="rowlabel">HBM-PC (HBMController)<br><span class="mono" style="font-size:.78em">HBM2</span></td>
+            <td>an HBM controller with <em>split RAS/CAS</em> arbiters and per-channel scheduling; awareness of channel-level timing</td>
+            <td>awareness of HBM's <b>channel-level timing</b> (the 2-cycle ACT edge) and per-pseudochannel coordination</td></tr>
+          <tr><td class="rowlabel">sdram-controller<br><span class="mono" style="font-size:.78em">SDR</span></td>
+            <td>a minimal monolithic FSM, one access at a time, closed-page — no bank parallelism</td>
+            <td>a baseline for <b>what not to do</b> (it leaves all row-locality and parallelism on the table)</td></tr>
+        </tbody>
+      </table>
+      <p class="why">Net: the design is <em>litedram's distributed-bank-machine + central-arbiter architecture</em>,
+        transposed onto Ramulator's exact behavioral semantics and HBM3 timing, with core_ddr3's read-return shift and
+        HBM-PC's channel-timing awareness.</p>
+    </section>
+
+    <!-- ================= §10 VERIFY ================= -->
+    <section class="card" id="verify">
+      <h2><span class="num">§10</span>Proving it: bit-exact verification &amp; the 3 bugs it caught</h2>
+      <p class="lead">A Verilator C++ harness <em>replays Ramulator's own frontend</em> — the 8:3 clock-ratio
+        interleave, send-before-tick ordering, and "stop when all requests are sent" — then diffs the RTL's issued
+        command stream against Ramulator's <code class="k">TraceRecorder</code> golden, command-for-command.</p>
+      <div class="steps">
+        <div class="step"><b>Golden</b><span>Ramulator + TraceRecorder dumps <span class="mono">clk, CMD, pch, bg, ba, row, col</span> per command</span></div>
+        <div class="step"><b>Replay</b><span>harness drives the RTL with the identical frontend injection schedule</span></div>
+        <div class="step"><b>Diff</b><span>compare every command &amp; cycle, plus hit/miss/conflict totals</span></div>
+      </div>
+
+      <h3>The three bugs the diff exposed</h3>
+      <div class="callout warn"><b>Bug 1 — FAW init.</b> The 4-activation-window counters started at 0, so the first
+        ACT was blocked until cycle 15 (it required <code class="k">clk ≥ 0 + tFAW(15)</code>). Ramulator's history
+        window starts "empty". <b>Fix:</b> initialize FAW clocks to <code class="k">−tFAW</code> so the window imposes
+        no block until 4 real ACTs have shifted in. (First ACT moved from clk 15 → clk 1.)</div>
+      <div class="callout warn"><b>Bug 2 — channel 2-cycle ACT edge.</b> Missing the
+        <span class="mono">HBM3.cpp:305</span> rule that after any ACT the next ACT/PRE on the channel waits 2 cycles.
+        <b>Fix:</b> add a channel-level <code class="k">ch_act</code> ready-clock, reloaded to
+        <code class="k">now+2</code> on every ACT. (Divergence at command #12 → gone.)</div>
+      <div class="callout warn"><b>Bug 3 — active-buffer accounting.</b> The frontend was throttled too early because
+        ACTed requests still counted against the read-buffer's 32-entry limit; in Ramulator they move to a separate
+        active buffer. <b>Fix:</b> gate <code class="k">send_accept</code> on the <em>non-active</em> count only.
+        (Divergence at command #71 → gone; this was the last fix to reach full bit-exactness.)</div>
+
+      <h3>Result — all six real workload traces bit-exact</h3>
+      <table>
+        <thead><tr><th>Trace</th><th class="num">commands identical</th><th class="num">hits</th><th class="num">misses</th><th class="num">conflicts</th><th>match</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">weight_native</td><td class="num">135,614</td><td class="num">30,430</td><td class="num">2,576</td><td class="num">32,497</td><td><span class="pill stream">exact</span></td></tr>
+          <tr><td class="rowlabel">weight_1KB</td><td class="num">86,328</td><td class="num">55,074</td><td class="num">2,269</td><td class="num">8,160</td><td><span class="pill stream">exact</span></td></tr>
+          <tr><td class="rowlabel">weight_16KB</td><td class="num">81,854</td><td class="num">57,311</td><td class="num">32</td><td class="num">8,160</td><td><span class="pill stream">exact</span></td></tr>
+          <tr><td class="rowlabel">kv_native</td><td class="num">103,868</td><td class="num">46,304</td><td class="num">6,114</td><td class="num">13,085</td><td><span class="pill stream">exact</span></td></tr>
+          <tr><td class="rowlabel">kv_1KB</td><td class="num">86,714</td><td class="num">54,881</td><td class="num">2,462</td><td class="num">8,160</td><td><span class="pill stream">exact</span></td></tr>
+          <tr><td class="rowlabel">kv_16KB</td><td class="num">81,854</td><td class="num">57,311</td><td class="num">32</td><td class="num">8,160</td><td><span class="pill stream">exact</span></td></tr>
+        </tbody>
+      </table>
+      <div class="callout win" style="margin-top:16px"><strong>Every issued command — opcode, address, and exact
+        issue cycle — and every hit/miss/conflict count is identical to Ramulator across all six traces (575,632
+        commands).</strong> The behavioral simulator and the synthesizable RTL are provably the same controller.</div>
+
+      <div class="footer">
+        <p>Built from Ramulator&nbsp;2 (CMU-SAFARI) + a SystemVerilog re-implementation verified under Verilator.
+          Part of the GPU memory-access study. &nbsp;·&nbsp; author: yang-gon kim &nbsp;·&nbsp;
+          <a href="../../index.html">Report Archive</a></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  // sticky-TOC active highlight
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting) {
+        links.forEach(function(a){ a.classList.remove('active'); });
+        if (map[e.target.id]) map[e.target.id].classList.add('active');
+      }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>

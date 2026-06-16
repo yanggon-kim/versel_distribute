@@ -23,6 +23,12 @@ from the published site.
   NVBit traces for GPT-2, GPT-OSS-20B, and Qwen2.5-1.5B, including methodology,
   target kernels, environment, results, and compression block-size
   recommendations.
+- `02_HBM_MC/`: section directory for HBM memory-controller pages.
+- `02_HBM_MC/00_cc/report.html`: an HBM3 memory-controller design explainer —
+  Ramulator 2's behavioral controller model, its limitations, and a synthesizable
+  SystemVerilog re-implementation that reproduces it bit-exactly (microarchitecture
+  block diagram, 1:1 function→RTL mapping, side-by-side C++/SV pseudocode, timing,
+  worked examples, and the bit-exact verification).
 
 ## Editing Rules
 
