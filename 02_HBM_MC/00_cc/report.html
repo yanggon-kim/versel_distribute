@@ -95,7 +95,7 @@
     <a href="#examples">§7 Worked examples</a>
     <a href="#numbers">§8 Org, timing &amp; address</a>
     <a href="#refs">§9 Design references</a>
-    <a href="#verify">§10 Bit-exact &amp; the 3 bugs</a>
+    <a href="#verify">§10 Bit-exact verification</a>
   </nav>
 
   <main>
@@ -124,7 +124,7 @@
         <div class="kpi"><div class="v">≈1 → RTL</div><div class="l">Ramulator behavioral stage rebuilt as real hardware</div></div>
         <div class="kpi"><div class="v">6 / 6</div><div class="l">workload traces match bit-exactly</div></div>
         <div class="kpi"><div class="v">575,632</div><div class="l">issued commands identical (clk + op + address)</div></div>
-        <div class="kpi"><div class="v">3</div><div class="l">subtle timing bugs the diff caught &amp; fixed</div></div>
+        <div class="kpi"><div class="v">1 → 6</div><div class="l">single-cycle core, plus a pipelined variant up to 6 stages — still bit-exact (§4)</div></div>
       </div>
       <p class="why" style="margin-top:14px"><b>How to read this page.</b> §1 plants the vocabulary (banks, rows,
         ACT/PRE/RD/WR). §2 shows what Ramulator's controller is and why "1 cycle" is a simplification. §3 explains how
@@ -291,15 +291,29 @@ void tick() {
         <thead><tr><th>Design</th><th class="num">Pipeline depth (entry → command)</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">Ramulator behavioral</td><td class="num">≈ 1</td><td>one combinational <code class="k">tick()</code></td></tr>
-          <tr><td class="rowlabel">This RTL (bit-exact)</td><td class="num">1 decision cycle</td><td>S1–S3 combinational; only effects registered, so it matches Ramulator. Read-data return is a separate <code class="k">11</code>-deep shift pipe (a documented constant, not in the command stream).</td></tr>
-          <tr><td class="rowlabel">Production HBM controller</td><td class="num">~5–18 (+PHY)</td><td>S0–S3 would each be registered for timing closure; adds front-end/CDC/DFI/PHY</td></tr>
+          <tr><td class="rowlabel">This RTL — bit-exact core</td><td class="num">1 decision cycle</td><td>S1–S3 combinational; only effects registered, so it matches Ramulator. Read-data return is a separate <code class="k">11</code>-deep shift pipe (a documented constant, not in the command stream).</td></tr>
+          <tr><td class="rowlabel">This RTL — <b>pipelined variant</b></td><td class="num">3–6 stages</td><td>same 1-cycle decision core + a registered <b>egress command pipeline</b> (depth 1–4). entry→DFI-command = enqueue(1)+decision(1)+egress(1–4). <span class="pill stream">verified bit-exact</span> (see §4).</td></tr>
+          <tr><td class="rowlabel">Production HBM controller</td><td class="num">~5–18 (+PHY)</td><td>front-end/CDC + this datapath pipeline + DFI/PHY serialization</td></tr>
         </tbody>
       </table>
-      <p class="why"><b>Why keep the decision combinational rather than pipeline S1–S3?</b> Because the goal is
-        <em>behavioral equivalence to Ramulator</em>, not maximum clock frequency. A real product would register
-        S1→S2→S3 and absorb the resulting constant latency offset; here we keep them in one cycle so the command
-        cycles match Ramulator with zero offset. The microarchitecture is otherwise identical, so the pipelined and
-        bit-exact variants differ only by a known constant.</p>
+      <h3>What you can and cannot pipeline</h3>
+      <p class="why">There are two different things in the controller, and only one of them is safe to pipeline if you
+        want to keep matching Ramulator:</p>
+      <ul class="notes">
+        <li><b>The decision <em>feedback loop</em></b> (arbiter reads bank/timing state → issues a command → that
+          command updates the state → next cycle's arbiter reads it) <b>must stay single-cycle.</b> If you register
+          stages <em>inside</em> this loop, the arbiter decides from <em>stale</em> state and the command
+          <em>schedule changes</em> — it would no longer match the 1-cycle reference.</li>
+        <li><b>The command <em>datapath</em></b> (the chosen command travelling out to the DFI/PHY pins) carries no
+          feedback, so it is <b>safe to pipeline</b>. Adding N registered egress stages delays every command by the
+          same N cycles — a pure constant latency that does not change <em>which</em> commands issue or in what order.</li>
+      </ul>
+      <div class="callout win"><strong>This is exactly what real controllers do.</strong> In litedram the
+        bank-machines + multiplexer decide per cycle and the DFI phases are driven through <em>registered</em>
+        assignments; in core_ddr3 the <code class="k">command_q</code>/<code class="k">wr_en_q</code>/<code class="k">rd_en_q</code>
+        shift pipelines carry the command/enable latency. So the realistic pipelined variant here keeps the decision
+        loop at 1 cycle and pipelines the command egress — and its issued stream stays <strong>bit-exact to
+        Ramulator, shifted by a known constant latency</strong> (§4).</div>
     </section>
 
     <!-- ================= §4 BLOCK DIAGRAM ================= -->
@@ -402,9 +416,169 @@ void tick() {
           <tr><td class="rowlabel">bank_state [32]</td><td>per-bank open/closed FSM + open-row register; emits hit/miss/conflict + needed command</td><td class="mono">rtl/bank_state.sv</td></tr>
           <tr><td class="rowlabel">timing_engine</td><td>JEDEC legality: per-bank/bankgroup/pseudochannel/channel "earliest-issuable-clock" + FAW shift register</td><td class="mono">rtl/timing_engine.sv</td></tr>
           <tr><td class="rowlabel">hbm3_ctrl_be</td><td>bit-exact top: send/tick phases, queues, active-buffer, FR-FCFS arbiter, classify, read-return</td><td class="mono">rtl/hbm3_ctrl_be.sv</td></tr>
+          <tr><td class="rowlabel">hbm3_ctrl_pipe</td><td><b>pipelined variant</b>: same core + a registered egress command pipeline (param <code class="k">CMD_PIPE_DEPTH</code>) + <code class="k">flush</code> drain</td><td class="mono">rtl/hbm3_ctrl_pipe.sv</td></tr>
           <tr><td class="rowlabel">hbm3_pkg</td><td>organization params, HBM3_2Gbps timing constants, request struct, command enum</td><td class="mono">rtl/hbm3_pkg.sv</td></tr>
         </tbody>
       </table>
+
+      <h3>The pipelined variant — detailed block diagram</h3>
+      <p class="lead">The diagram above is the <em>bit-exact core</em>: a single-cycle decision feeding the DFI bus.
+        The pipelined variant (<code class="k">hbm3_ctrl_pipe.sv</code>) keeps that whole feedback loop unchanged and
+        inserts a registered <strong>egress command pipeline</strong> between the arbiter's choice and the external
+        command bus. Below, the <span style="color:#1f6feb;font-weight:700">blue</span> region is the untouched
+        1-cycle decision loop; the <span style="color:#b07d2a;font-weight:700">amber</span> region is the new
+        pipeline; the <span style="color:#1a7f37;font-weight:700">green dashed</span> path is the feedback that must
+        <em>not</em> be pipelined.</p>
+      <div class="chartbox">
+        <svg class="chart" viewBox="0 0 980 470" role="img" aria-label="pipelined controller block diagram">
+          <defs>
+            <marker id="pa" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7c8aa5"/></marker>
+            <marker id="pg" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#1a7f37"/></marker>
+            <marker id="pb" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#b07d2a"/></marker>
+          </defs>
+          <g font-family="Arial" font-size="11.5">
+            <!-- single-cycle decision core (blue dashed enclosure) -->
+            <rect x="8" y="60" width="470" height="300" rx="12" fill="#f5f9ff" stroke="#9db8e8" stroke-dasharray="6 4"/>
+            <text x="20" y="80" fill="#1f6feb" font-weight="800" font-size="12.5">SINGLE-CYCLE DECISION CORE  (identical to bit-exact `be`)</text>
+
+            <rect x="24" y="96" width="120" height="52" rx="7" fill="#eef2f7" stroke="#9aa6bb"/>
+            <text x="84" y="117" text-anchor="middle" font-weight="700" fill="#33415c">request in</text>
+            <text x="84" y="133" text-anchor="middle" fill="#647083">addr_mapper</text>
+
+            <rect x="24" y="172" width="120" height="64" rx="7" fill="#eef5ff" stroke="#9db8e8"/>
+            <text x="84" y="192" text-anchor="middle" font-weight="700" fill="#33415c">rq[ ] / wq[ ]</text>
+            <text x="84" y="208" text-anchor="middle" fill="#647083">+active, +seq</text>
+            <text x="84" y="223" text-anchor="middle" fill="#647083">(enqueue reg)</text>
+
+            <rect x="172" y="100" width="138" height="60" rx="7" fill="#fff6e9" stroke="#e3b877"/>
+            <text x="241" y="120" text-anchor="middle" font-weight="700" fill="#33415c">bank_state[32]</text>
+            <text x="241" y="136" text-anchor="middle" fill="#647083">open-row FSM</text>
+            <text x="241" y="151" text-anchor="middle" fill="#647083">hit/miss/conflict</text>
+
+            <rect x="172" y="246" width="138" height="64" rx="7" fill="#fff6e9" stroke="#e3b877"/>
+            <text x="241" y="266" text-anchor="middle" font-weight="700" fill="#33415c">timing_engine</text>
+            <text x="241" y="282" text-anchor="middle" fill="#647083">ready-clocks + FAW</text>
+            <text x="241" y="297" text-anchor="middle" fill="#647083">→ *_ready[32]</text>
+
+            <rect x="338" y="150" width="124" height="120" rx="7" fill="#e9f7ee" stroke="#86c79e"/>
+            <text x="400" y="172" text-anchor="middle" font-weight="800" fill="#1a7f37">frfcfs_arbiter</text>
+            <text x="400" y="190" text-anchor="middle" fill="#43506a">(combinational)</text>
+            <text x="400" y="207" text-anchor="middle" fill="#647083">tier A active</text>
+            <text x="400" y="222" text-anchor="middle" fill="#647083">tier C read/write</text>
+            <text x="400" y="237" text-anchor="middle" fill="#647083">prefer-ready,</text>
+            <text x="400" y="252" text-anchor="middle" fill="#647083">oldest seq</text>
+
+            <!-- core arrows -->
+            <g stroke="#7c8aa5" stroke-width="1.5" marker-end="url(#pa)" fill="none">
+              <line x1="84" y1="148" x2="84" y2="170"/>
+              <path d="M144,196 H160 V130 H170"/>
+              <path d="M144,210 H160 V278 H170"/>
+              <path d="M310,130 H324 V196 H336"/>
+              <path d="M310,278 H324 V232 H336"/>
+            </g>
+            <!-- feedback (green dashed, must stay 1-cycle) -->
+            <g stroke="#1a7f37" stroke-width="1.6" marker-end="url(#pg)" fill="none" stroke-dasharray="5 3">
+              <path d="M400,270 V330 H241 V312"/>
+              <path d="M338,255 H326 V320 H241"/>
+            </g>
+            <text x="250" y="348" text-anchor="middle" fill="#1a7f37" font-size="10.5">issue effects update bank+timing — read by NEXT cycle's arbiter (1-cycle loop)</text>
+
+            <!-- handoff: chosen command leaves the loop -->
+            <text x="470" y="200" text-anchor="middle" fill="#43506a" font-weight="700" font-size="11">sel_cmd</text>
+            <text x="470" y="214" text-anchor="middle" fill="#647083" font-size="10">+ dec_clk</text>
+
+            <!-- egress pipeline (amber) -->
+            <rect x="498" y="60" width="474" height="300" rx="12" fill="#fffaf1" stroke="#e3b877" stroke-dasharray="6 4"/>
+            <text x="512" y="80" fill="#b07d2a" font-weight="800" font-size="12.5">EGRESS COMMAND PIPELINE  (CMD_PIPE_DEPTH stages)</text>
+
+            <g>
+              <rect x="512" y="150" width="96" height="120" rx="7" fill="#fff1de" stroke="#e3b877"/>
+              <rect x="624" y="150" width="96" height="120" rx="7" fill="#fdeacb" stroke="#e3b877"/>
+              <rect x="736" y="150" width="96" height="120" rx="7" fill="#fbe1b4" stroke="#e3b877"/>
+            </g>
+            <g text-anchor="middle" fill="#33415c" font-weight="700">
+              <text x="560" y="200">stage 1</text><text x="680" y="200">stage 2</text><text x="784" y="200">stage 3</text>
+            </g>
+            <g text-anchor="middle" fill="#647083" font-size="10">
+              <text x="560" y="218">command-</text><text x="560" y="231">select reg</text>
+              <text x="680" y="218">DFI-format</text><text x="680" y="231">reg</text>
+              <text x="784" y="218">PHY-launch</text><text x="784" y="231">reg</text>
+            </g>
+            <g text-anchor="middle" fill="#b07d2a" font-size="9.5">
+              <text x="560" y="252">{op,addr,</text><text x="560" y="263">dec_clk}</text>
+              <text x="680" y="257">↓ carry dec_clk ↓</text>
+              <text x="784" y="257">↓</text>
+            </g>
+
+            <rect x="858" y="172" width="104" height="76" rx="7" fill="#f1eefb" stroke="#b3a4e0"/>
+            <text x="910" y="194" text-anchor="middle" font-weight="700" fill="#33415c">DFI bus</text>
+            <text x="910" y="210" text-anchor="middle" fill="#647083" font-size="10">cmd_op,addr,</text>
+            <text x="910" y="223" text-anchor="middle" fill="#647083" font-size="10">cmd_clk=dec_clk</text>
+            <text x="910" y="238" text-anchor="middle" fill="#647083" font-size="10">(N cyc later)</text>
+
+            <!-- amber pipeline arrows -->
+            <g stroke="#b07d2a" stroke-width="1.8" marker-end="url(#pb)" fill="none">
+              <line x1="462" y1="210" x2="510" y2="210"/>
+              <line x1="608" y1="210" x2="622" y2="210"/>
+              <line x1="720" y1="210" x2="734" y2="210"/>
+              <line x1="832" y1="210" x2="856" y2="210"/>
+            </g>
+
+            <!-- flush -->
+            <rect x="512" y="296" width="320" height="44" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="524" y="314" fill="#43506a" font-weight="700">flush</text>
+            <text x="524" y="330" fill="#647083" font-size="10.5">at end-of-trace: shift the pipe but make no new decisions → drains the last N commands</text>
+
+            <!-- latency annotation -->
+            <text x="735" y="380" text-anchor="middle" fill="#b07d2a" font-weight="700" font-size="11.5">latency = clk_cnt − cmd_clk = CMD_PIPE_DEPTH (constant, every command)</text>
+            <text x="240" y="380" text-anchor="middle" fill="#1f6feb" font-weight="700" font-size="11.5">schedule (decision cycles) unchanged → bit-exact</text>
+          </g>
+        </svg>
+      </div>
+
+      <h4>How each stage works</h4>
+      <ul class="notes">
+        <li><b>The decision core is byte-identical to <code class="k">be</code>.</b> Same send/tick phases,
+          <code class="k">cur_clk = clk_cnt + do_tick</code>, the same combinational arbiter, and the same
+          <code class="k">iss_valid/iss_cmd/iss_flat/iss_row</code> driving <code class="k">bank_state</code> +
+          <code class="k">timing_engine</code> on the same edge. The green-dashed feedback closes in one cycle, so
+          the <em>schedule</em> — which command issues on which decision cycle — is unchanged.</li>
+        <li><b>Stage 1 — command-select register.</b> The arbiter's chosen command <code class="k">{op, pch, bg, ba,
+          row, col}</code> plus its <strong>decision cycle</strong> <code class="k">dec_clk = cur_clk</code> is latched
+          into the first pipe slot. (Carrying <code class="k">dec_clk</code> is the trick: it lets the command be
+          identified by <em>when it was decided</em>, so the external stream still matches Ramulator exactly.)</li>
+        <li><b>Stage 2 — DFI-format register.</b> Models the cycle a real controller spends formatting the command
+          onto the DFI command/address fields (litedram's registered <code class="k">_Steerer</code> phase drive).
+          The payload — including <code class="k">dec_clk</code> — simply shifts forward.</li>
+        <li><b>Stage 3 … N — PHY-launch register(s).</b> Models the controller→PHY command-path cycles (core_ddr3's
+          <code class="k">command_q</code>/<code class="k">wr_en_q</code>/<code class="k">rd_en_q</code> shift pipes).
+          <code class="k">CMD_PIPE_DEPTH</code> is a parameter (1–4 shown); each added stage is one more cycle of
+          pure latency.</li>
+        <li><b>The bus output.</b> <code class="k">cmd_*</code> come from the deepest stage; <code class="k">cmd_clk</code>
+          is the carried <code class="k">dec_clk</code>. So a command decided on cycle <em>D</em> appears on the bus on
+          physical cycle <em>D + N</em>, carrying the tag <em>D</em>. The measured latency
+          <code class="k">clk_cnt − cmd_clk</code> is therefore a <strong>constant N</strong> for every command.</li>
+        <li><b><code class="k">flush</code> drains the pipe.</b> When the trace ends, the last N commands are still in
+          the pipe; asserting <code class="k">flush</code> shifts them out while suppressing any new decision/state
+          update — so the drained tail is exactly the commands the decision core already chose, nothing more.</li>
+      </ul>
+
+      <h4>Verified: bit-exact at every depth (<code class="k">make bitexact-pipe</code>)</h4>
+      <p class="why">For each egress depth, all six traces' command streams are byte-identical to Ramulator and the
+        decision→bus latency is a constant equal to the depth — proof it is pure latency, never a reschedule.</p>
+      <table>
+        <thead><tr><th class="num">CMD_PIPE_DEPTH</th><th class="num">entry→DFI-command depth</th><th>command stream vs Ramulator</th><th class="num">decision→bus latency</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="num">3 stages</td><td>bit-exact (6/6 traces)</td><td class="num">exactly 1 cyc</td></tr>
+          <tr><td class="num">2</td><td class="num">4 stages</td><td>bit-exact (6/6 traces)</td><td class="num">exactly 2 cyc</td></tr>
+          <tr><td class="num">3</td><td class="num">5 stages</td><td>bit-exact (6/6 traces)</td><td class="num">exactly 3 cyc</td></tr>
+          <tr><td class="num">4</td><td class="num">6 stages</td><td>bit-exact (6/6 traces)</td><td class="num">exactly 4 cyc</td></tr>
+        </tbody>
+      </table>
+      <div class="callout win"><strong>The pipelined variant turns the 1-stage decision path into a 3–6-stage
+        entry→command pipeline while staying bit-exact to Ramulator</strong> — the issued command stream is identical,
+        shifted by exactly the (tunable) pipeline depth. <code class="k">CMD_PIPE_DEPTH = 0</code> reduces to the
+        single-cycle <code class="k">be</code> controller.</div>
     </section>
 
     <!-- ================= §5 MAPPING ================= -->
@@ -811,7 +985,7 @@ rd_resp_valid &lt;= rp_v[0];</pre></div>
 
     <!-- ================= §10 VERIFY ================= -->
     <section class="card" id="verify">
-      <h2><span class="num">§10</span>Proving it: bit-exact verification &amp; the 3 bugs it caught</h2>
+      <h2><span class="num">§10</span>Proving it: bit-exact verification</h2>
       <p class="lead">A Verilator C++ harness <em>replays Ramulator's own frontend</em> — the 8:3 clock-ratio
         interleave, send-before-tick ordering, and "stop when all requests are sent" — then diffs the RTL's issued
         command stream against Ramulator's <code class="k">TraceRecorder</code> golden, command-for-command.</p>
@@ -820,20 +994,6 @@ rd_resp_valid &lt;= rp_v[0];</pre></div>
         <div class="step"><b>Replay</b><span>harness drives the RTL with the identical frontend injection schedule</span></div>
         <div class="step"><b>Diff</b><span>compare every command &amp; cycle, plus hit/miss/conflict totals</span></div>
       </div>
-
-      <h3>The three bugs the diff exposed</h3>
-      <div class="callout warn"><b>Bug 1 — FAW init.</b> The 4-activation-window counters started at 0, so the first
-        ACT was blocked until cycle 15 (it required <code class="k">clk ≥ 0 + tFAW(15)</code>). Ramulator's history
-        window starts "empty". <b>Fix:</b> initialize FAW clocks to <code class="k">−tFAW</code> so the window imposes
-        no block until 4 real ACTs have shifted in. (First ACT moved from clk 15 → clk 1.)</div>
-      <div class="callout warn"><b>Bug 2 — channel 2-cycle ACT edge.</b> Missing the
-        <span class="mono">HBM3.cpp:305</span> rule that after any ACT the next ACT/PRE on the channel waits 2 cycles.
-        <b>Fix:</b> add a channel-level <code class="k">ch_act</code> ready-clock, reloaded to
-        <code class="k">now+2</code> on every ACT. (Divergence at command #12 → gone.)</div>
-      <div class="callout warn"><b>Bug 3 — active-buffer accounting.</b> The frontend was throttled too early because
-        ACTed requests still counted against the read-buffer's 32-entry limit; in Ramulator they move to a separate
-        active buffer. <b>Fix:</b> gate <code class="k">send_accept</code> on the <em>non-active</em> count only.
-        (Divergence at command #71 → gone; this was the last fix to reach full bit-exactness.)</div>
 
       <h3>Result — all six real workload traces bit-exact</h3>
       <table>
