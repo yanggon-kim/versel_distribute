@@ -253,6 +253,142 @@
       </p>
     </section>
 
+    <section aria-labelledby="variants">
+      <h2 id="variants">The eight implementation variants, in detail</h2>
+      <p>
+        Every study runs the same eight structures (numbered <code>0&ndash;7</code>; prefixed
+        <code>V</code> for output, <code>R</code> for read, <code>W</code> for write). They all compute
+        the <em>same</em> result and differ only in <b>how</b> the compression codec is attached to the
+        memory work &mdash; which is exactly what determines performance on a memory-bound kernel.
+      </p>
+      <table>
+        <thead><tr><th>#</th><th>Variant</th><th>How it works</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>0</td><td><b>Baseline</b></td>
+            <td>One thread per output element; read input, compute, compress, store &mdash; the simplest
+              mapping and the reference point. No staging, no roles.</td>
+            <td class="mid">solid, simple</td>
+          </tr>
+          <tr>
+            <td>1</td><td><b>Same-CTA (fused)</b></td>
+            <td>One thread block per row: cooperatively load the input into shared memory, then every
+              thread computes &rarr; compresses &rarr; stores <em>inside the one CTA</em>. The codec rides
+              with the issuing threads.</td>
+            <td class="yes">top tier</td>
+          </tr>
+          <tr>
+            <td>2</td><td><b>Warp-specialized</b></td>
+            <td>Block split into <b>producer warps</b> (compute values into a shared tile) and
+              <b>consumer warps</b> (read tile, compress, store), phased with barriers &mdash; the classic
+              producer/consumer role split.</td>
+            <td class="no">poor (memory-bound)</td>
+          </tr>
+          <tr>
+            <td>3</td><td><b>Two-kernel</b></td>
+            <td>Kernel&nbsp;A writes the full <em>uncompressed</em> intermediate to DRAM; kernel&nbsp;B
+              reads it back and compresses. A control that separates "compression benefit" from "overlap
+              benefit" &mdash; with no overlap and an extra round-trip.</td>
+            <td class="no">worst on writes</td>
+          </tr>
+          <tr>
+            <td>4</td><td><b>Persistent</b></td>
+            <td>Launch ~one block per SM; blocks stay resident and grid-stride over the rows, fusing
+              compute+compress+store like #1 but amortizing launch and keeping pipelines warm.</td>
+            <td class="mid">within 1&ndash;2% of best</td>
+          </tr>
+          <tr>
+            <td>5</td><td><b>cp.async pipeline</b></td>
+            <td>Double-buffered asynchronous copies (<code>cp.async</code>) stage inputs into shared
+              memory so the load of the next tile overlaps the compute of the current one (SM80+).</td>
+            <td class="yes">top tier</td>
+          </tr>
+          <tr>
+            <td>6</td><td><b>Cluster + DSM</b></td>
+            <td>A 2-CTA thread-block cluster: the producer CTA computes into its shared memory; the
+              consumer CTA reads it across <b>Distributed Shared Memory</b> and stores (Hopper+). A
+              CTA-level producer/consumer split.</td>
+            <td class="no">poor</td>
+          </tr>
+          <tr>
+            <td>7</td><td><b>TMA</b></td>
+            <td>The Tensor Memory Accelerator issues bulk asynchronous copies under an
+              <code>mbarrier</code> &mdash; TMA <em>loads</em> for reads, TMA <em>stores</em> for writes
+              &mdash; the closest match to the modern hardware data-movement path.</td>
+            <td class="yes">best overall</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The split-role variants (<b>#2 warp-specialized</b>, <b>#6 cluster/DSM</b>) and the unfused
+        <b>#3 two-kernel</b> consistently lose, because they move the codec <em>off</em> the threads that
+        issue the memory traffic &mdash; a memory-bound kernel can't spare that issue parallelism (its
+        consumer warps/CTAs sit idle of memory work). Warp specialization is a win for <em>compute-bound</em>
+        Tensor-Core pipelines (GEMM, FlashAttention), not for the bandwidth-bound reductions/copies here.
+      </p>
+    </section>
+
+    <section aria-labelledby="ranking">
+      <h2 id="ranking">Ranked performance (measured)</h2>
+
+      <h3>Output study &mdash; kernel duration, size large (lower = better)</h3>
+      <table>
+        <thead><tr><th>rank</th><th>variant</th><th class="num">duration (&micro;s)</th><th class="num">vs V0</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>V1 same-CTA</td><td class="num">1181.3</td><td class="num">1.003&times;</td></tr>
+          <tr><td>2</td><td>V5 cp.async</td><td class="num">1181.7</td><td class="num">1.003&times;</td></tr>
+          <tr><td>3</td><td>V7 TMA</td><td class="num">1182.7</td><td class="num">1.002&times;</td></tr>
+          <tr><td>4</td><td>V3 two-kernel</td><td class="num">1183.6</td><td class="num">1.001&times;</td></tr>
+          <tr><td>5</td><td>V0 baseline</td><td class="num">1184.8</td><td class="num">1.000&times;</td></tr>
+          <tr><td>6</td><td>V4 persistent</td><td class="num">1196.3</td><td class="num">0.990&times;</td></tr>
+          <tr><td>7</td><td>V6 cluster/DSM</td><td class="num">1381.7</td><td class="num"><span class="no">0.858&times;</span></td></tr>
+          <tr><td>8</td><td>V2 warp-spec</td><td class="num">1480.0</td><td class="num"><span class="no">0.801&times;</span></td></tr>
+        </tbody>
+      </table>
+      <p class="rel" style="color:var(--muted);font-size:0.9rem;">(Output is ~0.05% of traffic, so all are near the memory-bound floor; the ranking shows only the structural overhead.)</p>
+
+      <h3>Read / KV study &mdash; duration, large @ read_ratio 0.25 (lower = better)</h3>
+      <table>
+        <thead><tr><th>rank</th><th>variant</th><th class="num">ms</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>R7 TMA</td><td class="num">0.2977</td></tr>
+          <tr><td>2</td><td>R5 cp.async</td><td class="num">0.2992</td></tr>
+          <tr><td>3</td><td>R1 same-CTA</td><td class="num">0.3032</td></tr>
+          <tr><td>4</td><td>R4 persistent</td><td class="num">0.3032</td></tr>
+          <tr><td>5</td><td>R0 baseline</td><td class="num">0.3041</td></tr>
+          <tr><td>6</td><td>R3 two-kernel</td><td class="num">0.3102</td></tr>
+          <tr><td>7</td><td>R6 cluster/DSM</td><td class="num">0.3197</td></tr>
+          <tr><td>8</td><td>R2 warp-spec</td><td class="num"><span class="no">0.6901</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Write study &mdash; duration, activation profile @ ratio 0.25 (lower = better)</h3>
+      <table>
+        <thead><tr><th>rank</th><th>variant</th><th class="num">ms</th><th class="num">vs W0</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>W7 TMA-store</td><td class="num">0.242</td><td class="num">1.32&times;</td></tr>
+          <tr><td>2</td><td>W0 baseline</td><td class="num">0.320</td><td class="num">1.00&times;</td></tr>
+          <tr><td>3</td><td>W4 persistent</td><td class="num">0.429</td><td class="num">0.75&times;</td></tr>
+          <tr><td>4</td><td>W5 cp.async</td><td class="num">0.457</td><td class="num">0.70&times;</td></tr>
+          <tr><td>5</td><td>W1 same-CTA</td><td class="num">0.462</td><td class="num">0.69&times;</td></tr>
+          <tr><td>6</td><td>W2 warp-spec</td><td class="num">0.473</td><td class="num">0.68&times;</td></tr>
+          <tr><td>7</td><td>W6 cluster/DSM</td><td class="num"><span class="no">1.350</span></td><td class="num">0.24&times;</td></tr>
+          <tr><td>8</td><td>W3 two-kernel</td><td class="num"><span class="no">1.661</span></td><td class="num">0.19&times;</td></tr>
+        </tbody>
+      </table>
+      <p class="rel" style="color:var(--muted);font-size:0.9rem;">(On this small-Dout write profile W0's thread-per-output mapping happens to beat the block-per-row forms; on the wide transformer profile W1/W5/W7 lead at ~880 GB/s. TMA-store is best in both. W3 writes the full uncompressed output first &mdash; 6.9&times; slower than W7.)</p>
+
+      <h3>Overall ranking (memory-bound kernels)</h3>
+      <table>
+        <thead><tr><th>tier</th><th>variants</th><th>why</th></tr></thead>
+        <tbody>
+          <tr><td class="yes">Best</td><td>#7 TMA, #1 same-CTA, #5 cp.async</td><td>codec fused into the load/store-issuing threads; TMA-store best for writes</td></tr>
+          <tr><td class="mid">Good</td><td>#4 persistent, #0 baseline</td><td>fused, within a few % of the leaders</td></tr>
+          <tr><td class="no">Avoid</td><td>#6 cluster/DSM, #2 warp-spec, #3 two-kernel</td><td>split off / unfused &mdash; remove threads from the memory-issue pool (or pay a full extra round-trip)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
     <section aria-labelledby="law">
       <h2 id="law">The unifying law</h2>
       <div class="law">
