@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Producer-Consumer Compression on Memory-Bound GPU Kernels</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px 64px;
+      line-height: 1.6;
+    }
+
+    main { width: min(100%, 920px); margin: 0 auto; }
+
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+
+    .meta {
+      margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 0.9rem; color: var(--muted);
+    }
+    .meta b { color: var(--text); }
+
+    .question {
+      margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px;
+      font-size: 1.05rem;
+    }
+
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06);
+      padding: 24px; margin-top: 22px;
+    }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+
+    .yes { color: var(--good); font-weight: 700; }
+    .no { color: var(--bad); font-weight: 700; }
+    .mid { color: var(--warn); font-weight: 700; }
+
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+
+    .law {
+      margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px;
+      font-size: 1.05rem;
+    }
+
+    ul.tight { margin: 0 0 12px; padding-left: 20px; }
+    ul.tight li { margin-bottom: 6px; }
+
+    .footer {
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .footer p { margin: 0 0 4px; }
+    .footer a { color: var(--accent); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>Producer-Consumer Compression on Memory-Bound GPU Kernels</h1>
+      <p class="lede">
+        Can a compression stage run in the idle compute cycles of a memory-bandwidth-bound kernel to
+        cut traffic and improve end-to-end latency? Four staged studies, profiled on an RTX 5080.
+      </p>
+      <div class="meta">
+        <b>GPU:</b> NVIDIA GeForce RTX 5080 (Blackwell, <code>sm_120</code>, 16 GB, ~960 GB/s) &nbsp;&middot;&nbsp;
+        <b>Toolkit:</b> CUDA 13.2 &nbsp;&middot;&nbsp; <b>Profiler:</b> Nsight Compute 2026.1 &nbsp;&middot;&nbsp;
+        <b>32 kernels</b> across 4 families, validated vs CPU reference.
+      </div>
+    </header>
+
+    <div class="question">
+      <b>Founding question.</b> A memory-bound kernel spends most of its time stalled on memory, leaving
+      the SM's arithmetic units idle. Can compression run <em>in those idle cycles</em> &mdash; reducing
+      traffic &mdash; without slowing the producer? The goal was <b>evidence, not confirmation</b>: a
+      "NO" is as valid a result as a "YES".
+    </div>
+
+    <section aria-labelledby="overview">
+      <h2 id="overview">The four studies at a glance</h2>
+      <p>
+        Each study aims compression at a different traffic stream. The arc: useless on minority traffic,
+        near-linear on the dominant <em>read</em>, real-but-throttled on the dominant <em>write</em>, and
+        about half of that again once <em>real</em> ops and a real 4&times; codec are used.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Study</th><th>What was compressed</th><th>Answer</th><th class="num">Best speedup</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td><td><b>Output</b> (V0&ndash;V7)</td>
+            <td>the output of a read-bound decode kernel (&approx;0.05% of traffic)</td>
+            <td class="no">NO</td><td class="num">none (flat)</td>
+          </tr>
+          <tr>
+            <td>2</td><td><b>Read / KV</b> (R0&ndash;R7)</td>
+            <td>the dominant <b>read</b> (compressed KV cache)</td>
+            <td class="yes">YES</td><td class="num">~7.8&times; @ 8&times;</td>
+          </tr>
+          <tr>
+            <td>3</td><td><b>Write</b> (W0&ndash;W7)</td>
+            <td>the dominant <b>write</b> (6 real-workload profiles + transformer)</td>
+            <td class="mid">YES, sub-linear</td><td class="num">~2.6&ndash;3.1&times;</td>
+          </tr>
+          <tr>
+            <td>4</td><td><b>Real kernels</b></td>
+            <td>real ops + authentic int8 codec (4&times;)</td>
+            <td class="mid">YES, smaller</td><td class="num">1.2&ndash;1.7&times;</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="s1">
+      <h2 id="s1">Study 1 &mdash; Output compression (read-bound decode): <span class="no">NO</span></h2>
+      <p>
+        A decode-attention-like kernel was confirmed strongly memory-bound &mdash; <b>DRAM 96%</b>,
+        SM 6.5%, long-scoreboard stalls 65% &mdash; with <b>~1000 dependent FLOPs/output that hide for
+        free</b> (&lt;1% latency). Yet compressing the <em>output</em> moved total DRAM bytes
+        &lt;0.1% (output is ~0.05% of traffic), so <b>runtime was flat across every compression ratio</b>.
+        The lesson that frames the whole series: <em>free compute &ne; benefit &mdash; you must compress
+        the dominant traffic.</em>
+      </p>
+    </section>
+
+    <section aria-labelledby="s2">
+      <h2 id="s2">Study 2 &mdash; Read / KV compression: <span class="yes">YES (&approx; linear)</span></h2>
+      <p>
+        Storing the KV cache as sequence block-means (an exact sufficient statistic for a mean reduction,
+        so still bitwise-valid) shrank the <b>dominant read</b> by the compression ratio. Across all 8
+        structures, end-to-end time tracked traffic almost perfectly:
+      </p>
+      <table>
+        <thead><tr><th class="num">read ratio</th><th class="num">DRAM bytes</th><th class="num">speedup</th></tr></thead>
+        <tbody>
+          <tr><td class="num">0.5</td><td class="num">0.50&times;</td><td class="num">1.99&times;</td></tr>
+          <tr><td class="num">0.25</td><td class="num">0.25&times;</td><td class="num">3.93&times;</td></tr>
+          <tr><td class="num">0.125</td><td class="num">0.13&times;</td><td class="num"><b>7.76&times;</b></td></tr>
+        </tbody>
+      </table>
+      <p>This is the win Study 1 could not get &mdash; because the lever was on the traffic that dominates.</p>
+    </section>
+
+    <section aria-labelledby="s3">
+      <h2 id="s3">Study 3 &mdash; Write-side compression: <span class="mid">YES, sub-linear</span></h2>
+      <p>
+        A write-dominant producer (read small <code>X</code>, write a large compressed output). Six
+        write-heavy workloads were found via literature search and run as traffic-profile kernels, plus a
+        realistic transformer activation-save. Best-variant speedups:
+      </p>
+      <table>
+        <thead><tr><th>Candidate (cited technique)</th><th>profile</th><th class="num">speedup</th></tr></thead>
+        <tbody>
+          <tr><td>Transformer activation-save (ActNN / CompAct)</td><td>write-dom, hidden 4096</td><td class="num"><b>3.07&times; @ 8&times;</b></td></tr>
+          <tr><td>KV-cache prefill write (KVQuant / MLA)</td><td>write-dom</td><td class="num">2.99&times; @ 4&times;</td></tr>
+          <tr><td>Activation save</td><td>write-dom</td><td class="num">2.92&times; @ 8&times;</td></tr>
+          <tr><td>MoE dispatch (Megatron)</td><td>write-heavy, scatter</td><td class="num">2.73&times; @ 4&times;</td></tr>
+          <tr><td>Stencil / PDE checkpoint (SZ / ZFP)</td><td>write / IO-dom</td><td class="num">2.59&times; @ 4&times;</td></tr>
+          <tr><td>AdamW optimizer states (8-bit Adam)</td><td>balanced</td><td class="num">1.71&times; @ 4&times;</td></tr>
+          <tr><td>Gradient all-reduce (DGC / PowerSGD)</td><td>heavy codec</td><td class="num">1.07&times;</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Sub-linear (vs Study 2's linear) because <b>pure store streams under-saturate HBM</b> (~54% of
+        peak vs ~95% for reads) and efficiency falls further as the write shrinks. New structure result:
+        the <b>two-kernel</b> variant is catastrophic on the write side (it writes the full uncompressed
+        output, then re-reads it), while <b>TMA-store is best</b>. Fusion is mandatory.
+      </p>
+      <h3>Overlap evidence &mdash; compression really runs in memory-stall idle cycles</h3>
+      <p>
+        On the memory-bound kernel, injected codec FLOPs are <b>free up to a knee</b>: AdamW ~16&ndash;24
+        FLOPs/element (load-latency-bound), transformer / KV ~8, stencil ~4. Two limits the data pinned
+        down: the idle budget is <b>bounded</b> (heavy codecs exceed it &rarr; no benefit), and it
+        <b>only exists if the kernel is memory-bound</b> &mdash; a naive issue-bound kernel had ~0 free
+        FLOPs. <em>Make it memory-bound first; then the compression is free.</em>
+      </p>
+    </section>
+
+    <section aria-labelledby="s4">
+      <h2 id="s4">Study 4 &mdash; Real kernels with authentic int8 codecs: <span class="mid">YES, ~half of synthetic</span></h2>
+      <p>
+        Each candidate was rebuilt with its real op (GeLU <code>erff</code>, RoPE <code>sin/cos</code>,
+        7-point stencil, Adam update, routed scatter) and a real int8 codec (4&times;, validated to
+        &le;0.5 quantization step, 0 sanitizer errors):
+      </p>
+      <table>
+        <thead><tr><th>Candidate</th><th class="num">real int8</th><th class="num">synthetic est.</th><th>limiter (measured)</th></tr></thead>
+        <tbody>
+          <tr><td>Transformer activation-save</td><td class="num"><b>1.68&times;</b></td><td class="num">3.07&times;</td><td>compute-bound after compress</td></tr>
+          <tr><td>MoE dispatch</td><td class="num"><b>1.65&times;</b></td><td class="num">2.73&times;</td><td>near-ideal (cheap op)</td></tr>
+          <tr><td>Activation save</td><td class="num"><b>1.36&times;</b></td><td class="num">2.73&times;</td><td>compute-bound after compress</td></tr>
+          <tr><td>AdamW step</td><td class="num"><b>1.32&times;</b></td><td class="num">1.71&times;</td><td>read floor (4 fp32 reads)</td></tr>
+          <tr><td>Stencil</td><td class="num"><b>1.30&times;</b></td><td class="num">2.59&times;</td><td>compute-bound</td></tr>
+          <tr><td>KV prefill</td><td class="num"><b>1.18&times;</b></td><td class="num">2.99&times;</td><td>compute-bound (RoPE trig)</td></tr>
+          <tr><td>Gradient</td><td class="num"><b>1.05&times;</b></td><td class="num">1.07&times;</td><td>heavy codec &gt; idle budget</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Nsight Compute shows the cause directly: int8 flips kernels from <b>memory-bound to
+        compute-bound</b> (activation DRAM 85&rarr;24%, SM 58&rarr;69%; transformer DRAM 92&rarr;35%,
+        SM 50&rarr;87%). The real op's arithmetic doesn't shrink, so it re-consumes the idle that
+        compression freed &mdash; exactly the bounded-idle-budget prediction. The synthetic proxy
+        (1 FMA) over-stated the win by staying memory-bound; MoE's cheap copy op is the exception that
+        lands near the int8 traffic ideal of 1.6&times;.
+      </p>
+    </section>
+
+    <section aria-labelledby="law">
+      <h2 id="law">The unifying law</h2>
+      <div class="law">
+        Compression speeds up a memory-bound kernel <b>only to the extent it shrinks the dominant
+        traffic, only when the codec's compute fits inside the idle the memory stalls create, and only
+        when it rides inside the threads that issue that traffic.</b>
+      </div>
+      <p>Each clause is a measured failure mode:</p>
+      <ul class="tight">
+        <li><b>Dominant traffic</b> &mdash; compressing 0.05% of traffic did nothing (Study 1); the dominant read/write worked (Studies 2&ndash;3).</li>
+        <li><b>Codec &le; idle budget</b> &mdash; heavy codecs and real GeLU/RoPE exceed the ~4&ndash;24 free FLOPs/element and flip the kernel compute-bound (Studies 3&ndash;4).</li>
+        <li><b>Ride inside the issuing threads</b> &mdash; the producer/consumer <em>split</em> and the <em>unfused</em> two-kernel always underperform; fused same-CTA / cp.async / TMA win (every study).</li>
+      </ul>
+      <p>
+        Two hard ceilings recur: the <b>read floor</b> (you cannot compress the uncompressible input
+        &mdash; caps AdamW at ~1.3&times;) and <b>store under-saturation</b> (pure-write kernels peak at
+        ~55% of HBM, so write wins are sub-linear).
+      </p>
+    </section>
+
+    <section aria-labelledby="guidance">
+      <h2 id="guidance">Practitioner guidance</h2>
+      <ul class="tight">
+        <li><b>Compress the dominant traffic.</b> For decode attention that is the KV <em>read</em> (near-linear); output compression is pointless.</li>
+        <li><b>Use a cheap codec</b> (int8/int4 absmax, block-mean). Heavy codecs (top-k, low-rank) pay off for <em>network</em> bandwidth, not on-GPU HBM time.</li>
+        <li><b>Fuse the codec into the producer.</b> Never a separate compression kernel; never a producer/consumer warp/CTA split. Prefer TMA-store / cp.async / same-CTA.</li>
+        <li><b>Expect ~1.2&ndash;1.7&times;</b> on real training writes (activation save, optimizer states, MoE) from a real 4&times; codec &mdash; modest but real, and it stacks with the memory-capacity savings these techniques actually target.</li>
+        <li><b>Watch for the compute-bound flip.</b> Arithmetic-heavy ops (GeLU, softmax, trig) go compute-bound quickly once compressed; profile DRAM% before and after.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="answer">
+      <h2 id="answer">Final answer</h2>
+      <p>
+        <b>Yes &mdash; producer-consumer compression can exploit a memory-bound kernel's idle compute,
+        but the benefit is governed by three gates and two ceilings.</b> It is near-linear aimed at the
+        dominant read (KV-cache decode), real but sub-linear for dominant writes (~1.3&ndash;1.7&times;
+        with a real int8 codec on this GPU), bounded by the read floor and store-bandwidth ceiling, and
+        nullified by heavy codecs or by splitting the producer from the consumer. Aimed correctly &mdash;
+        dominant traffic, cheap codec, fused &mdash; the original hypothesis holds; aimed carelessly, it
+        buys nothing. Both outcomes are backed by measurement.
+      </p>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>
