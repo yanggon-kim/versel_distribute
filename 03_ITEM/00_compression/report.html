@@ -73,6 +73,12 @@
 
     code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
 
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover, section a:focus-visible { text-decoration: underline; }
+    .refs { margin: 0; padding-left: 20px; }
+    .refs li { margin-bottom: 10px; }
+    .refs .rel { color: var(--muted); }
+
     .law {
       margin: 8px 0; padding: 16px 20px; background: #f6fff8;
       border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px;
@@ -276,6 +282,79 @@
         <li><b>Expect ~1.2&ndash;1.7&times;</b> on real training writes (activation save, optimizer states, MoE) from a real 4&times; codec &mdash; modest but real, and it stacks with the memory-capacity savings these techniques actually target.</li>
         <li><b>Watch for the compute-bound flip.</b> Arithmetic-heavy ops (GeLU, softmax, trig) go compute-bound quickly once compressed; profile DRAM% before and after.</li>
       </ul>
+    </section>
+
+    <section aria-labelledby="related">
+      <h2 id="related">Related work</h2>
+      <p>
+        "Idle compute does compression to relieve the memory wall" is a real, named research line. The
+        closest prior art is <b>CABA</b>; this project is a modern, software-only, profiled re-examination
+        of that thesis on Blackwell, with a per-structure breakdown and a real-vs-synthetic calibration.
+      </p>
+
+      <h3>Bullseye &mdash; idle GPU compute for bandwidth compression</h3>
+      <ul class="refs">
+        <li>
+          <a href="https://adwaitjog.github.io/docs/pdf/CABA-ISCA-2015.pdf">CABA: Core-Assisted Bottleneck Acceleration (Vijaykumar, Jog, Mutlu et&nbsp;al., ISCA 2015)</a> &middot;
+          <a href="https://arxiv.org/abs/1602.01348">extended framework (arXiv 1602.01348)</a>
+          <span class="rel">&mdash; uses idle GPU compute via "assist warps" to compress/decompress data and ease the memory-bandwidth bottleneck (+41.7% avg, up to 2.6&times;). Essentially this study's hypothesis, in hardware.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2209.10914">Morpheus (MICRO 2022)</a>
+          <span class="rel">&mdash; puts idle cores into a "cache mode" helper kernel that extends the LLC with cache compression (+39% on memory-bound workloads). Same spirit, capacity rather than write traffic.</span>
+        </li>
+      </ul>
+
+      <h3>The shipping realization &mdash; fused dequantization for LLMs</h3>
+      <ul class="refs">
+        <li>
+          <a href="https://inference.net/content/google-flute-fast-quantization-llm-inference/">FLUTE</a>,
+          <a href="https://proceedings.mlsys.org/paper_files/paper/2024/file/5edb57c05c81d04beb716ef1d542fe9e-Paper-Conference.pdf">Atom (MLSys&nbsp;2024)</a>,
+          <a href="https://arxiv.org/html/2512.17970">CodeGEMM</a>,
+          <a href="https://arxiv.org/html/2605.13915">Multi-Scale Dequant</a>,
+          <a href="https://arxiv.org/pdf/2603.17435">ZipServ</a>
+          <span class="rel">&mdash; fetch compressed weights from HBM and decompress on-chip in the idle compute, feeding tensor cores with no HBM round-trip; speedup is linear in the ratio in the memory-bound regime (this study's read-side result, productized).</span>
+        </li>
+      </ul>
+
+      <h3>Architectural memory / bandwidth compression</h3>
+      <ul class="refs">
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/2370816.2370870">Base-Delta-Immediate (PACT 2012)</a>,
+          <a href="https://people.inf.ethz.ch/omutlu/pub/toggle-aware-data-compression_src-asplos15.pdf">Toggle-Aware Compression (ASPLOS 2015)</a>,
+          <a href="https://www.researchgate.net/publication/262360329">memory/IO link compression for GPGPU</a>
+          <span class="rel">&mdash; cheap codecs and on-the-fly (de)compression to multiply effective bandwidth/capacity (plus the energy/bit-toggle caveat); the hardware analogue of "cheap codec, fused."</span>
+        </li>
+      </ul>
+
+      <h3>GPU decompression engines &amp; overlap</h3>
+      <ul class="refs">
+        <li>
+          <a href="https://arxiv.org/pdf/2307.03760">CODAG (2023)</a>, NVIDIA nvCOMP / RAPIDS
+          <span class="rel">&mdash; general GPU decompression that overlaps decode with memory latency (prefetch warp stages chunks while another decodes) &mdash; the engineering of "ride inside the issuing threads."</span>
+        </li>
+      </ul>
+
+      <h3>Workloads benchmarked here (data-compression counterparts)</h3>
+      <ul class="refs">
+        <li class="rel">
+          ActNN / GACT / CompAct (activations), 8-bit Adam (optimizer states), KVQuant / MLA (KV cache),
+          DGC / PowerSGD (gradients), SZ / ZFP (HPC checkpoints) &mdash; cited in the sub-reports; this
+          study tests them under the idle-compute-overlap lens.
+        </li>
+      </ul>
+
+      <h3>How this study differs</h3>
+      <p>
+        CABA owns the core thesis and fused-dequant ships it, but three angles appear under-covered:
+        (1) a <b>systematic per-structure comparison</b> of <em>how</em> to attach the codec (eight
+        variants), with the clean result that the producer/consumer <b>split</b> and the <b>unfused
+        two-kernel</b> hurt while fused / TMA win; (2) the <b>read-vs-write asymmetry</b> &mdash; read
+        compression is near-linear, write compression sub-linear because store streams under-saturate
+        HBM (~55% vs ~95%); (3) a <b>measured free-FLOP budget</b> per workload and the
+        <b>synthetic&rarr;real gap</b>, where real GeLU/RoPE flip the kernel compute-bound and roughly
+        halve the predicted win.
+      </p>
     </section>
 
     <section aria-labelledby="answer">
