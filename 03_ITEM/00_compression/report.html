@@ -73,6 +73,21 @@
 
     code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
 
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5;
+      margin: 8px 0 14px; color: #0b1f3a;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    .vname { margin: 22px 0 4px; font-size: 1.05rem; }
+    .vname .tag { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+    .verdict { margin: -2px 0 8px; font-size: 0.92rem; }
+    .callout {
+      margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px;
+    }
+
     section a { color: var(--accent); text-decoration: none; }
     section a:hover, section a:focus-visible { text-decoration: underline; }
     .refs { margin: 0; padding-left: 20px; }
@@ -326,6 +341,125 @@
         consumer warps/CTAs sit idle of memory work). Warp specialization is a win for <em>compute-bound</em>
         Tensor-Core pipelines (GEMM, FlashAttention), not for the bandwidth-bound reductions/copies here.
       </p>
+
+      <p style="margin-top:18px;">
+        Below, each variant is shown as simplified pseudo-CUDA (write-side framing; read/output are
+        analogous). Two helpers appear throughout:
+        <code>produce()</code> = the real op (GeLU, reduce, RoPE&hellip;), and
+        <code>compress()</code> = the codec (quantize / group-sum) &mdash; <b>both run on the CUDA
+        cores</b>, i.e. in the idle compute the memory stalls create.
+      </p>
+
+      <h3 class="vname">#0 &mdash; Baseline <span class="tag">thread-per-element</span></h3>
+      <p>The simplest mapping and the reference point: one thread owns one output element and does the
+        whole pipeline itself.</p>
+<pre><code>// grid covers all N*Dc outputs, one thread each
+i = blockIdx.x * blockDim.x + threadIdx.x;
+n = i / Dc;   c = i % Dc;
+v       = produce(X, n, c);     // real compute, in this thread
+out[i]  = compress(v);          // codec, in this thread</code></pre>
+      <p class="verdict"><b>Result:</b> solid and simple; near the memory-bound floor.</p>
+
+      <h3 class="vname">#1 &mdash; Same-CTA (fused) <span class="tag">one block per row</span></h3>
+      <p>The block stages the row's input in shared memory, then every thread computes &rarr; compresses
+        &rarr; stores inside that one CTA. The codec rides with the issuing threads.</p>
+<pre><code>__shared__ float xs[Din];
+n = blockIdx.x;
+cooperatively load X[n][0..Din) into xs;
+__syncthreads();
+for (c = threadIdx.x; c &lt; Dc; c += blockDim.x)
+    out[n*Dc + c] = compress(produce(xs, c));   // compute + compress + store, fused</code></pre>
+      <p class="verdict"><b>Result:</b> top tier &mdash; the simplest fused design that wins.</p>
+
+      <h3 class="vname">#2 &mdash; Warp-specialized <span class="tag">producer / consumer warps</span></h3>
+      <p>The block is split into <b>producer warps</b> (compute values into a shared tile) and
+        <b>consumer warps</b> (read the tile, compress, store), handed off through shared memory.</p>
+<pre><code>__shared__ float tile[ROWS * Dout];
+warp = threadIdx.x / 32;
+if (warp &lt; NPROD)                        // PRODUCER warps: compute into shared tile
+    for (idx in this warp's range) tile[idx] = produce(X, idx);
+__syncthreads();                          // hand-off through shared memory
+if (warp &gt;= NPROD)                       // CONSUMER warps: compress + store
+    for (idx in this warp's range) out[idx] = compress(tile[idx]);</code></pre>
+      <p class="verdict"><b>Result:</b> poor on memory-bound kernels &mdash; the consumer warps issue no
+        memory, so achieved bandwidth drops (read study R2 = 0.44&times;).</p>
+
+      <h3 class="vname">#3 &mdash; Two-kernel <span class="tag">unfused control</span></h3>
+      <p>Kernel A writes the <b>full uncompressed</b> intermediate to DRAM; kernel B reads it back and
+        compresses. Separates "compression benefit" from "overlap benefit" &mdash; at the cost of a full
+        extra round-trip.</p>
+<pre><code>// kernel A: produce the FULL uncompressed result to DRAM
+Y[i] = produce(X, i);
+// kernel boundary: all of Y round-trips through HBM
+// kernel B: read Y back, compress, store
+out[j] = compress(combine(Y, j));</code></pre>
+      <p class="verdict"><b>Result:</b> worst on writes (writes full-size data first) &mdash; up to
+        6.9&times; slower than TMA.</p>
+
+      <h3 class="vname">#4 &mdash; Persistent <span class="tag">grid = #SMs, grid-stride</span></h3>
+      <p>Launch ~one block per SM; blocks stay resident and walk the rows with a grid-stride loop,
+        fused like #1 but amortizing launch and keeping pipelines warm.</p>
+<pre><code>// gridDim = numSMs * blocksPerSM  (blocks stay resident)
+for (n = blockIdx.x; n &lt; N; n += gridDim.x) {     // grid-stride over rows
+    load X[n] into shared xs;  __syncthreads();
+    for (c = threadIdx.x; c &lt; Dc; c += blockDim.x)
+        out[n*Dc + c] = compress(produce(xs, c));
+}</code></pre>
+      <p class="verdict"><b>Result:</b> within 1&ndash;2% of the leaders.</p>
+
+      <h3 class="vname">#5 &mdash; cp.async pipeline <span class="tag">double-buffered async load</span></h3>
+      <p>Asynchronous copies stage the next input tile while the current one is being computed, so the
+        load latency hides behind the compute (SM80+).</p>
+<pre><code>__shared__ float buf[2][TILE];                  // double buffer
+cp_async(buf[0] = X tile 0);  commit();
+for (t = 0; t &lt; ntiles; t++) {
+    if (t+1 &lt; ntiles) { cp_async(buf[(t+1)&amp;1] = X tile t+1); commit(); }  // prefetch next
+    wait_prior(1);  __syncthreads();            // overlap: next load with this compute
+    for (e in buf[t&amp;1]) out[...] = compress(produce(e));
+}</code></pre>
+      <p class="verdict"><b>Result:</b> top tier &mdash; full bandwidth at lower warp occupancy.</p>
+
+      <h3 class="vname">#6 &mdash; Cluster + DSM <span class="tag">2-CTA cluster, Distributed Shared Memory</span></h3>
+      <p>A 2-CTA thread-block cluster: the producer CTA computes into its own shared memory; the consumer
+        CTA reads it <em>across</em> Distributed Shared Memory and stores (Hopper+).</p>
+<pre><code>cluster = this_cluster();  rank = cluster.block_rank();   // 2 CTAs / cluster
+__shared__ float buf[ROWS * Dout];
+if (rank == 0)                             // PRODUCER CTA: compute into its own smem
+    for (idx) buf[idx] = produce(X, idx);
+cluster.sync();
+if (rank == 1) {                           // CONSUMER CTA: read peer smem via DSM
+    float* peer = cluster.map_shared_rank(buf, 0);   // Distributed Shared Memory
+    for (idx) out[idx] = compress(peer[idx]);        // then store
+}</code></pre>
+      <p class="verdict"><b>Result:</b> poor &mdash; the consumer CTA drives no DRAM reads/writes of its own.</p>
+
+      <h3 class="vname">#7 &mdash; TMA <span class="tag">cores compress, hardware engine moves</span></h3>
+      <p>
+        The key point: <b>TMA does not compress.</b> The CUDA cores compute and compress into a
+        shared-memory tile; the Tensor Memory Accelerator (a bulk async copy engine) then ships the
+        <em>already-compressed</em> tile to DRAM under an <code>mbarrier</code>. "TMA variant" names the
+        data-movement path, not the codec.
+      </p>
+<pre><code>__shared__ alignas(128) int8_t tile[CW];        // compressed staging
+n = blockIdx.x;
+for (c0 = 0; c0 &lt; Dout; c0 += CW) {
+    if (threadIdx.x &lt; CW)
+        tile[threadIdx.x] = compress(produce(X, n, c0 + threadIdx.x));  // CORES compress into smem
+    __syncthreads();
+    if (threadIdx.x == 0)
+        cp_async_bulk_tensor_2d_s2g(tmap, c0, n, tile);  // TMA moves compressed bytes to DRAM
+    cp_async_bulk_wait();
+    __syncthreads();
+}
+// host, once:  cuTensorMapEncodeTiled(&amp;tmap, out, shape, box);  // WHERE to copy; no compression</code></pre>
+      <div class="callout">
+        <b>Why TMA wins even though it doesn't compress:</b> the cores already shrank the bytes (e.g. int8,
+        4&times;); TMA then moves those fewer bytes at <b>~80% of peak DRAM</b> (vs ~54% for naive
+        per-thread stores) <em>and</em> frees the cores from store-address generation, leaving them to
+        keep computing/compressing. The read variant (R7) is the mirror: TMA <em>loads</em> compressed
+        tiles into shared memory, then the cores decompress + reduce.
+      </div>
+      <p class="verdict"><b>Result:</b> best overall, especially for writes (TMA-store).</p>
     </section>
 
     <section aria-labelledby="ranking">
