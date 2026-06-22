@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bit-Plane Compression (BPC): Transform-then-Encode for Memory Bandwidth</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px 64px;
+      line-height: 1.6;
+    }
+
+    main { width: min(100%, 920px); margin: 0 auto; }
+
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+
+    .meta {
+      margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 0.9rem; color: var(--muted);
+    }
+    .meta b { color: var(--text); }
+
+    .question {
+      margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px;
+      font-size: 1.05rem;
+    }
+
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06);
+      padding: 24px; margin-top: 22px;
+    }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+
+    .yes { color: var(--good); font-weight: 700; }
+    .no { color: var(--bad); font-weight: 700; }
+    .mid { color: var(--warn); font-weight: 700; }
+
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5;
+      margin: 8px 0 14px; color: #0b1f3a;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    pre .kw { color: #cf222e; }
+    pre .cm { color: #647083; font-style: italic; }
+
+    .callout {
+      margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px;
+    }
+    .law {
+      margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px;
+      font-size: 1.02rem;
+    }
+
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover, section a:focus-visible { text-decoration: underline; }
+
+    ul.tight { margin: 0 0 12px; padding-left: 20px; }
+    ul.tight li { margin-bottom: 6px; }
+    ol.tight { margin: 0 0 12px; padding-left: 22px; }
+    ol.tight li { margin-bottom: 6px; }
+
+    .diagram {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; overflow-x: auto; margin: 8px 0 14px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45; white-space: pre; color: #0b1f3a;
+    }
+    .tok { display: inline-block; border: 1px solid var(--border); border-radius: 5px;
+      padding: 2px 8px; margin: 3px 4px 3px 0; background: #fff; font-size: 0.85rem;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .tok.lit { border-color: #cfe0ff; background: #eef5ff; }
+    .tok.match { border-color: #c7ecd0; background: #f6fff8; }
+
+    .footer {
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .footer p { margin: 0 0 4px; }
+    .footer a { color: var(--accent); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>Bit-Plane Compression (BPC)</h1>
+      <p class="lede">
+        How a lightweight <b>transform</b> (Delta &rarr; Bit-Plane &rarr; XOR) plus a tiny
+        run-length / frequent-pattern encoder squeezes <b>4.1:1</b> out of integer memory traffic on
+        many-core GPUs &mdash; the idea, the code map, and what it actually achieves on real data.
+      </p>
+      <div class="meta">
+        <b>Paper:</b> Kim, Sullivan, Choukse, Erez, <i>"Bit-Plane Compression&hellip;"</i>, ISCA 2016
+        (UT Austin &amp; NVIDIA) &nbsp;&middot;&nbsp;
+        <b>Scope:</b> motivation &rarr; DBX transform &rarr; encoder &rarr; results &nbsp;&middot;&nbsp;
+        <b>Measurements:</b> the reference BPC model run on real data (RTX 5080 host).
+      </div>
+    </header>
+
+    <div class="question">
+      <b>The core idea.</b> Most compressors just <em>encode</em>. BPC first <em>transforms</em> the
+      data into a shape that is far easier to encode &mdash; turning a homogeneously-typed memory block
+      into long runs of zeros and a handful of simple bit patterns &mdash; and only then applies a
+      cheap encoder. The transform is the secret; the encoder can stay small enough for hardware.
+    </div>
+
+    <section aria-labelledby="why">
+      <h2 id="why">1. Why memory compression, and why it is hard</h2>
+      <p>
+        Many-core throughput keeps climbing, but <b>off-chip memory bandwidth scales poorly</b> &mdash;
+        pin counts and energy, not transistors, are the limit. The memory link becomes the bottleneck.
+        Compressing data on the link raises <em>effective</em> bandwidth without adding pins. But memory
+        compression is constrained in ways file compression is not:
+      </p>
+      <ul class="tight">
+        <li><b>Tiny blocks.</b> A compressor sees a half/full cache line (64&ndash;128 B), not a whole
+          file &mdash; so large dictionaries (LZ, Huffman tables) don't fit and don't pay off.</li>
+        <li><b>Low latency &amp; random access.</b> It sits on the critical path of every memory access,
+          so heavy entropy coders are out.</li>
+        <li><b>Coarse transfer granularity.</b> DRAM bursts can erase fine-grained bit savings unless
+          the system packs compressed blocks densely.</li>
+      </ul>
+      <p>
+        As a result, prior memory compressors reach only ~<b>2:1 for integers</b> and rarely beat
+        <b>1.5:1 for floats</b>. BPC's goal is to do much better while staying cheap.
+      </p>
+    </section>
+
+    <section aria-labelledby="insight">
+      <h2 id="insight">2. The key insight: homogeneous arrays have value locality</h2>
+      <p>
+        GPGPU programs follow an SPMD model and keep almost all data in <b>large arrays</b>. A survey of
+        Rodinia / Parboil / Lonestar benchmarks shows global memory is overwhelmingly
+        <b>homogeneously-typed arrays</b> (primitive <code>int</code>/<code>float</code>, or homogeneous
+        structs) with negligible scalar data. Homogeneous neighbors have <b>value locality</b> &mdash;
+        adjacent words are numerically close. A transform that exposes this locality, then a transform
+        that turns it into zeros, makes the data trivially compressible.
+      </p>
+    </section>
+
+    <section aria-labelledby="dbx">
+      <h2 id="dbx">3. The DBX transform (Delta &rarr; Bit-Plane &rarr; XOR)</h2>
+      <p>
+        BPC views a <b>128 B block as 32 &times; 32-bit words</b> and applies three cheap, reversible
+        steps before any encoding:
+      </p>
+      <ol class="tight">
+        <li><b>Delta</b> &mdash; subtract neighboring words. The 32 words become a <b>base</b> (the first
+          word) plus <b>31 deltas</b> (each 33-bit, one extra bit for the borrow). Value locality &rArr;
+          small deltas &rArr; reduced range and entropy.</li>
+        <li><b>Bit-Plane (BP)</b> &mdash; <em>transpose</em> the delta words. A <b>bit-plane</b> is the
+          set of bits at the <em>same position</em> across all words. This re-orients the data so
+          value locality shows up as bit-level locality (whole planes become uniform).</li>
+        <li><b>XOR</b> neighboring bit-planes: <code>DBX&#8342; = DBP&#8342; &oplus; DBP&#8342;&#8330;&#8321;</code>.
+          Adjacent planes are nearly identical (small deltas &rArr; upper planes are all sign bits), so
+          the XOR collapses them into <b>many all-zero symbols</b>, especially the upper planes.</li>
+      </ol>
+      <div class="diagram">  32 words (128 B)        Delta                Bit-Plane (transpose)      XOR neighbors
+  w0 w1 w2 ... w31  ->  base, d0..d30   ->   plane[0..32] across words ->  DBX (mostly 0)
+                        (small values)       (rows = bit positions)       upper planes -> 0 0 0 0 ...
+
+  Result: 33 symbols = 1 base bit-plane + 32 DBX planes, each a 31-bit bit-plane symbol,
+          dominated by ALL-ZERO planes + a few simple patterns (single 1, two 1s, all 1s).</div>
+      <p>
+        DBX raises the inherent compressibility of the block by ~<b>87% (INT)</b>, <b>23% (FP)</b>,
+        <b>20% (mixed)</b> on average. It maps directly onto the reference code's
+        <code>compressLine()</code>:
+      </p>
+      <pre><code><span class="cm">// 31 deltas between consecutive 32-bit words (base = word[0])</span>
+<span class="kw">for</span> (i = 1; i &lt; 32; i++)
+    deltas[i-1] = (INT64) s_dword[i] - (INT64) s_dword[i-1];
+
+<span class="cm">// build each bit-plane by transposing, then XOR with the previous plane</span>
+<span class="kw">for</span> (j = 63; j &gt;= 0; j--) {
+    buf = 0;
+    <span class="kw">for</span> (i = 30; i &gt;= 0; i--) { buf &lt;&lt;= 1; buf |= (deltas[i] &gt;&gt; j) &amp; 1; }   <span class="cm">// transpose</span>
+    DBP[j] = buf;
+    DBX[j] = buf ^ prevDBP;          <span class="cm">// XOR neighboring bit-planes</span>
+    prevDBP = buf;
+}
+blkLength  = encodeFirst(word[0]);   <span class="cm">// base word, encoded separately</span>
+blkLength += encodeDeltas(DBP, DBX); <span class="cm">// the 33 bit-plane symbols</span></code></pre>
+    </section>
+
+    <section aria-labelledby="encoder">
+      <h2 id="encoder">4. The BPC encoder: ZRL + frequent patterns</h2>
+      <p>
+        Because DBX manufactures long zero runs and simple patterns, the encoder can be tiny &mdash; no
+        2&#8311; entry Huffman table. Zero bit-plane runs go through <b>Zero Bit-Plane Run-Length
+        Encoding (ZBP-RLE)</b>; non-zero planes match a handful of fixed <b>frequent-pattern</b> codes.
+        This is the code map (paper Fig 3b), implemented one-for-one in <code>encodeDeltas()</code>:
+      </p>
+      <table>
+        <thead><tr><th>DBP/DBX pattern</th><th class="num">Code length</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Zero run, length 2&ndash;33</td><td class="num">7-bit</td><td>run of all-zero bit-planes (ZRL)</td></tr>
+          <tr><td>Zero run, length 1</td><td class="num">3-bit</td><td>single zero plane</td></tr>
+          <tr><td>All 1's (<code>DBX = 0x7FFFFFFF</code>)</td><td class="num">5-bit</td><td>plane is all ones</td></tr>
+          <tr><td><code>DBX&ne;0</code> &amp; <code>DBP=0</code></td><td class="num">5-bit</td><td>special zero-DBP case</td></tr>
+          <tr><td>Two consecutive 1's</td><td class="num">10-bit</td><td>prefix + position of first 1</td></tr>
+          <tr><td>Single 1</td><td class="num">10-bit</td><td>prefix + position of the 1</td></tr>
+          <tr><td>Uncompressed (no pattern)</td><td class="num">32-bit</td><td>1 flag + 31 raw bits (failure case)</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The <b>base word</b> is encoded separately by <code>encodeFirst()</code>:
+        <code>0</code> &rarr; 3-bit; fits signed 4/8/16-bit &rarr; 3+4 / 3+8 / 3+16; otherwise 1+32-bit.
+        Note the worst case is just one flag bit of overhead, so BPC <b>never inflates badly</b>.
+      </p>
+    </section>
+
+    <section aria-labelledby="results">
+      <h2 id="results">5. What it achieves</h2>
+      <p>Compression ratio vs prior memory compressors (FPC / BDI / C-pack / <b>BPC</b>), from the paper:</p>
+      <table>
+        <thead><tr><th>Data class</th><th class="num">FPC</th><th class="num">BDI</th><th class="num">C-pack</th><th class="num">BPC</th></tr></thead>
+        <tbody>
+          <tr><td>Integer (homogeneous)</td><td class="num">1.6</td><td class="num">2.3</td><td class="num">2.2</td><td class="num"><b>4.1</b></td></tr>
+          <tr><td>Floating point</td><td class="num">1.2</td><td class="num">1.5</td><td class="num">1.4</td><td class="num"><b>1.9</b></td></tr>
+          <tr><td>Mixed</td><td class="num">1.5</td><td class="num">1.7</td><td class="num">2.1</td><td class="num"><b>2.5</b></td></tr>
+        </tbody>
+      </table>
+      <ul class="tight">
+        <li>BPC <b>never increases</b> average block size; FPC/BDI/C-pack each enlarge some workloads.</li>
+        <li>It beats even the <em>entropic limit of the original symbols</em> in 6/10 integer benchmarks
+          &mdash; because the DBX transform creates the long zero runs ZRL exploits.</li>
+        <li><b>Hardware:</b> Verilog at 40 nm / 800 MHz &asymp; <b>68K NAND2 gates</b>, <b>11-cycle</b>
+          latency &mdash; comparable to C-pack (~40K gates).</li>
+        <li><b>System:</b> integrated with an HMC-like packetized link and a <b>Packed Packets</b>
+          protocol, BPC reaches 90% / 95% of full-bandwidth performance using 2.0&times; / 1.9&times;
+          <em>less</em> bandwidth on demanding benchmarks.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="measured">
+      <h2 id="measured">6. Measured here, on the reference model</h2>
+      <p>
+        The repository ships a <b>header-only model</b> of BPC that computes the compressed bit-length
+        per 128 B line (it measures the ratio; it does not emit/decode a real bitstream). Built and run
+        on real inputs:
+      </p>
+      <table>
+        <thead><tr><th>Input</th><th>Nature</th><th class="num">BPC ratio</th></tr></thead>
+        <tbody>
+          <tr><td><code>QCLOUDf48</code> (float32 scientific field)</td><td>homogeneous float array, value locality</td><td class="num"><b>11.65:1</b></td></tr>
+          <tr><td><code>kennedy.xls</code></td><td>heterogeneous binary</td><td class="num">1.03:1</td></tr>
+          <tr><td><code>alice29.txt</code></td><td>English text (not a numeric array)</td><td class="num">0.97:1</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        <b>Reading these numbers.</b> BPC shines exactly where its model holds &mdash; a homogeneous
+        numeric array with value locality (the float field hits 11.65:1, well above the paper's
+        averages because that data is unusually smooth). On heterogeneous binary it neither helps nor
+        hurts (1.03:1), and on text &mdash; which is <em>not</em> a same-type numeric array &mdash; the
+        delta+bit-plane transform finds nothing to exploit and it slightly expands (0.97:1), bounded by
+        the one-flag-bit overhead. <em>Caveat:</em> these are analytical sizes from the size-only
+        model, not a verified round-trip bitstream.
+      </div>
+    </section>
+
+    <section aria-labelledby="takeaway">
+      <h2 id="takeaway">7. Takeaway</h2>
+      <p>
+        BPC's lesson is <b>transform before you encode</b>. By spending three cheap, hardware-friendly
+        steps (Delta, Bit-Plane, XOR) to convert homogeneously-typed memory blocks into long zero runs
+        and simple patterns, a tiny RLE + frequent-pattern encoder reaches compression ratios
+        (4.1:1 integer, 1.9:1 float) that heavier general-purpose encoders cannot &mdash; at low latency
+        and modest area, directly attacking the GPU memory-bandwidth wall. Its weakness is the flip
+        side of its strength: data that <em>isn't</em> a homogeneous numeric array (text, already-random
+        bytes) gives it nothing to transform.
+      </p>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>
