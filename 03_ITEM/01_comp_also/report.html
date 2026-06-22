@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LZSS: From Concept to Implementation, and GPULZ</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px 64px;
+      line-height: 1.6;
+    }
+
+    main { width: min(100%, 920px); margin: 0 auto; }
+
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+
+    .meta {
+      margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 0.9rem; color: var(--muted);
+    }
+    .meta b { color: var(--text); }
+
+    .question {
+      margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px;
+      font-size: 1.05rem;
+    }
+
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06);
+      padding: 24px; margin-top: 22px;
+    }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+
+    .yes { color: var(--good); font-weight: 700; }
+    .no { color: var(--bad); font-weight: 700; }
+    .mid { color: var(--warn); font-weight: 700; }
+
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5;
+      margin: 8px 0 14px; color: #0b1f3a;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    pre .kw { color: #cf222e; }
+    pre .cm { color: #647083; font-style: italic; }
+
+    .callout {
+      margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px;
+    }
+    .law {
+      margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px;
+      font-size: 1.02rem;
+    }
+
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover, section a:focus-visible { text-decoration: underline; }
+
+    ul.tight { margin: 0 0 12px; padding-left: 20px; }
+    ul.tight li { margin-bottom: 6px; }
+    ol.tight { margin: 0 0 12px; padding-left: 22px; }
+    ol.tight li { margin-bottom: 6px; }
+
+    .diagram {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; overflow-x: auto; margin: 8px 0 14px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45; white-space: pre; color: #0b1f3a;
+    }
+    .tok { display: inline-block; border: 1px solid var(--border); border-radius: 5px;
+      padding: 2px 8px; margin: 3px 4px 3px 0; background: #fff; font-size: 0.85rem;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .tok.lit { border-color: #cfe0ff; background: #eef5ff; }
+    .tok.match { border-color: #c7ecd0; background: #f6fff8; }
+
+    .footer {
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .footer p { margin: 0 0 4px; }
+    .footer a { color: var(--accent); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>LZSS: From Concept to Implementation, and GPULZ</h1>
+      <p class="lede">
+        A ground-up explanation of the LZSS lossless compression algorithm &mdash; the sliding window,
+        the encode/decode loops in plain pseudocode, and what makes it tick &mdash; followed by how
+        <b>GPULZ</b> reshapes that inherently sequential algorithm to run in parallel on a modern GPU.
+      </p>
+      <div class="meta">
+        <b>Topic:</b> dictionary compression (LZ77 family) &nbsp;&middot;&nbsp;
+        <b>Scope:</b> concepts &rarr; pseudocode &rarr; characteristics &rarr; GPU parallelization &nbsp;&middot;&nbsp;
+        <b>Measurements:</b> Canterbury corpus + GPULZ on an RTX 5080 (CUDA 12.8, <code>sm_120</code>).
+      </div>
+    </header>
+
+    <div class="question">
+      <b>The one-sentence idea.</b> Text and data repeat themselves; instead of storing a repeated
+      run of bytes again, store a short <em>pointer</em> back to where it already appeared. LZSS is the
+      careful, practical way of doing exactly that &mdash; and of <em>only</em> doing it when the
+      pointer is actually smaller than the bytes it replaces.
+    </div>
+
+    <section aria-labelledby="family">
+      <h2 id="family">1. Where LZSS comes from: the LZ family</h2>
+      <p>
+        LZSS is a member of the <b>LZ77</b> family of <em>dictionary</em> (or <em>substitutional</em>)
+        compressors. The shared idea, introduced by Abraham Lempel and Jacob Ziv in 1977, is that the
+        text already seen <em>is</em> the dictionary: any sequence about to be written can be replaced
+        by a reference to an earlier, identical sequence.
+      </p>
+      <ul class="tight">
+        <li><b>LZ77 (1977)</b> emits a stream of triples <code>(offset, length, next_symbol)</code>.
+          Every token &mdash; even one describing a match &mdash; carries one explicit literal symbol at
+          the end. That trailing literal is pure overhead whenever a match is found.</li>
+        <li><b>LZSS (Storer &amp; Szymanski, 1982)</b> fixes that waste with two changes:
+          <ol class="tight" style="margin-top:6px;">
+            <li>A single <b>flag bit</b> per token says &ldquo;literal&rdquo; or &ldquo;match&rdquo;, so a
+              match no longer has to drag a literal along.</li>
+            <li>A match is emitted <b>only if it pays for itself</b> (the <em>breakeven</em> rule below).
+              Short, unprofitable matches are written as plain literals instead.</li>
+          </ol>
+        </li>
+      </ul>
+      <p>
+        Those two tweaks are the whole difference, and they are why essentially every practical
+        &ldquo;LZ77&rdquo; codec in the wild &mdash; the match-finder inside DEFLATE (gzip, zlib, PNG,
+        ZIP), LZ4, and many others &mdash; is really LZSS-style.
+      </p>
+    </section>
+
+    <section aria-labelledby="window">
+      <h2 id="window">2. The sliding window</h2>
+      <p>
+        LZSS scans the input left to right with a fixed-size <b>window</b> split into two parts around
+        the current cursor:
+      </p>
+      <ul class="tight">
+        <li><b>Search buffer</b> (the <em>dictionary</em>): the last <code>D</code> symbols already
+          encoded, sitting <em>behind</em> the cursor. Matches are searched for here.</li>
+        <li><b>Look-ahead buffer</b>: the next <code>L</code> symbols <em>ahead</em> of the cursor,
+          waiting to be encoded. The longest prefix of this buffer that also appears in the search
+          buffer is the match.</li>
+      </ul>
+      <div class="diagram">  already encoded . . . . . . . . . .   |   . . . not yet encoded
+  +-----------------------------------+---+-------------------------+
+  | a  b  r  a  c  a  d  a  b  r  a   | a | b  r  a  c  ...         |
+  +-----------------------------------+---+-------------------------+
+  &lt;------- search buffer (size D) -----&gt; ^ &lt;-- look-ahead (size L) --&gt;
+                                     cursor
+
+  match for "abra" found 7 symbols back  ->  emit (offset=7, length=4)</div>
+      <p>
+        Both parts move together as the cursor advances &mdash; hence &ldquo;sliding&rdquo;. The window
+        is the algorithm&rsquo;s entire memory: nothing older than <code>D</code> symbols can be
+        referenced. <code>D</code> and <code>L</code> are the two knobs that define a given LZSS
+        configuration.
+      </p>
+    </section>
+
+    <section aria-labelledby="token">
+      <h2 id="token">3. Token format and the breakeven rule</h2>
+      <p>
+        The compressed stream is a sequence of tokens, each prefixed by its flag bit:
+      </p>
+      <p>
+        <span class="tok lit">0</span> + <span class="tok lit">literal&nbsp;symbol&nbsp;(e.g.&nbsp;8&nbsp;bits)</span>
+        &nbsp;&nbsp;&nbsp;
+        <span class="tok match">1</span> + <span class="tok match">offset&nbsp;(&#8968;log&#8322;D&#8969;&nbsp;bits)</span> + <span class="tok match">length&nbsp;(&#8968;log&#8322;L&#8969;&nbsp;bits)</span>
+      </p>
+      <p>
+        A literal costs <code>1 + b</code> bits (where <code>b</code> is the symbol width). A match
+        costs <code>1 + log&#8322;D + log&#8322;L</code> bits but stands in for <code>length</code>
+        symbols. So a match is only worthwhile when it replaces more bits than it costs. The minimum
+        profitable match length is the <b>breakeven length</b>:
+      </p>
+      <div class="law">
+        <b>Breakeven rule.</b> Encode a match only if
+        <code>length &times; b &gt; log&#8322;D + log&#8322;L</code>, i.e.
+        <code>MIN_MATCH = &#8970;(log&#8322;D + log&#8322;L) / b&#8971; + 1</code>.
+        Anything shorter is cheaper to write as literals.
+      </div>
+      <p>
+        For a typical byte-oriented setup (<code>b = 8</code>, <code>D = 4096</code> &rArr; 12-bit
+        offset, <code>L = 16</code> &rArr; 4-bit length) the pointer is 16 bits, so
+        <code>MIN_MATCH = 3</code>: matches of length 1&ndash;2 are written as literals, matches of 3+
+        as pointers. This single rule is what keeps LZSS from ever inflating data badly &mdash; the
+        worst case is one extra flag bit per literal.
+      </p>
+    </section>
+
+    <section aria-labelledby="encode">
+      <h2 id="encode">4. Encoding (compression) &mdash; the concept in pseudocode</h2>
+      <p>
+        The encoder repeatedly finds the longest match for the look-ahead buffer inside the search
+        buffer, then either emits a pointer (if it beats breakeven) or a single literal, and slides the
+        window forward by however many symbols it just consumed.
+      </p>
+      <pre><code><span class="cm"># Inputs: data[0..N-1], window sizes D (dictionary) and L (look-ahead)</span>
+<span class="kw">function</span> LZSS_encode(data, D, L):
+    pos = 0
+    <span class="kw">while</span> pos &lt; N:
+        <span class="cm"># search the dictionary [pos-D, pos) for the longest prefix of data[pos..]</span>
+        (best_off, best_len) = find_longest_match(data, pos, D, L)
+
+        <span class="kw">if</span> best_len &gt;= MIN_MATCH:
+            emit_bit(1)                       <span class="cm"># flag: this is a match</span>
+            emit_bits(best_off, ceil(log2(D)))
+            emit_bits(best_len, ceil(log2(L)))
+            pos += best_len                   <span class="cm"># consume the whole match</span>
+        <span class="kw">else</span>:
+            emit_bit(0)                       <span class="cm"># flag: this is a literal</span>
+            emit_bits(data[pos], b)           <span class="cm"># write one raw symbol</span>
+            pos += 1                          <span class="cm"># consume one symbol</span>
+
+<span class="kw">function</span> find_longest_match(data, pos, D, L):
+    start = max(0, pos - D)
+    best_off = 0; best_len = 0
+    <span class="kw">for</span> j <span class="kw">in</span> start .. pos-1:                  <span class="cm"># every candidate start in the dictionary</span>
+        len = 0
+        <span class="kw">while</span> len &lt; L <span class="kw">and</span> pos+len &lt; N <span class="kw">and</span> data[j+len] == data[pos+len]:
+            len += 1                          <span class="cm"># extend the match (may overlap into look-ahead)</span>
+        <span class="kw">if</span> len &gt; best_len:
+            best_len = len; best_off = pos - j
+    <span class="kw">return</span> (best_off, best_len)</code></pre>
+      <div class="callout">
+        <b>Where all the cost lives.</b> <code>find_longest_match</code> is the expensive part. The naive
+        version above is <code>O(N &times; D &times; L)</code>. Real encoders accelerate the search with
+        <b>hash chains</b> (zlib), <b>binary search trees</b>, or <b>suffix automata</b>, and many use
+        <b>lazy matching</b> &mdash; before committing a match at <code>pos</code>, check whether starting
+        one symbol later yields a longer one &mdash; to squeeze out a few extra percent of ratio. The
+        decode side is untouched by any of this.
+      </div>
+    </section>
+
+    <section aria-labelledby="decode">
+      <h2 id="decode">5. Decoding (decompression) &mdash; trivially fast</h2>
+      <p>
+        Decoding needs no search at all. It reads the flag, then either copies one literal through, or
+        copies <code>length</code> already-decoded symbols from <code>offset</code> positions back. The
+        output buffer <em>is</em> the dictionary, so it reconstructs itself as it goes.
+      </p>
+      <pre><code><span class="kw">function</span> LZSS_decode(stream):
+    out = []
+    <span class="kw">while</span> not stream.eof():
+        <span class="kw">if</span> read_bit() == 0:                    <span class="cm"># literal</span>
+            out.append(read_bits(b))
+        <span class="kw">else</span>:                                 <span class="cm"># match: copy from earlier output</span>
+            off = read_bits(ceil(log2(D)))
+            len = read_bits(ceil(log2(L)))
+            start = length(out) - off
+            <span class="kw">for</span> k <span class="kw">in</span> 0 .. len-1:
+                out.append(out[start + k])    <span class="cm"># byte-by-byte: handles overlap (off &lt; len)</span>
+    <span class="kw">return</span> out</code></pre>
+      <div class="callout">
+        <b>Overlapping copies are a feature.</b> When <code>offset &lt; length</code> the copy reads
+        symbols it is still writing &mdash; copying <em>one symbol at a time</em> turns this into a
+        run-length fill. That is how LZSS encodes a long run like <code>aaaaaaaa</code> as a single
+        cheap match <code>(offset=1, length=7)</code> after the first <code>a</code>.
+      </div>
+    </section>
+
+    <section aria-labelledby="example">
+      <h2 id="example">6. A tiny worked example</h2>
+      <p>Encoding <code>abracadabraabracadabra</code> (showing the token stream conceptually):</p>
+      <p>
+        <span class="tok lit">a</span><span class="tok lit">b</span><span class="tok lit">r</span>
+        <span class="tok lit">a</span><span class="tok lit">c</span><span class="tok lit">a</span>
+        <span class="tok lit">d</span>
+        <span class="tok match">(off 7, len 4) &rarr; "abra"</span>
+        <span class="tok match">(off 11, len 11) &rarr; "abracadabra"</span>
+      </p>
+      <p>
+        The first seven symbols have nothing behind them long enough to beat breakeven, so they go out
+        as literals. By the time the cursor reaches the second <code>abra</code>, a 4-symbol match exists
+        7 back; and the entire second half <code>abracadabra</code> is one 11-symbol match pointing 11
+        back &mdash; the overlap-into-look-ahead behavior lets a single pointer cover a long repeat.
+      </p>
+    </section>
+
+    <section aria-labelledby="chars">
+      <h2 id="chars">7. Characteristics of LZSS</h2>
+      <table>
+        <thead>
+          <tr><th>Property</th><th>What it means in practice</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>Lossless</b></td><td>Output decodes bit-for-bit to the original. Used wherever exact reconstruction is mandatory.</td></tr>
+          <tr><td><b>Asymmetric cost</b></td><td><span class="bad">Slow</span> to encode (the match search dominates), <span class="yes">very fast</span> to decode (just memory copies). Ideal for &ldquo;compress once, decompress many&rdquo; like software distribution and assets.</td></tr>
+          <tr><td><b>Single-pass, adaptive</b></td><td>No statistics or training needed; the dictionary is built on the fly from the data itself. It can compress a stream it has never seen, with no header model.</td></tr>
+          <tr><td><b>Window-size tradeoff</b></td><td>A larger dictionary <code>D</code> finds more/longer matches (better ratio) but costs more search time and needs more offset bits per pointer. <code>D</code> and <code>L</code> tune ratio vs speed.</td></tr>
+          <tr><td><b>Bounded expansion</b></td><td>Thanks to the breakeven rule, incompressible data grows by only ~1 flag bit per symbol &mdash; it never blows up.</td></tr>
+          <tr><td><b>Parsing quality matters</b></td><td>Greedy longest-match is simple but sub-optimal; <em>lazy</em> or <em>optimal</em> parsing trades encode time for a better ratio.</td></tr>
+          <tr><td><b>Inherently sequential</b></td><td>Each token depends on the dictionary built by all prior tokens. This data dependency is exactly what makes LZSS hard to parallelize &mdash; the central problem GPULZ tackles.</td></tr>
+          <tr><td><b>A building block</b></td><td>LZSS produces (literal/match) tokens; an entropy coder (Huffman, arithmetic, ANS) then packs them. <b>DEFLATE = LZSS + Huffman.</b></td></tr>
+        </tbody>
+      </table>
+      <p>
+        Measured on the full <b>Canterbury corpus</b> (a CPU LZSS, dictionary-style), the compressed
+        output averaged roughly <b>40% of the original size</b> on mixed text and binary &mdash; typical
+        for a standalone LZSS without a following entropy stage.
+      </p>
+    </section>
+
+    <section aria-labelledby="gpulz">
+      <h2 id="gpulz">8. GPULZ &mdash; running LZSS on a GPU</h2>
+      <p>
+        <b>GPULZ</b> (Zhang et&nbsp;al., <i>ICS&rsquo;23</i>) is an LZSS compressor designed for
+        <b>multi-byte data on modern GPUs</b>. The motivation: HPC and scientific applications generate
+        huge volumes of multi-byte data (int32, float32), and compression cuts storage and inter-node
+        communication cost &mdash; but classic LZSS is sequential and single-byte oriented, so prior GPU
+        LZSS implementations had poor throughput.
+      </p>
+
+      <h3>8.1 The two obstacles, and GPULZ&rsquo;s answers</h3>
+      <table>
+        <thead><tr><th>Obstacle in classic LZSS</th><th>GPULZ&rsquo;s approach</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>The sliding window is <b>globally sequential</b> &mdash; token <code>i</code> depends on
+              all tokens before it.</td>
+            <td><b>Block independence.</b> Split the input into fixed-size <b>blocks</b> (e.g.
+              <code>BLOCK_SIZE = 2048</code> bytes). Each block is compressed independently by one GPU
+              <b>thread block</b>, with its own private window. Thousands of blocks run in parallel.</td>
+          </tr>
+          <tr>
+            <td>Single-byte symbols mean a huge number of positions and short matches, especially on
+              numeric data.</td>
+            <td><b>Multi-byte symbols.</b> Treat the unit as a multi-byte type
+              (<code>INPUT_TYPE = uint32_t</code>), so the window size is measured in <em>elements</em>,
+              not bytes. Fewer positions to match (lower complexity) and longer repeated patterns are
+              found in int/float data.</td>
+          </tr>
+          <tr>
+            <td>Variable-length output: each position emits a literal <em>or</em> a pointer, so you
+              don&rsquo;t know where each thread&rsquo;s bytes go until you know everyone&rsquo;s lengths.</td>
+            <td><b>Prefix sum + kernel fusion.</b> A parallel scan computes each token&rsquo;s output
+              offset for compaction. GPULZ restructures this from one pass into <b>two passes</b> and
+              <b>fuses kernels</b> to cut data movement between shared and global memory.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>8.2 Within a block: parallel matching, then compaction</h3>
+      <p>
+        Inside one block, every position is matched against its window <em>at the same time</em> by a
+        thread. The per-position results then drive a flag array (1 bit per token: match vs literal) and
+        a prefix sum that lays out the variable-length encoded stream.
+      </p>
+      <pre><code><span class="cm"># Conceptual GPULZ block compression (one thread block per data block)</span>
+<span class="kw">parallel for</span> each position i in block:          <span class="cm"># one thread per element</span>
+    window = block[max(0, i-WINDOW_SIZE) .. i-1]   <span class="cm"># WINDOW_SIZE in units of INPUT_TYPE</span>
+    (off, len) = longest_match(block, i, window)   <span class="cm"># multi-byte symbol compare</span>
+    <span class="kw">if</span> len &gt;= MIN_MATCH:
+        flag[i] = 1;  token[i] = (off, len);  cost[i] = pointer_size
+    <span class="kw">else</span>:
+        flag[i] = 0;  token[i] = block[i];    cost[i] = symbol_size
+
+barrier()                                          <span class="cm"># whole block in shared memory</span>
+
+<span class="cm"># Pass 1 + Pass 2 prefix sum over cost[] -> output position of every token</span>
+offset[] = exclusive_prefix_sum(cost[])            <span class="cm"># parallel scan, two-pass + fused</span>
+
+<span class="kw">parallel for</span> each emitted token t:               <span class="cm"># scatter, no collisions</span>
+    write flag bit into block's flag region
+    write token[t] at offset[t] in block's data region
+
+<span class="cm"># Per block, store: (flag array) + (compacted token stream).</span>
+<span class="cm"># A block-offset table records where each block lands in the global output,</span>
+<span class="cm"># so decompression can find and expand all blocks in parallel too.</span></code></pre>
+      <p>
+        Decompression mirrors this: each block is independent, so a thread block reads its flag array,
+        and threads expand literals and copy matches into the block&rsquo;s output region in parallel.
+        Because blocks never reference each other, both directions scale with the number of blocks.
+      </p>
+
+      <h3>8.3 Architectural tuning and the ratio tradeoff</h3>
+      <ul class="tight">
+        <li><b>Maximize shared memory.</b> GPULZ sizes its data partitions so each block&rsquo;s working
+          set (input, window, flags, scan buffers) fits in fast on-chip shared memory, adapting the
+          partition to the target GPU architecture.</li>
+        <li><b>Compile-time configuration.</b> <code>BLOCK_SIZE</code>, <code>WINDOW_SIZE</code>
+          (&le;&nbsp;255), and <code>INPUT_TYPE</code> are <code>#define</code>s &mdash; the data type is
+          fixed when the kernel is built, because C++ has no runtime type selection.</li>
+        <li><b>Ratio cost of independence.</b> Per-block windows can&rsquo;t reference matches outside
+          their block, which slightly lowers ratio versus a single global window &mdash; the price paid
+          to unlock massive parallelism.</li>
+      </ul>
+
+      <div class="law">
+        <b>Reported results (paper).</b> Up to <b>272.1&times;</b> compression throughput speedup on an
+        NVIDIA A4000 and up to <b>1.4&times;</b> higher compression ratio than the state-of-the-art GPU
+        LZSS, evaluated on multi-byte scientific datasets across A100 and A4000 GPUs.
+      </div>
+
+      <h3>8.4 Measured here, on an RTX 5080</h3>
+      <p>
+        Built with CUDA&nbsp;12.8 for <code>sm_120</code> and run on the bundled quantized
+        float32 field <code>QCLOUDf48</code>:
+      </p>
+      <table>
+        <thead><tr><th>Input</th><th class="num">Compression ratio</th><th class="num">Compress thr.</th><th class="num">Decompress thr.</th><th>Round-trip</th></tr></thead>
+        <tbody>
+          <tr><td><code>QCLOUDf48</code> (float32, scientific)</td><td class="num">11.54&times;</td><td class="num">42.6 GB/s</td><td class="num">102 GB/s</td><td class="yes">verified</td></tr>
+          <tr><td>Canterbury text (e.g. <code>alice29.txt</code>)</td><td class="num">~1.0&times;</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="yes">verified</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        <b>Why text barely compresses under GPULZ.</b> Its symbol is a 4-byte <code>uint32_t</code>, so
+        two text fragments only &ldquo;match&rdquo; when four consecutive bytes align identically &mdash;
+        rare in prose. On <em>numeric</em> data with repeated 4-byte values it shines (11.5&times; here);
+        on byte streams a byte-oriented CPU LZSS (~40% of original on Canterbury) wins. The lesson:
+        GPULZ is purpose-built for multi-byte scientific data, not general text.
+      </div>
+    </section>
+
+    <section aria-labelledby="summary">
+      <h2 id="summary">9. Summary</h2>
+      <p>
+        LZSS is LZ77 made practical: a sliding window, a flag bit to tell literals from back-references,
+        and a breakeven rule so a pointer is only used when it actually saves space. Encoding is a search
+        problem (slow, lots of tuning room); decoding is just guided copying (fast). Its one structural
+        weakness &mdash; the sequential window dependency &mdash; is precisely what <b>GPULZ</b>
+        engineers around: independent blocks for parallelism, multi-byte symbols for numeric data, and a
+        fused two-pass prefix sum to lay out variable-length output on the GPU. The result is enormous
+        throughput on the multi-byte scientific data it targets, at the cost of being a poor fit for
+        ordinary text.
+      </p>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>
