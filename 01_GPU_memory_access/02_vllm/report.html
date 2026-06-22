@@ -153,6 +153,37 @@
             so block-granular KV compression remains viable on both stacks.</li>
         </ul>
         <p class="lead">So paging doesn't break KV streaming — it pins the natural KV block to vLLM's page size.</p>
+
+        <h3>Page size is visible: contiguity breaks where the page ends</h3>
+        <p class="lead">Sweeping the contiguity metric past 16&nbsp;KB (granularities 32&nbsp;KB and 64&nbsp;KB added to
+          the analyzer) shows the break tracking each model's <strong>KV page size</strong> — <strong>16&nbsp;KB</strong>
+          for Qwen, <strong>32&nbsp;KB</strong> for GPT-OSS. The page is 16 tokens wide, so its byte size is
+          <code>16 &times; kv_heads &times; head_dim &times; 2&nbsp;B &times; 2(K,V)</code> per layer (Qwen: 2 heads &times; 128 = 16&nbsp;KB;
+          GPT-OSS: 8 heads &times; 64 = 32&nbsp;KB).</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>p_next_1 at &rarr;</th><th class="num">1 KB</th><th class="num">4 KB</th><th class="num">8 KB</th>
+              <th class="num">16 KB</th><th class="num">32 KB</th><th class="num">64 KB</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlabel">Qwen KV &middot; <strong>16 KB page</strong></td><td class="num">0.952</td><td class="num">0.917</td>
+                <td class="num">0.833</td><td class="num" style="background:var(--random-bg);font-weight:800">0.667</td><td class="num">0.500</td><td class="num">0.000</td></tr>
+              <tr><td class="rowlabel">GPT-OSS KV &middot; <strong>32 KB page</strong></td><td class="num">0.948</td><td class="num">0.828</td>
+                <td class="num">0.656</td><td class="num" style="background:var(--stream-bg);font-weight:800">0.855</td><td class="num">0.750</td><td class="num">0.667</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lead" style="margin-top:10px">Read the <strong>16&nbsp;KB</strong> column: Qwen is exactly at its
+          page boundary and contiguity has dropped to <span class="pill random">0.667</span>, while GPT-OSS — where
+          16&nbsp;KB is only <em>half</em> a 32&nbsp;KB page — still holds at <span class="pill stream">0.855</span>.
+          That cross-model contrast is the page size showing through the access pattern.</p>
+        <div class="callout warn">
+          <strong>Read 32–64 KB with caution.</strong> The touched KV footprint is small, so the number of blocks
+          collapses at coarse granularity (Qwen 64 KB &rarr; 26 blocks; GPT-OSS 64 KB &rarr; 24). With only a couple
+          dozen points the metric gets noisy — GPT-OSS is even non-monotonic (8 KB below 16 KB) and Qwen's 64 KB =
+          0.000 is a small-sample edge, not a true zero. The robust signal is directional: <strong>Qwen loses
+          contiguity by 16 KB, GPT-OSS holds through 16 KB and only erodes past 32 KB</strong> — exactly their page
+          sizes. (This is why 16 KB was the original sweep ceiling.)
+        </div>
       </section>
 
       <!-- EXPERTS -->
