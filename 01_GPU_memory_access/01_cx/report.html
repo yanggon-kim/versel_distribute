@@ -530,13 +530,16 @@
     </nav>
 
     <header class="hero">
-      <p class="eyebrow">Summary</p>
+      <p class="eyebrow">Summary &middot; <span style="background:#eef2f7;color:#43506a;padding:2px 9px;border-radius:999px;font-weight:800">PyTorch / HF &middot; non-vLLM</span></p>
       <h1>Measured LLM Weight and KV Cache Memory Access</h1>
       <p class="subtitle">
         I traced real CUDA memory accesses for GPT-2, GPT-OSS-20B, and
         Qwen2.5-1.5B, attributed addresses back to tensor ranges, and measured
         whether neighboring sectors and tiles are touched soon enough to
         justify large-block streaming decompression.
+        <strong>These are PyTorch / HuggingFace (non-vLLM) traces</strong> — the vLLM serving
+        counterpart and a vLLM-vs-PyTorch comparison are in
+        <a href="../02_vllm/report.html">vLLM Serving: Weight &amp; KV Cache Memory Access</a>.
       </p>
 
       <div class="summary-grid" aria-label="Summary metrics">

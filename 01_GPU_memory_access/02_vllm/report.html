@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM Serving — Weight/KV Access &amp; vLLM-vs-PyTorch Comparison (RTX 5080)</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+      --border:#d8dee8; --stream:#1a7f37; --stream-bg:#e7f5ec; --random:#b54708; --random-bg:#fdf0e6;
+      --vllm:#6d28d9; --vllm-bg:#f1ebfd; --code:#0b1020;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:Arial,Helvetica,sans-serif; color:var(--text); background:var(--bg); line-height:1.6; }
+    a { color:var(--accent); }
+    .wrap { display:grid; grid-template-columns:232px minmax(0,1fr); gap:28px; width:min(100%,1180px); margin:0 auto; padding:36px 24px 64px; }
+    nav.toc { position:sticky; top:24px; align-self:start; font-size:.92rem; }
+    nav.toc .crumb { color:var(--muted); font-size:.8rem; margin-bottom:14px; }
+    nav.toc a { display:block; padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+    nav.toc a:hover { background:#eef5ff; color:var(--accent); }
+    main { min-width:0; }
+    header.page h1 { font-size:clamp(1.7rem,3.6vw,2.5rem); line-height:1.12; margin:0; }
+    header.page .sub { color:var(--muted); margin-top:10px; font-size:1.02rem; }
+    .tags { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+    .tag { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:999px; background:#eef2f7; color:#43506a; border:1px solid var(--border); }
+    .tag.vllm { background:var(--vllm-bg); color:var(--vllm); border-color:#dccdf7; }
+    section.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 28px rgba(23,32,51,.06); padding:26px; margin-bottom:22px; scroll-margin-top:20px; }
+    section.card > h2 { margin:0 0 6px; font-size:1.35rem; }
+    section.card > h2 .num { color:var(--accent); font-weight:800; margin-right:8px; }
+    .lead { color:var(--muted); margin:0 0 18px; }
+    h3 { font-size:1.05rem; margin:22px 0 8px; }
+    .pill { display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:.82rem; padding:4px 12px; border-radius:999px; }
+    .pill.stream { background:var(--stream-bg); color:var(--stream); }
+    .pill.random { background:var(--random-bg); color:var(--random); }
+    .pill.vllm { background:var(--vllm-bg); color:var(--vllm); }
+    .pill.hf { background:#eef2f7; color:#43506a; }
+    .headline { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin:4px 0 8px; }
+    .kpi { border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:#fbfcff; }
+    .kpi .v { font-size:1.5rem; font-weight:800; }
+    .kpi .l { font-size:.8rem; color:var(--muted); margin-top:2px; }
+    .callout { border-left:4px solid var(--accent); background:#f3f8ff; padding:14px 18px; border-radius:0 8px 8px 0; margin:16px 0; }
+    .callout.win { border-left-color:var(--stream); background:var(--stream-bg); }
+    .callout.warn { border-left-color:var(--random); background:var(--random-bg); }
+    .callout.vllm { border-left-color:var(--vllm); background:var(--vllm-bg); }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; margin:8px 0 4px; }
+    th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; }
+    th { background:#f1f4f9; font-size:.82rem; }
+    td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    tbody tr:hover { background:#f7faff; }
+    td.rowlabel { text-align:left; font-weight:700; white-space:nowrap; }
+    tr.vllm td { background:#faf7ff; }
+    tr.vllm td.rowlabel { color:var(--vllm); }
+    .kernel { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.78rem; background:#f3f5f9; border:1px solid var(--border); border-radius:6px; padding:2px 7px; color:#41506a; }
+    pre.cmd { background:var(--code); color:#d5e0ff; padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:.82rem; line-height:1.55; }
+    pre.cmd .c { color:#7f8db3; }
+    ul.notes { margin:6px 0; padding-left:20px; }
+    ul.notes li { margin:6px 0; }
+    .footer { color:var(--muted); font-size:.9rem; border-top:1px solid var(--border); margin-top:26px; padding-top:18px; }
+    .footer a { text-decoration:none; }
+    @media (max-width:880px){ .wrap{ grid-template-columns:1fr; } nav.toc{ position:static; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="toc" id="toc">
+      <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+      <a href="#summary">Summary</a>
+      <a href="#matrix">vLLM vs PyTorch matrix</a>
+      <a href="#kv">KV cache: paging in the data</a>
+      <a href="#experts">Matched MXFP4 experts</a>
+      <a href="#kernels">Kernels seen</a>
+      <a href="#setup">Setup &amp; how it was traced</a>
+      <a href="#caveats">Caveats</a>
+    </nav>
+
+    <main>
+      <header class="page">
+        <h1>vLLM Serving: Weight &amp; KV Cache Memory Access</h1>
+        <p class="sub"><strong>The vLLM counterpart</strong> to the PyTorch/HF studies in this section. Same models
+          (Qwen2.5-1.5B, GPT-OSS-20B), same RTX 5080, traced live under NVBit — but served through
+          <strong>vLLM 0.23</strong> instead of eager PyTorch, so the paged KV cache and fused/MoE kernels show up in
+          the access pattern. Every number is from a real vLLM forward with addresses attributed to the actual
+          weight / KV tensor by <code>data_ptr()</code> range.</p>
+        <div class="tags">
+          <span class="tag vllm">vLLM 0.23 · torch 2.11 · cu130</span>
+          <span class="tag">RTX 5080 · Blackwell sm_120</span>
+          <span class="tag">LIVE NVBit trace · enforce_eager · CUDA_MODULE_LOADING=LAZY</span>
+        </div>
+      </header>
+
+      <!-- SUMMARY -->
+      <section class="card" id="summary">
+        <h2><span class="num">§1</span>Summary</h2>
+        <p class="lead">The cache conclusion from the PyTorch studies <strong>survives the move to a production
+          serving stack</strong> — KV streams, weights are tiled — but vLLM's design choices (paged KV, MoE expert
+          kernels) leave a measurable fingerprint.</p>
+        <div class="headline">
+          <div class="kpi"><div class="v">~0.95</div><div class="l">vLLM KV p_next_1 @1KB (both models) — still streaming</div></div>
+          <div class="kpi"><div class="v">paging</div><div class="l">vLLM KV contiguity drops at 16KB (block boundaries) where PyTorch holds</div></div>
+          <div class="kpi"><div class="v">MXFP4</div><div class="l">both stacks run GPT-OSS 4-bit; the weight gap is consumption, not format</div></div>
+        </div>
+        <div class="callout vllm">
+          <strong>Three findings.</strong> (1) <strong>KV cache still streams</strong> under vLLM (~0.95 at 1KB), but
+          its <em>paged</em> cache breaks long runs at block boundaries — visible as a 16KB-contiguity drop the
+          contiguous PyTorch cache doesn't have. (2) <strong>vLLM weights are <em>more</em> 1KB-contiguous</strong>
+          than HF (bigger contiguous tiles per GEMM). (3) The GPT-OSS weight "gap" vs PyTorch is
+          <strong>not a quantization difference</strong> — both are MXFP4; it was dense-projection (HF) vs MoE-expert
+          (vLLM) weights, and the matched expert trace exposed a real <em>consumption-path</em> difference (§4).
+        </div>
+      </section>
+
+      <!-- MATRIX -->
+      <section class="card" id="matrix">
+        <h2><span class="num">§2</span>vLLM vs PyTorch — contiguity matrix</h2>
+        <p class="lead">Targeted single-category NVBit traces (weight-only / KV-only kernel regex) so the
+          <code>p_next_1</code> contiguity is clean. <code>p_next_1@1KB</code> = fraction of touched 1&nbsp;KB blocks
+          whose next block is also touched: <span class="pill stream">high = streaming</span>,
+          <span class="pill random">low = tiled/strided</span>.</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Model</th><th>Category</th><th>Stack</th><th class="num">p_next_1 @1KB</th>
+              <th class="num">p_next_1 @16KB</th><th class="num">tile cov @1KB</th><th class="num">accesses</th></tr></thead>
+            <tbody>
+              <tr class="vllm"><td class="rowlabel" rowspan="2">Qwen2.5-1.5B</td><td rowspan="2">KV cache</td><td><span class="pill vllm">vLLM</span></td><td class="num">0.952</td><td class="num">0.667</td><td class="num">97.6%</td><td class="num">477,568</td></tr>
+              <tr><td><span class="pill hf">PyTorch</span></td><td class="num">0.995</td><td class="num">0.921</td><td class="num">94.0%</td><td class="num">1,864,576</td></tr>
+              <tr class="vllm"><td class="rowlabel" rowspan="2">Qwen2.5-1.5B</td><td rowspan="2">weight</td><td><span class="pill vllm">vLLM</span></td><td class="num">0.489</td><td class="num">0.855</td><td class="num">9.6%</td><td class="num">1,310,688</td></tr>
+              <tr><td><span class="pill hf">PyTorch</span></td><td class="num">0.235</td><td class="num">0.737</td><td class="num">27.0%</td><td class="num">225,024</td></tr>
+              <tr class="vllm"><td class="rowlabel" rowspan="2">GPT-OSS-20B</td><td rowspan="2">KV cache</td><td><span class="pill vllm">vLLM</span></td><td class="num">0.948</td><td class="num">0.855</td><td class="num">98.1%</td><td class="num">325,871</td></tr>
+              <tr><td><span class="pill hf">PyTorch</span></td><td class="num">0.994</td><td class="num">0.924</td><td class="num">100.0%</td><td class="num">1,349,760</td></tr>
+              <tr class="vllm"><td class="rowlabel" rowspan="2">GPT-OSS-20B</td><td rowspan="2">weight<br><span style="font-weight:400;color:var(--muted)">(MXFP4)</span></td><td><span class="pill vllm">vLLM</span> · experts</td><td class="num">0.635</td><td class="num">0.360</td><td class="num">81.9%</td><td class="num">879,552</td></tr>
+              <tr><td><span class="pill hf">PyTorch</span> · dense proj</td><td class="num">0.456</td><td class="num">0.999</td><td class="num">19.3%</td><td class="num">316,768</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lead" style="margin-top:12px">The last GPT-OSS weight pair is <strong>not</strong> like-for-like —
+          vLLM measures MoE <em>experts</em>, PyTorch measures dense <em>projections</em>. §4 makes that comparison
+          honest.</p>
+      </section>
+
+      <!-- KV -->
+      <section class="card" id="kv">
+        <h2><span class="num">§3</span>KV cache: paging is visible in the data</h2>
+        <p class="lead">Both stacks keep the KV cache <span class="pill stream">streaming</span> at 1&nbsp;KB
+          (~0.95 vLLM, ~0.99 PyTorch). The difference is at coarser granularity:</p>
+        <ul class="notes">
+          <li><strong>vLLM is consistently lower, and the gap widens at 16&nbsp;KB</strong> (Qwen 0.667 vs 0.921).
+            vLLM's KV is <strong>paged</strong>: K/V is contiguous <em>within</em> a fixed token block (written by
+            <span class="kernel">reshape_and_cache_kernel_flash</span>) but runs break at block boundaries.</li>
+          <li><strong>PyTorch keeps a contiguous <code>past_key_values</code></strong> (<span class="kernel">CatArrayBatchedCopy</span>),
+            so it stays contiguous over much larger spans — hence the higher 16&nbsp;KB number.</li>
+          <li>Tile coverage stays high on both (~94–100%): when a KV region is touched, nearly the whole tile is read,
+            so block-granular KV compression remains viable on both stacks.</li>
+        </ul>
+        <p class="lead">So paging doesn't break KV streaming — it pins the natural KV block to vLLM's page size.</p>
+      </section>
+
+      <!-- EXPERTS -->
+      <section class="card" id="experts">
+        <h2><span class="num">§4</span>Matched MXFP4 experts — isolating framework from quantization</h2>
+        <p class="lead">The raw GPT-OSS weight gap (PyTorch 0.999 vs vLLM 0.360 at 16&nbsp;KB) looks dramatic, so we
+          chased it down. It is <strong>not</strong> a quantization effect:</p>
+        <ul class="notes">
+          <li><strong>Both stacks already run GPT-OSS in MXFP4</strong> (4-bit experts, ~13.8&nbsp;GB). The HF run
+            loads 96 MXFP4 expert tensors; vLLM serves the same 4-bit checkpoint via <span class="kernel">marlin_moe_wna</span>.</li>
+          <li><strong>The gap was apples-to-oranges:</strong> the PyTorch row measured dense <em>projection</em> weights
+            (<span class="kernel">gemvx</span>/<span class="kernel">cutlass</span>), the vLLM row measured MoE
+            <em>expert</em> weights (<span class="kernel">marlin_moe</span>). Different weights, not different precision.</li>
+        </ul>
+        <p class="lead">Running the <strong>matched expert-vs-expert</strong> trace (both MXFP4 MoE experts) then
+          exposed a genuine framework difference — in <em>how the experts are consumed</em>:</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Stack · expert kernel</th><th>Global-memory weight stream?</th><th class="num">weight-attributed</th><th>p_next_1 (1KB / 16KB)</th></tr></thead>
+            <tbody>
+              <tr class="vllm"><td class="rowlabel">vLLM · <span class="kernel">marlin_moe_wna</span></td>
+                <td><span class="pill stream">Yes</span> — streams packed MXFP4 weights from global memory in place</td>
+                <td class="num">879,552</td><td>0.635 / 0.360 <span class="pill random">tiled</span></td></tr>
+              <tr><td class="rowlabel">PyTorch · <span class="kernel">_matmul_ogs…mxfp4</span> (triton)</td>
+                <td><span class="pill random">No</span> — global traffic dominated by shared/local staging (17.3M), no directly-streamed packed weights</td>
+                <td class="num">~0</td><td>n/a (not a global weight stream)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout vllm">
+          <strong>The real finding.</strong> vLLM's Marlin kernel streams the <em>packed</em> 4-bit expert weights
+          straight from global memory (attributable, tiled). HF's triton grouped-GEMM stages experts through
+          <strong>shared memory + transient repacked buffers</strong> — even at 600k traced records its global traffic
+          is 17.3M shared/local accesses with no captured packed-weight stream. So a like-for-like expert
+          <code>p_next_1</code> exists for vLLM but not HF: <strong>the MXFP4 consumption path differs by framework,
+          the data format does not.</strong>
+        </div>
+      </section>
+
+      <!-- KERNELS -->
+      <section class="card" id="kernels">
+        <h2><span class="num">§5</span>Kernels each stack actually runs</h2>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Role</th><th>vLLM kernel</th><th>PyTorch / HF kernel</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlabel">Dense / projection GEMM</td><td><span class="kernel">cutlass_80…s16816gemm</span></td><td><span class="kernel">cutlass</span> / <span class="kernel">gemmk1</span> / <span class="kernel">gemvx</span></td></tr>
+              <tr><td class="rowlabel">MoE expert GEMM (MXFP4)</td><td><span class="kernel">marlin_moe_wna</span></td><td><span class="kernel">_matmul_ogs_NNT_bf16xbf16xmxfp4</span></td></tr>
+              <tr><td class="rowlabel">KV write</td><td><span class="kernel">reshape_and_cache_kernel_flash</span> (paged)</td><td><span class="kernel">CatArrayBatchedCopy</span> (contiguous)</td></tr>
+              <tr><td class="rowlabel">Attention (KV read)</td><td><span class="kernel">flash_fwd_splitkv_kernel</span></td><td><span class="kernel">fmha</span> / SDPA</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- SETUP -->
+      <section class="card" id="setup">
+        <h2><span class="num">§6</span>Setup &amp; how it was traced</h2>
+        <p class="lead">vLLM 0.23 had to be installed in an isolated venv against <strong>torch 2.11 + cu130</strong>
+          to run on Blackwell (sm_120) at all — the stock build was ABI-broken. For a faithful trace it must run
+          <strong>in-process</strong> and <strong>eager</strong>, with lazy module loading on:</p>
+        <pre class="cmd"><span class="c"># env recipe baked into the vLLM workload</span>
+VLLM_ENABLE_V1_MULTIPROCESSING=0   <span class="c"># model in the traced process (range capture + NVBit see it)</span>
+VLLM_USE_FLASHINFER_SAMPLER=0      <span class="c"># native sampler (flashinfer JIT mis-detects arch)</span>
+CUDA_MODULE_LOADING=LAZY           <span class="c"># EAGER stalls vLLM loading every cubin (flashinfer/cutlass)</span>
+TORCH_CUDA_ARCH_LIST=12.0
+enforce_eager=True                 <span class="c"># no CUDA graphs to hide from NVBit</span></pre>
+        <ul class="notes">
+          <li><strong>Range capture:</strong> exact <code>model.named_parameters()</code> (weights) and
+            <code>model_runner.kv_caches</code> (the paged pool) from the in-process engine — high confidence.</li>
+          <li><strong>GPT-OSS-20B on 16&nbsp;GB</strong> is tight: needs <code>gpu_memory_utilization=0.93</code> and
+            <code>max_num_seqs=1</code> to leave room for the KV pool and NVBit under MXFP4.</li>
+          <li>Per-category targeted traces (weight-only / KV-only regex) avoid record-budget splitting across kernels.</li>
+        </ul>
+      </section>
+
+      <!-- CAVEATS -->
+      <section class="card" id="caveats">
+        <h2><span class="num">§7</span>Caveats</h2>
+        <ul class="notes">
+          <li><strong>HF expert weights are not directly observable.</strong> The triton MXFP4 grouped-GEMM stages
+            through shared memory, so its packed-weight global stream couldn't be attributed — that absence is itself
+            §4's finding, but it means there is no HF expert <code>p_next_1</code> to compare numerically.</li>
+          <li>PyTorch rows are the existing dense/kvcopy traces from the non-vLLM studies in this section; vLLM rows
+            are fresh single-category traces. Methodology (targeted regex, NVBit attribution) is identical.</li>
+          <li>Prompt/decode lengths differ slightly per run; contiguity metrics are pattern properties, largely
+            insensitive to sequence length.</li>
+        </ul>
+      </section>
+
+      <div class="footer">
+        <p><a href="../../index.html">&larr; Back to Report Archive</a> · vLLM counterpart to the PyTorch/HF studies
+          in this section.</p>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

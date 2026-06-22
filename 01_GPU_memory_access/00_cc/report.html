@@ -123,10 +123,14 @@
           <em>real</em> PyTorch forward, with each memory address attributed to the actual weight / KV-cache
           tensor by its <code>data_ptr()</code> range — the literal production process, no proxy kernels.</p>
         <div class="tags">
+          <span class="tag" style="background:#eef2f7;color:#43506a;font-weight:800;border-color:#cdd6e4">PyTorch / HF &middot; non-vLLM</span>
           <span class="tag live">LIVE PyTorch trace · CUDA_MODULE_LOADING=EAGER</span>
           <span class="tag">RTX 5080 · Blackwell sm_120 · CUDA 13.0</span>
           <span class="tag" id="models-tag">GPT-2 (fp32)</span>
         </div>
+        <p class="sub" style="margin-top:6px;font-size:.92rem">This is the <strong>PyTorch / HuggingFace (non-vLLM)</strong>
+          study. For the vLLM serving counterpart and a vLLM-vs-PyTorch comparison, see
+          <a href="../02_vllm/report.html">vLLM Serving: Weight &amp; KV Cache Memory Access</a>.</p>
       </header>
 
       <!-- SUMMARY -->
