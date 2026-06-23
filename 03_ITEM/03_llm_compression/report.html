@@ -117,14 +117,15 @@
     <header>
       <h1>Compressing LLM Weights &amp; KV Cache</h1>
       <p class="lede">
-        A fair, verified compression-ratio study of three memory-oriented compressors &mdash;
-        <b>LZSS</b>, <b>GPULZ</b>, and <b>BPC</b> &mdash; against <b>gzip</b>/<b>zstd</b> baselines, on
-        real weights and KV-cache tensors from gpt-oss-20b, Qwen2.5-3B, and Mistral-7B.
+        A fair, verified compression-ratio study of memory-oriented compressors &mdash;
+        <b>LZSS</b>, <b>GPULZ</b>, <b>BPC</b> &mdash; against <b>gzip</b>/<b>zstd</b> baselines and the
+        <b>ANS/tANS/rANS</b> entropy-coding floor, on real weights and KV-cache tensors from
+        gpt-oss-20b, Qwen2.5-3B, and Mistral-7B.
       </p>
       <div class="meta">
         <b>Models:</b> gpt-oss-20b (MXFP4), Qwen2.5-3B, Mistral-7B-Instruct (bf16) &nbsp;&middot;&nbsp;
         <b>Data:</b> weights + KV cache, in fp32 and native bf16 &nbsp;&middot;&nbsp;
-        <b>546 measurements</b>, all round-trip / self-verified &nbsp;&middot;&nbsp;
+        <b>9 codecs</b> incl. ANS/tANS/rANS entropy coders &nbsp;&middot;&nbsp;
         <b>Host:</b> RTX 5080, CUDA 12.8, torch 2.9.1, transformers 4.57.1.
       </div>
     </header>
@@ -156,20 +157,24 @@
     <section aria-labelledby="headline">
       <h2 id="headline">2. Headline results</h2>
       <p>Geometric-mean compression ratio (higher = better; <span class="yes">green</span> = best in row,
-        <span class="no">red</span> = expands the data):</p>
+        <span class="no">red</span> = expands the data). The last three columns are the order-0
+        <b>entropy coders</b> (8-bit symbols, raw) &mdash; see &sect;7 for full detail:</p>
       <table>
-        <thead><tr><th>data / repr</th><th class="num">lzss</th><th class="num">shrink</th><th class="num">gpulz</th><th class="num">bpc</th><th class="num">gzip</th><th class="num">zstd</th></tr></thead>
+        <thead><tr><th>data / repr</th><th class="num">lzss</th><th class="num">shrink</th><th class="num">gpulz</th><th class="num">bpc</th><th class="num">gzip</th><th class="num">zstd</th><th class="num">ANS</th><th class="num">tANS</th><th class="num">rANS</th></tr></thead>
         <tbody>
-          <tr><td><b>weight / fp32</b></td><td class="num">1.674</td><td class="num">1.600</td><td class="num no">0.981</td><td class="num">2.258</td><td class="num">2.263</td><td class="num best">2.421</td></tr>
-          <tr><td><b>weight / native</b></td><td class="num no">0.969</td><td class="num no">0.972</td><td class="num no">0.966</td><td class="num">1.248</td><td class="num">1.273</td><td class="num best">1.297</td></tr>
-          <tr><td><b>kv / fp32</b></td><td class="num">1.669</td><td class="num">1.583</td><td class="num no">0.978</td><td class="num">2.231</td><td class="num">4.088</td><td class="num best">4.508</td></tr>
-          <tr><td><b>kv / native</b></td><td class="num">1.427</td><td class="num no">0.964</td><td class="num no">0.966</td><td class="num">1.234</td><td class="num">2.385</td><td class="num best">2.650</td></tr>
+          <tr><td><b>weight / fp32</b></td><td class="num">1.674</td><td class="num">1.600</td><td class="num no">0.981</td><td class="num">2.258</td><td class="num">2.263</td><td class="num best">2.421</td><td class="num">1.950</td><td class="num">1.948</td><td class="num">1.950</td></tr>
+          <tr><td><b>weight / native</b></td><td class="num no">0.969</td><td class="num no">0.972</td><td class="num no">0.966</td><td class="num">1.248</td><td class="num">1.273</td><td class="num best">1.297</td><td class="num">1.285</td><td class="num">1.284</td><td class="num">1.285</td></tr>
+          <tr><td><b>kv / fp32</b></td><td class="num">1.669</td><td class="num">1.583</td><td class="num no">0.978</td><td class="num">2.231</td><td class="num">4.088</td><td class="num best">4.508</td><td class="num">1.938</td><td class="num">1.936</td><td class="num">1.938</td></tr>
+          <tr><td><b>kv / native</b></td><td class="num">1.427</td><td class="num no">0.964</td><td class="num no">0.966</td><td class="num">1.234</td><td class="num">2.385</td><td class="num best">2.650</td><td class="num">1.273</td><td class="num">1.272</td><td class="num">1.273</td></tr>
         </tbody>
       </table>
       <div class="law">
         <b>zstd wins every scenario.</b> Among the three target tools, <b>BPC is strongest</b> (&asymp;
         gzip on weights), <b>LZSS</b> is mid, and <b>GPULZ never compresses LLM data</b> (ratio &lt; 1,
-        i.e. it slightly expands every category).
+        i.e. it slightly expands every category). The pure <b>entropy floor</b> (ANS/tANS/rANS) nearly
+        <b>matches gzip/zstd on native bf16 weights</b> (~1.28) &mdash; bf16 weights have almost no
+        LZ-exploitable repetition &mdash; but falls far short on KV cache (1.9 vs zstd's 4.5), where
+        the gains are mostly repetition, not entropy.
       </div>
     </section>
 
@@ -267,6 +272,7 @@
           <tr><td><b>BPC</b></td><td>128 B line (independent)</td><td>none — transform within the line only</td><td>32-bit word</td></tr>
           <tr><td><b>gzip</b> (DEFLATE)</td><td>variable DEFLATE block, shares window</td><td><b>32 KB</b> sliding window</td><td>1 byte</td></tr>
           <tr><td><b>zstd</b> (−19)</td><td>block &le; 128 KB within a frame</td><td><b>~8 MB</b> window (level-dependent)</td><td>1 byte</td></tr>
+          <tr><td><b>ANS / tANS / rANS</b></td><td>streaming (memoryless)</td><td><b>none</b> — order-0, no dictionary</td><td>8- or 16-bit symbol</td></tr>
         </tbody>
       </table>
       <div class="callout">
@@ -298,6 +304,7 @@
           <tr><td><b>LZSS</b> (book)</td><td>~O(n·log W); O(n·W·L) worst</td><td>binary-tree dictionary search per byte</td><td class="num">1.48 s</td><td class="num">5.4 MB/s</td></tr>
           <tr><td><b>zstd −19</b></td><td>O(n·log W), large const</td><td><b>optimal parsing</b> (DP) + entropy coding</td><td class="num">1.96 s</td><td class="num">4.1 MB/s</td></tr>
           <tr><td><b>gzip −9</b></td><td>O(n·deep chain)</td><td>exhaustive hash-chain + lazy + Huffman</td><td class="num">3.19 s</td><td class="num">2.5 MB/s</td></tr>
+          <tr><td><b>rANS</b> (ANS family)</td><td>O(n), no search</td><td>order-0 freq table + arithmetic-style coding</td><td class="num">0.03 s</td><td class="num">261 MB/s</td></tr>
         </tbody>
       </table>
       <p style="font-size:0.85rem;color:var(--muted);margin-top:-4px;">
@@ -313,8 +320,65 @@
       </div>
     </section>
 
+    <section aria-labelledby="entropy">
+      <h2 id="entropy">7. Entropy coders (ANS family): the order-0 floor</h2>
+      <p>
+        Added a pure <b>entropy-coding</b> reference with no dictionary or window &mdash; it measures the
+        <b>order-0 entropy floor</b> of the raw bytes. Three variants of the same model:
+        <b>ANS</b> (ideal Shannon order-0 bound), <b>rANS</b> (a real range-ANS coder via
+        <code>constriction</code>, round-trip verified on 201 buffers), and <b>tANS</b> (table-quantized
+        ANS). Each run for <b>8- and 16-bit</b> symbols and <b>raw</b> vs <b>delta</b> inputs (1092
+        measurements). ANS/tANS/rANS are the same order-0 model &mdash; FSE inside
+        <a href="../04_gzip_zstd/report.html">zstd is tANS</a> &mdash; so they agree to within
+        <b>0.14% on average</b> (max 1.19%); the tiny spread is only table precision (ANS &ge; rANS &asymp; tANS).
+      </p>
+      <h3>Primary config — 8-bit symbols, raw (geomean ratio)</h3>
+      <table>
+        <thead><tr><th>data / repr</th><th class="num">ANS</th><th class="num">rANS</th><th class="num">tANS</th></tr></thead>
+        <tbody>
+          <tr><td><b>weight / fp32</b></td><td class="num">1.950</td><td class="num">1.950</td><td class="num">1.948</td></tr>
+          <tr><td><b>weight / native</b></td><td class="num">1.285</td><td class="num">1.285</td><td class="num">1.284</td></tr>
+          <tr><td><b>kv / fp32</b></td><td class="num">1.938</td><td class="num">1.938</td><td class="num">1.936</td></tr>
+          <tr><td><b>kv / native</b></td><td class="num">1.273</td><td class="num">1.273</td><td class="num">1.272</td></tr>
+        </tbody>
+      </table>
+      <h3>Symbol width &amp; delta predictor (geomean ratio)</h3>
+      <table>
+        <thead><tr><th>config</th><th class="num">weight / fp32</th><th class="num">weight / native</th><th class="num">kv / fp32</th><th class="num">kv / native</th></tr></thead>
+        <tbody>
+          <tr><td><b>8-bit raw</b></td><td class="num">1.950</td><td class="num">1.285</td><td class="num">1.938</td><td class="num">1.273</td></tr>
+          <tr><td><b>16-bit raw</b></td><td class="num best">2.558</td><td class="num best">1.523</td><td class="num best">2.542</td><td class="num best">1.511</td></tr>
+          <tr><td><b>8-bit delta</b></td><td class="num no">1.319</td><td class="num no">1.001</td><td class="num no">1.313</td><td class="num no">1.001</td></tr>
+          <tr><td><b>16-bit delta</b></td><td class="num">1.393</td><td class="num">1.443</td><td class="num">1.414</td><td class="num">1.434</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:0.85rem;color:var(--muted);margin-top:-4px;">
+        (ANS shown; rANS/tANS within ~0.1%. <span class="best">green</span> = best config, <span class="no">red</span> = worst.)
+      </p>
+      <h3>Three findings</h3>
+      <ul class="tight">
+        <li><b>The entropy floor &asymp; gzip/zstd on native bf16 weights.</b> Pure 8-bit ANS hits 1.285,
+          matching zstd (1.297) and gzip (1.273) &mdash; bf16 weights have almost <b>no LZ-exploitable
+          repetition</b>; nearly all their compressibility is order-0 entropy.</li>
+        <li><b>KV cache is mostly repetition, not entropy.</b> The gap is large &mdash; ANS &asymp; 1.94 /
+          1.27 vs zstd 4.51 / 2.65 &mdash; so the dictionary stage, not the entropy stage, is what makes
+          KV cache compressible.</li>
+        <li><b>Wider symbols help; the delta predictor hurts.</b> 16-bit order-0 beats 8-bit everywhere
+          (fp32 weights 1.95 &rarr; <b>2.56</b>, even edging byte-based zstd's 2.42). A per-symbol
+          <b>delta makes things worse</b> (8-bit pooled 1.58 &rarr; 1.15): unlike smooth scientific data,
+          neighbouring LLM tensor elements aren't close, so differencing raises entropy &mdash; which is
+          also why BPC's delta/bit-plane transform gains little here.</li>
+      </ul>
+      <div class="callout">
+        <b>Caveat.</b> ANS and tANS are analytic (exact for the order-0 model); <b>rANS is a real,
+        round-trip-verified codec</b> whose measured bytes match the analytic numbers to ~0.1%. 16-bit
+        tANS cost is computed from the 2<sup>18</sup>-quantized histogram (a real encode would need that
+        table).
+      </div>
+    </section>
+
     <section aria-labelledby="meaning">
-      <h2 id="meaning">7. What this means</h2>
+      <h2 id="meaning">8. What this means</h2>
       <ul class="tight">
         <li>For <b>lossless compression of LLM tensors</b>, a general-purpose entropy+dictionary coder
           (<b>zstd</b>) is the strongest baseline by a wide margin, especially on KV cache.</li>
@@ -325,11 +389,16 @@
           compressible than bf16, and 4-bit MXFP4 is already past the point where lossless compression
           helps. For real LLM memory-bandwidth savings, <em>quantization + light entropy coding</em> on
           the raw bf16 bytes will beat these LZ/bit-plane schemes.</li>
+        <li>The <b>order-0 entropy floor</b> (ANS/tANS/rANS) explains <em>where</em> compressibility
+          comes from: on bf16 weights it already matches gzip/zstd (compressibility is entropy, not
+          repetition), but on KV cache it lags far behind them (compressibility is repetition the LZ
+          stage captures). A cheap entropy coder is thus most of what you need for weights; KV cache
+          wants a dictionary stage too.</li>
       </ul>
     </section>
 
     <section aria-labelledby="method">
-      <h2 id="method">8. Methodology, fairness &amp; limitations</h2>
+      <h2 id="method">9. Methodology, fairness &amp; limitations</h2>
       <ul class="tight">
         <li><b>Identical bytes per representation</b> &mdash; ratios differ only by algorithm.</li>
         <li><b>Native ratio definitions, with caveats.</b> <b>BPC</b> is an <em>analytical</em> model: it
