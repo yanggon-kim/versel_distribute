@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xz / LZMA: Big-Window LZ + Range Coding, From Concept to Example</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: var(--text);
+      background: var(--bg); padding: 40px 24px 64px; line-height: 1.6; }
+    main { width: min(100%, 920px); margin: 0 auto; }
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+    .meta { margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; color: var(--muted); }
+    .meta b { color: var(--text); }
+    .question { margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px; font-size: 1.05rem; }
+    section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06); padding: 24px; margin-top: 22px; }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5; margin: 8px 0 14px;
+      color: #0b1f3a; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    pre .kw { color: #cf222e; } pre .cm { color: #647083; font-style: italic; }
+    .callout { margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px; }
+    .law { margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px; font-size: 1.02rem; }
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover { text-decoration: underline; }
+    ul.tight { margin: 0 0 12px; padding-left: 20px; } ul.tight li { margin-bottom: 6px; }
+    ol.tight { margin: 0 0 12px; padding-left: 22px; } ol.tight li { margin-bottom: 6px; }
+    .diagram { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; overflow-x: auto; margin: 8px 0 14px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45; white-space: pre; color: #0b1f3a; }
+    .tok { display: inline-block; border: 1px solid var(--border); border-radius: 5px;
+      padding: 2px 8px; margin: 3px 4px 3px 0; background: #fff; font-size: 0.85rem;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .tok.lit { border-color: #cfe0ff; background: #eef5ff; }
+    .tok.match { border-color: #c7ecd0; background: #f6fff8; }
+    .footer { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem; }
+    .footer p { margin: 0 0 4px; } .footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>xz / LZMA</h1>
+      <p class="lede">
+        <code>xz</code> is the container; <b>LZMA</b> is the algorithm inside. It is, in spirit, an
+        LZ77 dictionary coder like <a href="../01_comp_also/report.html">LZSS</a> &mdash; but with a
+        <b>huge dictionary</b> and a much smarter back end: a <b>range coder</b> driven by hundreds of
+        tiny adaptive probability models. That combination is why xz usually gives the highest ratio of
+        the everyday codecs.
+      </p>
+      <div class="meta">
+        <b>xz:</b> LZMA2 + integrity check (Tukaani, 2009) &nbsp;&middot;&nbsp;
+        <b>LZMA:</b> large-window LZ77 + context-modelled range coder &nbsp;&middot;&nbsp;
+        <b>In our study:</b> the best lossless codec on LLM <em>KV cache</em>.
+      </div>
+    </header>
+
+    <div class="question">
+      <b>Two ideas stacked.</b> (1) Find repeats with a <em>very large</em> window (up to 64 MB&ndash;1.5 GB,
+      vs gzip&rsquo;s 32 KB), so distant duplicates still compress. (2) Encode the resulting
+      literals and matches with a <b>range coder</b> that predicts each <em>bit</em> using a
+      context-specific probability it constantly updates &mdash; squeezing far closer to the entropy
+      limit than gzip&rsquo;s whole-bit Huffman codes.
+    </div>
+
+    <section aria-labelledby="pipeline">
+      <h2 id="pipeline">1. The two stages</h2>
+      <div class="diagram">  raw bytes ─▶ [ big-window LZ match finder ] ─▶ packets (literal / match / rep-match)
+                     up to 64 MB dictionary
+            ─▶ [ range coder w/ adaptive bit-probability models ] ─▶ compressed stream</div>
+      <ul class="tight">
+        <li><b>Match finding</b> &mdash; like LZSS, replace repeats with <code>(distance, length)</code>,
+          but search a dictionary thousands of times larger, and (at high presets) with an
+          <em>optimal parse</em> that picks the cheapest sequence of packets, not just the greedy
+          longest match.</li>
+        <li><b>Range coding</b> &mdash; an arithmetic-coding variant. Instead of fixed codes, every
+          decision (is this a literal or a match? what is this bit of the literal?) is coded against an
+          adaptive probability chosen by <em>context</em>, getting fractional-bit efficiency.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="packets">
+      <h2 id="packets">2. LZMA packets &mdash; and why &ldquo;repeat distances&rdquo; matter</h2>
+      <p>LZMA emits one of a few packet types per step. Crucially, it caches the <b>4 most recent match
+        distances</b>, so re-using a recent distance is extremely cheap &mdash; ideal for strided or
+        columnar data.</p>
+      <table>
+        <thead><tr><th>packet</th><th>meaning</th><th>cost</th></tr></thead>
+        <tbody>
+          <tr><td><b>LITERAL</b></td><td>one raw byte (predicted from previous byte + position)</td><td>~ a few bits</td></tr>
+          <tr><td><b>MATCH</b></td><td>new <code>(distance, length)</code> back-reference</td><td>full distance + length</td></tr>
+          <tr><td><b>REP0&ndash;REP3</b></td><td>reuse one of the 4 most-recent distances, new length</td><td>cheap (no new distance)</td></tr>
+          <tr><td><b>SHORTREP</b></td><td>one byte at the last distance</td><td>cheapest</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="example">
+      <h2 id="example">3. A small example</h2>
+      <p>Encoding <code>abracadabraabracadabra</code> conceptually (LZ stage):</p>
+      <p>
+        <span class="tok lit">a</span><span class="tok lit">b</span><span class="tok lit">r</span>
+        <span class="tok lit">a</span><span class="tok lit">c</span><span class="tok lit">a</span>
+        <span class="tok lit">d</span>
+        <span class="tok match">MATCH dist 7, len 4 → "abra"</span>
+        <span class="tok match">MATCH dist 11, len 11 → "abracadabra"</span>
+      </p>
+      <p>
+        The LZ packets look just like LZSS. The difference is the back end: each
+        <span class="tok lit">literal</span> byte is range-coded using a probability model keyed on the
+        previous byte (so after <code>a</code>, the model already expects <code>b</code>/<code>c</code>/<code>d</code>
+        and spends well under 8 bits); each <span class="tok match">match</span> is coded with separate
+        context models for its length and the slots of its distance. On data with regular structure, the
+        <b>REP</b> distances turn repeated strides into near-free packets. The range coder then packs the
+        whole packet stream into a single fractional-bit number.
+      </p>
+      <div class="callout">
+        <b>Range coding in one line.</b> Keep an interval <code>[low, high)</code>; to encode a symbol of
+        probability <code>p</code>, shrink the interval to the sub-range of width <code>p</code>; emit
+        bytes as the top of the interval settles. More probable symbol &rArr; wider sub-range &rArr;
+        fewer bits. The probabilities are <em>adaptive</em> &mdash; updated after every bit &mdash; so the
+        model learns the data as it goes.
+      </div>
+    </section>
+
+    <section aria-labelledby="pseudo">
+      <h2 id="pseudo">4. Pseudocode</h2>
+      <pre><code><span class="kw">function</span> lzma_compress(data, dict_size):           <span class="cm"># dict up to 64 MB+</span>
+    reps = [1,1,1,1]                                  <span class="cm"># 4 recent distances</span>
+    init probability models (literal, isMatch, isRep, len, dist...)
+    pos = 0
+    <span class="kw">while</span> pos &lt; len(data):
+        (dist, length) = best_match(data, pos, dict_size)   <span class="cm"># optimal parse at high presets</span>
+        <span class="kw">if</span> length &lt; MIN <span class="kw">or</span> literal_is_cheaper:
+            range_encode_bit(isMatch[ctx], 0)
+            range_encode_literal(prev_byte, pos, data[pos]); pos += 1
+        <span class="kw">else</span>:
+            range_encode_bit(isMatch[ctx], 1)
+            <span class="kw">if</span> dist in reps:
+                range_encode_rep(index_of(dist, reps), length)   <span class="cm"># REP0..3 — cheap</span>
+            <span class="kw">else</span>:
+                range_encode_match(dist, length); push dist into reps
+            pos += length
+        update all touched probability models                <span class="cm"># adaptive</span>
+
+<span class="cm"># Decompression mirrors this: range-decode each decision, copy literals/matches</span>
+<span class="cm"># from the window. It is fast and uses little memory beyond the dictionary.</span></code></pre>
+    </section>
+
+    <section aria-labelledby="chars">
+      <h2 id="chars">5. Characteristics &amp; when to use it</h2>
+      <ul class="tight">
+        <li><b>Highest ratio of the common codecs</b>, especially on large inputs with long-range
+          repetition &mdash; the huge dictionary sees duplicates gzip/bzip2 can&rsquo;t reach.</li>
+        <li><b>Slow to compress</b> (large search + optimal parse) and memory-hungry (the dictionary);
+          <b>decompression is fast</b> and light.</li>
+        <li><b>Adaptive context models + REP distances</b> make it strong on structured / strided data
+          (tables, columns, repeated records).</li>
+        <li><b>xz container</b> adds framing + an integrity check (CRC/SHA) around the LZMA2 stream; the
+          <code>-1</code>&hellip;<code>-9</code> presets mainly trade dictionary size and search effort.</li>
+      </ul>
+      <div class="law">
+        <b>In our LLM study, xz was the best lossless codec on KV cache</b> (~2.6&ndash;3.3&times; on bf16,
+        4.87&times; on fp32) &mdash; KV compressibility comes from long-range repetition, and xz&rsquo;s
+        dictionary (up to 64 MB) reaches it where smaller-window coders cannot. On <em>weights</em>,
+        which are entropy-bound rather than repetitive, the Burrows&ndash;Wheeler
+        <a href="../05_bzip2/report.html">bzip2</a> edged it out.
+      </div>
+    </section>
+
+    <section aria-labelledby="vs">
+      <h2 id="vs">6. xz vs the others, in one line each</h2>
+      <ul class="tight">
+        <li><b>vs <a href="../04_gzip_zstd/report.html">gzip</a>:</b> same LZ+entropy shape, but 2000&times;
+          larger window and a range coder instead of Huffman &rarr; much higher ratio, much slower.</li>
+        <li><b>vs <a href="../04_gzip_zstd/report.html">zstd</a>:</b> xz usually compresses a bit smaller
+          at max settings; zstd decompresses faster and is far quicker to compress &mdash; zstd wins the
+          speed/ratio trade-off, xz wins pure ratio.</li>
+        <li><b>vs <a href="../05_bzip2/report.html">bzip2</a>:</b> different families &mdash; xz is
+          big-window LZ (great on long-range repeats / KV cache); bzip2 is block-sort BWT (great on
+          locally-structured data / weights).</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>

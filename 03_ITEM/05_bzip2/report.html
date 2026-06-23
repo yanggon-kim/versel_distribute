@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>bzip2: Burrows–Wheeler Compression, From Concept to Example</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: var(--text);
+      background: var(--bg); padding: 40px 24px 64px; line-height: 1.6; }
+    main { width: min(100%, 920px); margin: 0 auto; }
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+    .meta { margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; color: var(--muted); }
+    .meta b { color: var(--text); }
+    .question { margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px; font-size: 1.05rem; }
+    section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06); padding: 24px; margin-top: 22px; }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5; margin: 8px 0 14px;
+      color: #0b1f3a; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    pre .kw { color: #cf222e; } pre .cm { color: #647083; font-style: italic; }
+    .callout { margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px; }
+    .law { margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px; font-size: 1.02rem; }
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover { text-decoration: underline; }
+    ul.tight { margin: 0 0 12px; padding-left: 20px; } ul.tight li { margin-bottom: 6px; }
+    ol.tight { margin: 0 0 12px; padding-left: 22px; } ol.tight li { margin-bottom: 6px; }
+    .diagram { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; overflow-x: auto; margin: 8px 0 14px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45; white-space: pre; color: #0b1f3a; }
+    .footer { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem; }
+    .footer p { margin: 0 0 4px; } .footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>bzip2: Burrows&ndash;Wheeler Compression</h1>
+      <p class="lede">
+        bzip2 takes a completely different route from gzip/zstd: instead of finding repeats with a
+        sliding window, it <b>reorders the data</b> with the Burrows&ndash;Wheeler Transform so that
+        similar characters cluster together, then rides that structure with a few light coders. Here is
+        the whole pipeline, with a worked <code>banana</code> example you can follow by hand.
+      </p>
+      <div class="meta">
+        <b>bzip2:</b> RLE &rarr; <b>BWT</b> &rarr; MTF &rarr; RLE &rarr; Huffman (Julian Seward, 1996)
+        &nbsp;&middot;&nbsp; block-based (≤900 KB) &nbsp;&middot;&nbsp;
+        <b>In our study:</b> the best lossless codec on LLM <em>weights</em>.
+      </div>
+    </header>
+
+    <div class="question">
+      <b>The core trick.</b> Most compressors look for repeated <em>strings</em>. bzip2 instead asks:
+      &ldquo;can I <em>permute</em> the bytes into an order that is trivially compressible, in a way I
+      can perfectly undo?&rdquo; The Burrows&ndash;Wheeler Transform does exactly that &mdash; it sorts
+      rotations of the data so that characters appearing in similar <em>contexts</em> end up next to
+      each other, producing long runs that cheap coders devour.
+    </div>
+
+    <section aria-labelledby="pipeline">
+      <h2 id="pipeline">1. The pipeline (5 reversible stages)</h2>
+      <div class="diagram">  input ─▶ RLE1 ─▶  BWT  ─▶  MTF  ─▶ RLE2 ─▶ Huffman ─▶ output
+           (runs)  (block   (move-   (runs   (entropy
+                    sort)    to-front) of 0s)  code)</div>
+      <ol class="tight">
+        <li><b>RLE1</b> &mdash; an initial run-length pass (collapses long byte runs; a quirk that
+          helps the BWT sorter).</li>
+        <li><b>BWT</b> &mdash; the heart: a reversible block sort that clusters similar characters.</li>
+        <li><b>MTF</b> (Move-To-Front) &mdash; turns those clusters into lots of small numbers,
+          especially zeros.</li>
+        <li><b>RLE2</b> &mdash; run-length-encodes the resulting runs of zeros.</li>
+        <li><b>Huffman</b> &mdash; entropy-codes the result (bzip2 actually picks among multiple
+          Huffman tables per block).</li>
+      </ol>
+      <p>Everything operates on one <b>block</b> at a time (100&ndash;900 KB, set by <code>-1</code>&hellip;<code>-9</code>).</p>
+    </section>
+
+    <section aria-labelledby="bwt">
+      <h2 id="bwt">2. The Burrows&ndash;Wheeler Transform, by hand</h2>
+      <p>
+        Take <code>banana</code> and append a unique end marker <code>$</code> (smaller than every
+        letter). List <b>all rotations</b>, then <b>sort them</b>; the BWT is the <b>last column</b>.
+      </p>
+      <div class="diagram">  all rotations        sorted rotations      last column (BWT)
+  banana$              $banana                a
+  anana$b              a$banan                n
+  nana$ba      sort    ana$ban                n
+  ana$ban     ─────▶   anana$b                b
+  na$bana              banana$                $
+  a$banan              na$bana                a
+  $banana              nana$ba                a
+
+           BWT("banana$") = "annb$aa"</div>
+      <p>
+        Notice the output <code>annb$aa</code> &mdash; the three <code>a</code>s clustered, the two
+        <code>n</code>s landed together. That is the magic: sorting rotations groups characters that
+        precede <em>similar following text</em>, so the transformed string is full of runs even though
+        the original was not. On real data (English, code, FP exponents) this clustering is dramatic.
+      </p>
+      <div class="callout">
+        <b>It&rsquo;s reversible.</b> Astonishingly, the last column plus the marker is enough to
+        reconstruct the original &mdash; the inverse BWT repeatedly sorts and follows a permutation
+        (the &ldquo;LF-mapping&rdquo;). bzip2 stores the row index of the original string to anchor the
+        inversion. No information is lost; it is a pure reordering.
+      </div>
+    </section>
+
+    <section aria-labelledby="mtf">
+      <h2 id="mtf">3. Move-To-Front + RLE: turning clusters into zeros</h2>
+      <p>
+        MTF keeps an alphabet list; it outputs each symbol&rsquo;s <em>current position</em>, then moves
+        that symbol to the front. Runs of the same character therefore become runs of <b>0</b>. Encoding
+        the BWT output <code>annb$aa</code> with the alphabet list <code>[$,a,b,n]</code>:
+      </p>
+      <table>
+        <thead><tr><th>read</th><th>list before</th><th class="num">output</th><th>list after</th></tr></thead>
+        <tbody>
+          <tr><td>a</td><td>$ a b n</td><td class="num">1</td><td>a $ b n</td></tr>
+          <tr><td>n</td><td>a $ b n</td><td class="num">3</td><td>n a $ b</td></tr>
+          <tr><td>n</td><td>n a $ b</td><td class="num">0</td><td>n a $ b</td></tr>
+          <tr><td>b</td><td>n a $ b</td><td class="num">3</td><td>b n a $</td></tr>
+          <tr><td>$</td><td>b n a $</td><td class="num">3</td><td>$ b n a</td></tr>
+          <tr><td>a</td><td>$ b n a</td><td class="num">3</td><td>a $ b n</td></tr>
+          <tr><td>a</td><td>a $ b n</td><td class="num">0</td><td>a $ b n</td></tr>
+        </tbody>
+      </table>
+      <p>
+        MTF output: <code>1 3 0 3 3 3 0</code> &mdash; small numbers dominated by zeros and repeats. A
+        run-length pass (<b>RLE2</b>) then squeezes the zero runs, and <b>Huffman</b> assigns the
+        shortest codes to the most frequent symbols (here, <code>0</code> and <code>3</code>). The
+        original, near-flat byte distribution has been turned into something highly skewed &mdash; exactly
+        what entropy coding wants.
+      </p>
+    </section>
+
+    <section aria-labelledby="pseudo">
+      <h2 id="pseudo">4. Compress / decompress in pseudocode</h2>
+      <pre><code><span class="kw">function</span> bzip2_compress(data):
+    <span class="kw">for</span> each block of up to 900 KB:
+        b = rle1(block)                       <span class="cm"># collapse long runs</span>
+        (bwt, idx) = burrows_wheeler(b)       <span class="cm"># sort rotations; idx = original row</span>
+        m = move_to_front(bwt)                <span class="cm"># clusters -> small ints / zeros</span>
+        r = rle2(m)                           <span class="cm"># run-length the zeros</span>
+        emit(idx, huffman_encode(r))          <span class="cm"># entropy code (multiple tables)</span>
+
+<span class="kw">function</span> bzip2_decompress(stream):           <span class="cm"># exact inverse, in reverse order</span>
+    <span class="kw">for</span> each block:
+        r   = huffman_decode(...)
+        m   = un_rle2(r)
+        bwt = inverse_mtf(m)
+        b   = inverse_bwt(bwt, idx)           <span class="cm"># LF-mapping reconstruction</span>
+        emit(un_rle1(b))</code></pre>
+      <p>The cost is in the BWT&rsquo;s <b>suffix sort</b> (sorting all rotations of the block) &mdash;
+        that is what makes bzip2 slower than gzip but its decompression is straightforward and fast.</p>
+    </section>
+
+    <section aria-labelledby="chars">
+      <h2 id="chars">5. Characteristics &amp; when to use it</h2>
+      <ul class="tight">
+        <li><b>Block-based, no cross-block window.</b> The BWT works within one ≤900 KB block; bzip2
+          can&rsquo;t exploit repetition farther apart than that &mdash; unlike xz&rsquo;s huge dictionary.</li>
+        <li><b>Strong on locally-structured data</b> &mdash; text, source code, and (in our study)
+          floating-point <b>weight</b> bytes, where the exponent/sign bytes cluster beautifully under
+          the BWT.</li>
+        <li><b>Slower compress, fast decompress</b>; moderate memory; a single, dependency-free,
+          widely-available CLI.</li>
+        <li><b>Weaker on long-range repetition</b> (large files with distant duplicates) &mdash; there a
+          big-window LZ coder like <a href="../06_xz/report.html">xz</a> or zstd wins.</li>
+      </ul>
+      <div class="law">
+        <b>In our LLM study, bzip2 was the best lossless codec on weights</b> (~1.44&times; on bf16,
+        2.54&times; on fp32) &mdash; its Burrows&ndash;Wheeler block sort suits the structured exponent
+        bytes of floating-point parameters better than any sliding-window coder. On KV cache, whose
+        gains come from long-range repetition, the large-window <a href="../06_xz/report.html">xz</a>
+        overtook it.
+      </div>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>
