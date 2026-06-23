@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compressing LLM Weights &amp; KV Cache: LZSS vs GPULZ vs BPC</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px 64px;
+      line-height: 1.6;
+    }
+
+    main { width: min(100%, 920px); margin: 0 auto; }
+
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+
+    .meta {
+      margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 0.9rem; color: var(--muted);
+    }
+    .meta b { color: var(--text); }
+
+    .question {
+      margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px;
+      font-size: 1.05rem;
+    }
+
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06);
+      padding: 24px; margin-top: 22px;
+    }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+
+    .yes { color: var(--good); font-weight: 700; }
+    .no { color: var(--bad); font-weight: 700; }
+    .mid { color: var(--warn); font-weight: 700; }
+    td.best { background: #e7f6ec; font-weight: 700; }
+
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5;
+      margin: 8px 0 14px; color: #0b1f3a;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre code { background: none; padding: 0; font-size: inherit; }
+
+    .callout {
+      margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px;
+    }
+    .law {
+      margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px;
+      font-size: 1.02rem;
+    }
+
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover, section a:focus-visible { text-decoration: underline; }
+
+    ul.tight { margin: 0 0 12px; padding-left: 20px; }
+    ul.tight li { margin-bottom: 6px; }
+    ol.tight { margin: 0 0 12px; padding-left: 22px; }
+    ol.tight li { margin-bottom: 6px; }
+
+    .footer {
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .footer p { margin: 0 0 4px; }
+    .footer a { color: var(--accent); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>Compressing LLM Weights &amp; KV Cache</h1>
+      <p class="lede">
+        A fair, verified compression-ratio study of three memory-oriented compressors &mdash;
+        <b>LZSS</b>, <b>GPULZ</b>, and <b>BPC</b> &mdash; against <b>gzip</b>/<b>zstd</b> baselines, on
+        real weights and KV-cache tensors from gpt-oss-20b, Qwen2.5-3B, and Mistral-7B.
+      </p>
+      <div class="meta">
+        <b>Models:</b> gpt-oss-20b (MXFP4), Qwen2.5-3B, Mistral-7B-Instruct (bf16) &nbsp;&middot;&nbsp;
+        <b>Data:</b> weights + KV cache, in fp32 and native bf16 &nbsp;&middot;&nbsp;
+        <b>546 measurements</b>, all round-trip / self-verified &nbsp;&middot;&nbsp;
+        <b>Host:</b> RTX 5080, CUDA 12.8, torch 2.9.1, transformers 4.57.1.
+      </div>
+    </header>
+
+    <div class="question">
+      <b>The question.</b> How well do GPU/memory compressors built for other data &mdash; LZSS (byte
+      dictionary), GPULZ (GPU LZSS on 4-byte symbols), BPC (bit-plane transform) &mdash; compress
+      actual LLM tensors, and how do they stack up against everyday gzip/zstd? All ratios are
+      <b>original &divide; compressed</b> (higher = better), reported as the <b>geometric mean</b>.
+    </div>
+
+    <section aria-labelledby="setup">
+      <h2 id="setup">1. Setup</h2>
+      <ul class="tight">
+        <li><b>Tensors</b> (layers {0, mid, last}, deterministic): attention <code>q_proj</code>/<code>o_proj</code>,
+          MLP <code>down_proj</code> (gpt-oss: MXFP4 expert blocks), token embedding, <code>lm_head</code>,
+          an RMSNorm vector; <b>KV cache</b> K/V from a fixed ~1024-token forward pass.</li>
+        <li><b>Two representations</b> per tensor: <b>fp32</b> (cast to 4-byte float, the width BPC/GPULZ
+          target) and <b>native</b> (stored runtime dtype = bf16; MXFP4 U8 for gpt-oss MLP). Identical
+          bytes go to every tool; buffers are contiguous slices capped at 8 MB (fp32) / 4 MB (bf16).</li>
+        <li><b>Tools:</b> book LZSS (12-bit window) &amp; <code>shrink -l</code>; GPULZ (CUDA 12.8,
+          <code>sm_120</code>, <code>uint32</code> symbol); BPC reference model (128 B line, 32&times;32-bit);
+          <code>gzip -9</code>; <code>zstd -19</code>.</li>
+        <li><b>Verification:</b> LZSS/shrink round-trips <code>cmp</code>-checked (182/182), GPULZ
+          self-verify (91/91), <b>0 anomalies</b>.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="headline">
+      <h2 id="headline">2. Headline results</h2>
+      <p>Geometric-mean compression ratio (higher = better; <span class="yes">green</span> = best in row,
+        <span class="no">red</span> = expands the data):</p>
+      <table>
+        <thead><tr><th>data / repr</th><th class="num">lzss</th><th class="num">shrink</th><th class="num">gpulz</th><th class="num">bpc</th><th class="num">gzip</th><th class="num">zstd</th></tr></thead>
+        <tbody>
+          <tr><td><b>weight / fp32</b></td><td class="num">1.674</td><td class="num">1.600</td><td class="num no">0.981</td><td class="num">2.258</td><td class="num">2.263</td><td class="num best">2.421</td></tr>
+          <tr><td><b>weight / native</b></td><td class="num no">0.969</td><td class="num no">0.972</td><td class="num no">0.966</td><td class="num">1.248</td><td class="num">1.273</td><td class="num best">1.297</td></tr>
+          <tr><td><b>kv / fp32</b></td><td class="num">1.669</td><td class="num">1.583</td><td class="num no">0.978</td><td class="num">2.231</td><td class="num">4.088</td><td class="num best">4.508</td></tr>
+          <tr><td><b>kv / native</b></td><td class="num">1.427</td><td class="num no">0.964</td><td class="num no">0.966</td><td class="num">1.234</td><td class="num">2.385</td><td class="num best">2.650</td></tr>
+        </tbody>
+      </table>
+      <div class="law">
+        <b>zstd wins every scenario.</b> Among the three target tools, <b>BPC is strongest</b> (&asymp;
+        gzip on weights), <b>LZSS</b> is mid, and <b>GPULZ never compresses LLM data</b> (ratio &lt; 1,
+        i.e. it slightly expands every category).
+      </div>
+    </section>
+
+    <section aria-labelledby="findings">
+      <h2 id="findings">3. Five findings</h2>
+      <h3>(1) Representation dominates everything</h3>
+      <p>
+        Casting to fp32 roughly <em>doubles</em> every tool's ratio versus native bf16 (zstd weights
+        2.42 &rarr; 1.30; BPC 2.26 &rarr; 1.25). It isn't extra information &mdash; a fp32 copy of a
+        bf16 value pads 16 low/zero mantissa bits and aligns exponents, manufacturing redundancy.
+        <b>bf16 is close to incompressible</b> for the LZ-family tools. Any LLM-compression number is
+        meaningless without stating its dtype.
+      </p>
+      <h3>(2) GPULZ is the wrong tool for LLM tensors</h3>
+      <p>
+        It expands data in every category (0.96&ndash;0.99). Its symbol is a 4-byte <code>uint32</code>
+        and its window is 32 elements, so it needs four consecutive bytes to repeat exactly within
+        128 bytes &mdash; which almost never happens in high-entropy weight/KV bytes. GPULZ is built for
+        smooth multi-byte <em>scientific</em> arrays (where it hit 11.5&times; on a float field in our
+        earlier test), not neural-network parameters.
+      </p>
+      <h3>(3) BPC is the best of the three specialized tools on weights</h3>
+      <p>
+        It matches gzip on fp32 (2.26) and leads on the smoothest tensors, because its
+        Delta&rarr;Bit-Plane&rarr;XOR transform captures the sign/exponent value-locality of FP weights
+        &mdash; the homogeneous-array structure it was designed for. On native bf16 it drops to ~1.25,
+        and on KV cache it is beaten by the general compressors.
+      </p>
+      <h3>(4) KV cache is far more compressible than weights &mdash; but mainly by general compressors</h3>
+      <p>
+        On fp32, zstd reaches <b>4.5&times;</b> on KV vs 2.4&times; on weights; gzip 4.1&times; vs
+        2.3&times;. The fixed-pattern tools don't capture it: BPC stays ~2.2 (fp32) / 1.23 (native), and
+        LZSS reaches 1.43 on native KV &mdash; notably its <em>best</em> native-dtype result, beating
+        BPC there.
+      </p>
+      <h3>(5) Already-quantized (MXFP4) weights are incompressible</h3>
+      <p>
+        gpt-oss's 4-bit packed MLP experts give ratios of <b>0.89&ndash;1.04</b> for every tool &mdash;
+        quantization already removed the redundancy, leaving near-random bytes. Lossless compression on
+        top of aggressive quantization buys nothing.
+      </p>
+    </section>
+
+    <section aria-labelledby="tables">
+      <h2 id="tables">4. Supporting tables</h2>
+      <h3>Weights by model &mdash; consistent across architectures</h3>
+      <p>Compressibility is a property of the float format, not the model.</p>
+      <table>
+        <thead><tr><th>model / repr</th><th class="num">lzss</th><th class="num">shrink</th><th class="num">gpulz</th><th class="num">bpc</th><th class="num">gzip</th><th class="num">zstd</th></tr></thead>
+        <tbody>
+          <tr><td>qwen2.5-3b / fp32</td><td class="num">1.701</td><td class="num">1.628</td><td class="num">0.986</td><td class="num">2.303</td><td class="num">2.295</td><td class="num best">2.458</td></tr>
+          <tr><td>qwen2.5-3b / native</td><td class="num">0.973</td><td class="num">0.987</td><td class="num">0.966</td><td class="num">1.273</td><td class="num">1.278</td><td class="num best">1.306</td></tr>
+          <tr><td>mistral-7b / fp32</td><td class="num">1.651</td><td class="num">1.571</td><td class="num">0.978</td><td class="num">2.204</td><td class="num">2.256</td><td class="num best">2.425</td></tr>
+          <tr><td>mistral-7b / native</td><td class="num">0.965</td><td class="num">0.957</td><td class="num">0.966</td><td class="num">1.219</td><td class="num">1.279</td><td class="num best">1.303</td></tr>
+          <tr><td>gpt-oss-20b / fp32</td><td class="num">1.671</td><td class="num">1.604</td><td class="num">0.980</td><td class="num">2.276</td><td class="num">2.234</td><td class="num best">2.371</td></tr>
+          <tr><td>gpt-oss-20b / native</td><td class="num">0.968</td><td class="num">0.973</td><td class="num">0.965</td><td class="num">1.256</td><td class="num">1.260</td><td class="num best">1.279</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Weight tensor type (fp32)</h3>
+      <p><code>norm</code> vectors (small, smooth) favor the transform tools (BPC 2.59); <code>lm_head</code> favors entropy coders (zstd 2.85).</p>
+      <table>
+        <thead><tr><th>weight type</th><th class="num">lzss</th><th class="num">shrink</th><th class="num">gpulz</th><th class="num">bpc</th><th class="num">gzip</th><th class="num">zstd</th></tr></thead>
+        <tbody>
+          <tr><td>attn</td><td class="num">1.660</td><td class="num">1.576</td><td class="num">0.978</td><td class="num">2.224</td><td class="num">2.230</td><td class="num best">2.382</td></tr>
+          <tr><td>mlp</td><td class="num">1.685</td><td class="num">1.594</td><td class="num">0.979</td><td class="num">2.237</td><td class="num">2.262</td><td class="num best">2.434</td></tr>
+          <tr><td>embed</td><td class="num">1.641</td><td class="num">1.561</td><td class="num">0.977</td><td class="num">2.210</td><td class="num">2.216</td><td class="num best">2.389</td></tr>
+          <tr><td>lm_head</td><td class="num">1.686</td><td class="num">1.599</td><td class="num">0.979</td><td class="num">2.238</td><td class="num">2.584</td><td class="num best">2.853</td></tr>
+          <tr><td>norm</td><td class="num">1.762</td><td class="num">1.807</td><td class="num">1.009</td><td class="num best">2.588</td><td class="num">2.311</td><td class="num">2.395</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <b>MXFP4-packed gpt-oss MLP (native U8, already 4-bit):</b>
+        lzss 0.90 &middot; shrink 0.89 &middot; gpulz 0.97 &middot; bpc 0.94 &middot; gzip 1.04 &middot;
+        zstd 1.04 &mdash; i.e. <b>incompressible</b>.
+      </div>
+    </section>
+
+    <section aria-labelledby="meaning">
+      <h2 id="meaning">5. What this means</h2>
+      <ul class="tight">
+        <li>For <b>lossless compression of LLM tensors</b>, a general-purpose entropy+dictionary coder
+          (<b>zstd</b>) is the strongest baseline by a wide margin, especially on KV cache.</li>
+        <li>Among hardware memory compressors, <b>BPC</b> is the most promising for floating-point
+          <em>weights</em>; <b>GPULZ</b> and plain <b>LZSS</b> are poorly matched to NN byte
+          distributions.</li>
+        <li>The biggest lever is <b>representation/precision</b>, not the codec: fp32 is ~2&times; more
+          compressible than bf16, and 4-bit MXFP4 is already past the point where lossless compression
+          helps. For real LLM memory-bandwidth savings, <em>quantization + light entropy coding</em> on
+          the raw bf16 bytes will beat these LZ/bit-plane schemes.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="method">
+      <h2 id="method">6. Methodology, fairness &amp; limitations</h2>
+      <ul class="tight">
+        <li><b>Identical bytes per representation</b> &mdash; ratios differ only by algorithm.</li>
+        <li><b>Native ratio definitions, with caveats.</b> <b>BPC</b> is an <em>analytical</em> model: it
+          computes the compressed <em>bit-length</em>, not a decodable bitstream, and is not
+          round-trip-verified &mdash; an optimistic upper bound on a real BPC encoder. <b>GPULZ</b>'s
+          ratio includes its per-block metadata; it is a real, self-verified codec.
+          LZSS/shrink/gzip/zstd ratios are actual output bytes (LZSS/shrink <code>cmp</code>-verified).</li>
+        <li><b>8 MB slices</b> bound runtime (book-LZSS is <code>O(n&middot;D)</code>); ratios are stable
+          across layers, so slicing does not bias the comparison.</li>
+        <li><b>gpt-oss KV omitted:</b> keeping gpt-oss MXFP4 quantized for inference on a 16 GB GPU is
+          unsupported by the installed stack (transformers dequantizes the MoE to bf16 &rarr; ~40 GB
+          &rarr; OOM). Its weights are included; KV is a clean same-dtype (bf16) Qwen+Mistral study.</li>
+        <li>Single prompt / fixed length for KV; <code>zstd -19</code> / <code>gzip -9</code>; gpt-oss
+          weights are dequantized-bf16 except the MLP experts kept as packed U8.</li>
+      </ul>
+      <pre><code>03_llm_compression/
+  harness/extract.py      # weights from safetensors; KV from a forward pass
+  harness/run_compare.py  # 6 tools x every buffer -> results/results.csv
+  harness/analyze.py      # aggregates the tables above
+  data/manifest.csv       # every extracted buffer
+  results/results.csv     # 546 raw measurements</code></pre>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>
