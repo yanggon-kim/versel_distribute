@@ -378,7 +378,74 @@
     </section>
 
     <section aria-labelledby="meaning">
-      <h2 id="meaning">8. What this means</h2>
+      <h2 id="reproduce">8. Reproducing the related-work papers</h2>
+      <p>
+        We re-ran the <b>lossless</b> experiments from three related papers on our own buffers, adding
+        codecs (LZ4, Snappy, bzip2) and representations (INT8, byte-plane split) the main study lacked.
+        Codecs via <code>cramjam</code> (round-trip verified) + real rANS; cramjam's zstd matches our
+        prior CLI numbers. (See the <a href="../04_gzip_zstd/report.html">gzip/zstd</a> page for codec
+        background.)
+      </p>
+      <h3>R1 — codec breadth (cf. arXiv 2404.10896, 2502.15443)</h3>
+      <table>
+        <thead><tr><th>data</th><th class="num">lz4</th><th class="num">snappy</th><th class="num">gzip</th><th class="num">bzip2</th><th class="num">zstd</th><th class="num">ANS(8b)</th></tr></thead>
+        <tbody>
+          <tr><td><b>weights / bf16</b></td><td class="num no">1.008</td><td class="num no">1.004</td><td class="num">1.269</td><td class="num best">1.437</td><td class="num">1.301</td><td class="num">1.285</td></tr>
+          <tr><td><b>KV cache / bf16</b></td><td class="num">1.932</td><td class="num">1.472</td><td class="num">2.381</td><td class="num">2.429</td><td class="num best">2.601</td><td class="num">1.273</td></tr>
+          <tr><td><b>fp32 weights</b></td><td class="num">1.677</td><td class="num">1.415</td><td class="num">2.198</td><td class="num best">2.886</td><td class="num">2.458</td><td class="num">1.950</td></tr>
+          <tr><td><b>MXFP4 MLP (u8)</b></td><td class="num no">0.999</td><td class="num">1.000</td><td class="num">1.036</td><td class="num">1.013</td><td class="num">1.038</td><td class="num">1.043</td></tr>
+        </tbody>
+      </table>
+      <p>
+        <b>Near-exact match to Liguori (2404.10896)</b> on bf16 weights: gzip <b>1.27&times;</b>
+        (paper 1.27), bzip2 <b>1.44&times;</b> (paper 1.45), and 16-bit ANS <b>1.52&times;</b>
+        (paper ~1.5) &mdash; their ANS uses 16-bit bf16 symbols. <b>bzip2's BWT is the best general
+        codec on float weights.</b> LZ4/Snappy &asymp; 1.0&times; on bf16 weights, as in 2502.15443.
+      </p>
+      <h3>R2 — INT8-quantized weights (cf. arXiv 2502.15443)</h3>
+      <table>
+        <thead><tr><th>data</th><th class="num">lz4</th><th class="num">snappy</th><th class="num">gzip</th><th class="num">bzip2</th><th class="num">zstd</th><th class="num">ANS(8b)</th></tr></thead>
+        <tbody>
+          <tr><td><b>INT8 weights</b></td><td class="num no">1.053</td><td class="num no">1.036</td><td class="num">1.252</td><td class="num">1.200</td><td class="num best">1.276</td><td class="num">1.273</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Ordering reproduced &mdash; LZ4/Snappy &asymp; 1.0, entropy coders (zstd/gzip/ANS) tied and
+        ahead &mdash; confirming <b>entropy methods, not LZ, suit weights</b>, and supporting the paper's
+        "pick ANS for speed" (our rANS &asymp; 260 MB/s). Absolute ratio (~1.28&times;) is below their
+        1.49&times; (different model + quant). INT8 is only modestly compressible losslessly:
+        quantization already removed most redundancy.
+      </p>
+      <h3>R3 — byte-plane split &amp; exponent-delta (cf. arXiv 2503.18869)</h3>
+      <table>
+        <thead><tr><th>data / transform</th><th class="num">gzip</th><th class="num">bzip2</th><th class="num">zstd</th><th class="num">ANS(8b)</th></tr></thead>
+        <tbody>
+          <tr><td>weights — none</td><td class="num">1.269</td><td class="num">1.437</td><td class="num">1.301</td><td class="num">1.285</td></tr>
+          <tr><td><b>weights — bytesplit</b></td><td class="num">1.437</td><td class="num">1.433</td><td class="num best">1.490</td><td class="num">1.285</td></tr>
+          <tr><td>KV — none</td><td class="num">2.381</td><td class="num">2.429</td><td class="num">2.601</td><td class="num">1.273</td></tr>
+          <tr><td><b>KV — bytesplit</b></td><td class="num">2.866</td><td class="num">2.604</td><td class="num best">3.308</td><td class="num">1.273</td></tr>
+          <tr><td>KV — bytesplit + expΔ</td><td class="num">2.786</td><td class="num">2.561</td><td class="num">3.144</td><td class="num">1.235</td></tr>
+        </tbody>
+      </table>
+      <div class="law">
+        <b>Byte-plane split is a cheap, large win &mdash; layout matters more than the codec.</b>
+        Disaggregating the structured high byte (sign+exponent) from the near-random low byte lifts
+        zstd on <b>weights 1.30 &rarr; 1.49&times;</b> (paper's bit-plane reached 1.34) and on
+        <b>KV cache 2.60 &rarr; 3.31&times;</b> (paper 1.8&ndash;1.9, peak 2.69) &mdash; reproducing
+        2503.18869's central claim. Our simple per-element exponent-delta slightly hurt (3.31 &rarr;
+        3.14): the full method's <em>cross-token channel grouping</em> needs KV laid out as
+        [tokens&times;channels], which our flattened slice doesn't preserve.
+      </div>
+      <div class="callout">
+        <b>Not reproducible here:</b> the hardware memory controller (SystemVerilog/7 nm) — algorithmic
+        ratios only; the nvcomp GPU library — CPU cramjam gives identical ratios; exact cross-token
+        channel grouping — approximated; and neural next-token <em>text</em> compression (2505.06297) —
+        a different domain, not run.
+      </div>
+    </section>
+
+    <section aria-labelledby="meaning">
+      <h2 id="meaning">9. What this means</h2>
       <ul class="tight">
         <li>For <b>lossless compression of LLM tensors</b>, a general-purpose entropy+dictionary coder
           (<b>zstd</b>) is the strongest baseline by a wide margin, especially on KV cache.</li>
@@ -398,7 +465,7 @@
     </section>
 
     <section aria-labelledby="method">
-      <h2 id="method">9. Methodology, fairness &amp; limitations</h2>
+      <h2 id="method">10. Methodology, fairness &amp; limitations</h2>
       <ul class="tight">
         <li><b>Identical bytes per representation</b> &mdash; ratios differ only by algorithm.</li>
         <li><b>Native ratio definitions, with caveats.</b> <b>BPC</b> is an <em>analytical</em> model: it
