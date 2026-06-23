@@ -249,8 +249,72 @@
       </div>
     </section>
 
+    <section aria-labelledby="granularity">
+      <h2 id="granularity">5. Compression granularity</h2>
+      <p>
+        "Granularity" splits into three axes that explain the ratio differences: the <b>independent
+        block</b> (unit compressed/decoded in isolation &mdash; the unit of parallelism and random
+        access), the <b>reference window</b> (how far back a match may point &mdash; bounds the ratio),
+        and the <b>atomic symbol</b> (byte vs 4-byte word). gzip and zstd carry the largest windows,
+        which is the main reason they win here.
+      </p>
+      <table>
+        <thead><tr><th>Algorithm</th><th>Independent block</th><th>Reference / match window</th><th>Atomic symbol</th></tr></thead>
+        <tbody>
+          <tr><td><b>LZSS</b> (book)</td><td>none — single stream</td><td>4 KB sliding dictionary</td><td>1 byte</td></tr>
+          <tr><td><b>shrink</b> (LZSS)</td><td>none — single stream</td><td>2 KB sliding dictionary</td><td>1 byte</td></tr>
+          <tr><td><b>GPULZ</b></td><td>2 KB block (independent, 1 per GPU thread-block)</td><td>128 B (32 elems, intra-block)</td><td>4-byte <code>uint32</code></td></tr>
+          <tr><td><b>BPC</b></td><td>128 B line (independent)</td><td>none — transform within the line only</td><td>32-bit word</td></tr>
+          <tr><td><b>gzip</b> (DEFLATE)</td><td>variable DEFLATE block, shares window</td><td><b>32 KB</b> sliding window</td><td>1 byte</td></tr>
+          <tr><td><b>zstd</b> (−19)</td><td>block &le; 128 KB within a frame</td><td><b>~8 MB</b> window (level-dependent)</td><td>1 byte</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        Only <b>BPC (128 B)</b> and <b>GPULZ (2 KB)</b> have truly <b>independent</b> blocks &mdash; that
+        is what lets them run in hardware / on the GPU with random access, but it also caps their reach
+        (BPC has <em>no</em> cross-line window at all). The software coders trade that for large
+        byte-granular windows: gzip 32 KB, zstd up to ~8 MB &mdash; directly explaining their higher
+        ratios on LLM tensors. The 4-byte symbol of GPULZ/BPC, meanwhile, only matches at 4-byte
+        alignment, which is hostile to byte-packed bf16. (BPC's line size and zstd's window are
+        configurable; the rest are fixed in these builds.)
+      </div>
+    </section>
+
+    <section aria-labelledby="complexity">
+      <h2 id="complexity">6. Compression compute complexity</h2>
+      <p>
+        Compression cost is asymmetric: nearly all of it is the <b>match search</b> (decompression is a
+        cheap linear pass for every tool). Measured below is single-thread wall-clock on one 8 MiB fp32
+        buffer; for gzip/zstd it is strongly <b>level-dependent</b> (the ratio tables used the heavy
+        levels gzip −9 / zstd −19).
+      </p>
+      <table>
+        <thead><tr><th>Algorithm</th><th>Compress complexity</th><th>What makes it heavy</th><th class="num">8 MiB time</th><th class="num">throughput</th></tr></thead>
+        <tbody>
+          <tr><td><b>BPC</b></td><td>O(n), tiny constant</td><td>no search — deltas + bit-plane transpose + 1 scan</td><td class="num">0.06 s</td><td class="num">133 MB/s</td></tr>
+          <tr><td><b>zstd −3</b> (default)</td><td>~O(n)</td><td>fast hash match + FSE/Huffman</td><td class="num">0.04 s</td><td class="num">200 MB/s</td></tr>
+          <tr><td><b>GPULZ</b></td><td>O(n·W) total, ÷ GPU threads</td><td>brute-force match per position (parallel)</td><td class="num">0.13 s*</td><td class="num">GPU</td></tr>
+          <tr><td><b>shrink</b></td><td>~O(n·log W) avg</td><td>sliding-window longest-match search</td><td class="num">0.77 s</td><td class="num">10 MB/s</td></tr>
+          <tr><td><b>LZSS</b> (book)</td><td>~O(n·log W); O(n·W·L) worst</td><td>binary-tree dictionary search per byte</td><td class="num">1.48 s</td><td class="num">5.4 MB/s</td></tr>
+          <tr><td><b>zstd −19</b></td><td>O(n·log W), large const</td><td><b>optimal parsing</b> (DP) + entropy coding</td><td class="num">1.96 s</td><td class="num">4.1 MB/s</td></tr>
+          <tr><td><b>gzip −9</b></td><td>O(n·deep chain)</td><td>exhaustive hash-chain + lazy + Huffman</td><td class="num">3.19 s</td><td class="num">2.5 MB/s</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:0.85rem;color:var(--muted);margin-top:-4px;">
+        *GPULZ time includes GPU init + compress + decompress + verify in one run, and is parallel —
+        its <em>total</em> operation count is high (brute-force matching) but hidden by thousands of threads.
+      </p>
+      <div class="law">
+        <b>Heaviest compress: gzip −9, then zstd −19</b> &mdash; the cost is the exhaustive/optimal
+        match search plus entropy coding (the high levels we used for the ratio tables). <b>GPULZ</b> does
+        the most raw operations but parallelizes them on the GPU. <b>BPC is lightest by far</b> &mdash; no
+        search at all, which is why it is implementable in hardware (~11-cycle latency, ~68K gates). See
+        the <a href="../04_gzip_zstd/report.html">gzip &amp; zstd explainer</a> for why the search dominates.
+      </div>
+    </section>
+
     <section aria-labelledby="meaning">
-      <h2 id="meaning">5. What this means</h2>
+      <h2 id="meaning">7. What this means</h2>
       <ul class="tight">
         <li>For <b>lossless compression of LLM tensors</b>, a general-purpose entropy+dictionary coder
           (<b>zstd</b>) is the strongest baseline by a wide margin, especially on KV cache.</li>
@@ -265,7 +329,7 @@
     </section>
 
     <section aria-labelledby="method">
-      <h2 id="method">6. Methodology, fairness &amp; limitations</h2>
+      <h2 id="method">8. Methodology, fairness &amp; limitations</h2>
       <ul class="tight">
         <li><b>Identical bytes per representation</b> &mdash; ratios differ only by algorithm.</li>
         <li><b>Native ratio definitions, with caveats.</b> <b>BPC</b> is an <em>analytical</em> model: it

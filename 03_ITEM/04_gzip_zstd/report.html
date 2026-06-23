@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>gzip (DEFLATE) and zstd: Match-Finding + Entropy Coding</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f0f3f7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px 64px;
+      line-height: 1.6;
+    }
+
+    main { width: min(100%, 920px); margin: 0 auto; }
+
+    a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 0.95rem; }
+    a.back:hover { text-decoration: underline; }
+
+    header { margin: 14px 0 28px; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0; }
+    header p.lede { margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+
+    .meta {
+      margin-top: 16px; padding: 12px 16px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 0.9rem; color: var(--muted);
+    }
+    .meta b { color: var(--text); }
+
+    .question {
+      margin: 24px 0; padding: 18px 22px; background: #eef5ff;
+      border: 1px solid #cfe0ff; border-left: 4px solid var(--accent); border-radius: 8px;
+      font-size: 1.05rem;
+    }
+
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.06);
+      padding: 24px; margin-top: 22px;
+    }
+    section h2 { margin: 0 0 14px; font-size: 1.35rem; }
+    section h3 { margin: 20px 0 8px; font-size: 1.08rem; }
+    p { margin: 0 0 12px; }
+
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 700; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+
+    .yes { color: var(--good); font-weight: 700; }
+    .no { color: var(--bad); font-weight: 700; }
+    .mid { color: var(--warn); font-weight: 700; }
+
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5;
+      margin: 8px 0 14px; color: #0b1f3a;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    pre .kw { color: #cf222e; }
+    pre .cm { color: #647083; font-style: italic; }
+
+    .callout {
+      margin: 10px 0 4px; padding: 14px 18px; background: #fffaf0;
+      border: 1px solid #f0e2c0; border-left: 4px solid var(--warn); border-radius: 8px;
+    }
+    .law {
+      margin: 8px 0; padding: 16px 20px; background: #f6fff8;
+      border: 1px solid #c7ecd0; border-left: 4px solid var(--good); border-radius: 8px;
+      font-size: 1.02rem;
+    }
+
+    section a { color: var(--accent); text-decoration: none; }
+    section a:hover, section a:focus-visible { text-decoration: underline; }
+
+    ul.tight { margin: 0 0 12px; padding-left: 20px; }
+    ul.tight li { margin-bottom: 6px; }
+    ol.tight { margin: 0 0 12px; padding-left: 22px; }
+    ol.tight li { margin-bottom: 6px; }
+
+    .diagram {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; overflow-x: auto; margin: 8px 0 14px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45; white-space: pre; color: #0b1f3a;
+    }
+
+    .footer {
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .footer p { margin: 0 0 4px; }
+    .footer a { color: var(--accent); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="../../index.html">&larr; Back to Report Archive</a>
+
+    <header>
+      <h1>gzip (DEFLATE) &amp; zstd</h1>
+      <p class="lede">
+        The two everyday lossless compressors, from concept to pseudocode: both follow the same
+        <b>match-finding &rarr; entropy-coding</b> shape, but differ in <em>how hard they search</em> and
+        <em>how tightly they entropy-code</em> &mdash; which is exactly why zstd is the stronger, more
+        flexible successor to gzip.
+      </p>
+      <div class="meta">
+        <b>gzip:</b> DEFLATE = LZ77/LZSS + Huffman (RFC 1951, 1996) &nbsp;&middot;&nbsp;
+        <b>zstd:</b> LZ + FSE (tANS) / Huffman + optimal parsing (Facebook, RFC 8878) &nbsp;&middot;&nbsp;
+        <b>Companion to:</b> <a href="../03_llm_compression/report.html">the LLM weight/KV compression study</a>.
+      </div>
+    </header>
+
+    <div class="question">
+      <b>The shared blueprint.</b> Almost every general-purpose lossless compressor is two stages:
+      <b>(1) a dictionary / LZ stage</b> that replaces repeated byte sequences with short
+      <code>(offset, length)</code> back-references (turning data into a stream of <em>literals</em> and
+      <em>matches</em>), then <b>(2) an entropy-coding stage</b> that packs those symbols into close to
+      their information-theoretic minimum number of bits. gzip and zstd are two points on this design
+      space &mdash; zstd just searches harder and codes tighter.
+    </div>
+
+    <section aria-labelledby="stage">
+      <h2 id="stage">1. The two-stage pipeline</h2>
+      <div class="diagram">  raw bytes ──▶  [ LZ match-finder ]  ──▶  literals + (offset,length) matches  ──▶  [ entropy coder ]  ──▶  bitstream
+                  find repeats in a              "the next 5 bytes already                pack each symbol near
+                  sliding window                  appeared 1200 bytes ago"                 -log2(probability) bits</div>
+      <ul class="tight">
+        <li><b>Stage 1 (LZ)</b> removes <em>repetition</em> (a phrase seen before becomes a pointer).
+          This is the same LZ77/LZSS idea covered in the
+          <a href="../01_comp_also/report.html">LZSS report</a>; the cost lives in <em>searching</em>
+          the window for the longest match.</li>
+        <li><b>Stage 2 (entropy)</b> removes <em>statistical bias</em> (frequent symbols get short codes).
+          gzip uses <b>Huffman</b>; zstd uses <b>FSE</b> (a tANS variant) plus Huffman.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="gzip">
+      <h2 id="gzip">2. gzip = DEFLATE</h2>
+      <p>
+        <code>gzip</code> wraps the <b>DEFLATE</b> algorithm (a header/CRC around a DEFLATE stream).
+        DEFLATE = LZ77 with a <b>32&nbsp;KB sliding window</b>, matches of length 3&ndash;258, then
+        <b>Huffman coding</b> of the result.
+      </p>
+      <h3>Match finding: hash chains + lazy matching</h3>
+      <p>
+        DEFLATE hashes the next 3 bytes to index a chain of earlier positions with the same hash, then
+        walks that chain looking for the longest match. The <b>compression level (1&ndash;9)</b> sets how
+        deep it walks &mdash; higher levels follow longer chains and use <em>lazy matching</em> (defer a
+        match if starting one byte later is longer), trading speed for ratio.
+      </p>
+      <pre><code><span class="kw">function</span> deflate(input):                       <span class="cm"># 32 KB window, min match 3, max 258</span>
+    head = {}                                     <span class="cm"># hash(3 bytes) -> most recent position</span>
+    pos = 0
+    <span class="kw">while</span> pos &lt; len(input):
+        h = hash3(input[pos:pos+3])
+        cand = head[h]                            <span class="cm"># walk the chain of prior same-hash positions</span>
+        best_len, best_dist = 0, 0
+        depth = chain_limit(level)                <span class="cm"># level 1 = shallow, level 9 = deep</span>
+        <span class="kw">while</span> cand != NONE <span class="kw">and</span> depth-- &gt; 0 <span class="kw">and</span> pos-cand &lt;= 32768:
+            L = match_len(input, cand, pos)       <span class="cm"># compare bytes, cap at 258</span>
+            <span class="kw">if</span> L &gt; best_len: best_len, best_dist = L, pos-cand
+            cand = prev[cand]
+        <span class="kw">if</span> best_len &gt;= 3:
+            <span class="kw">if</span> lazy <span class="kw">and</span> match_at(pos+1) longer: emit_literal(input[pos]); pos += 1; continue
+            emit_match(best_len, best_dist); advance pos by best_len
+        <span class="kw">else</span>:
+            emit_literal(input[pos]); pos += 1
+        insert pos into hash chain
+
+    <span class="cm"># Stage 2: Huffman-code the emitted symbols, per DEFLATE block</span>
+    <span class="kw">for</span> each block:
+        build two Huffman trees: {literals + lengths} and {distances}
+        pick block type: stored (incompressible) | fixed Huffman | dynamic Huffman
+        write trees (if dynamic) + the coded symbols</code></pre>
+      <p>
+        DEFLATE emits a sequence of <b>blocks</b>, each independently typed: <b>stored</b> (raw, for
+        incompressible data &mdash; this is why DEFLATE never inflates much), <b>fixed Huffman</b> (a
+        canned tree, no tree to transmit), or <b>dynamic Huffman</b> (an optimal per-block tree, sent in
+        the header). The LZ window of 32&nbsp;KB spans across blocks.
+      </p>
+    </section>
+
+    <section aria-labelledby="zstd">
+      <h2 id="zstd">3. zstd = bigger window + FSE + optimal parsing</h2>
+      <p>
+        <b>Zstandard</b> keeps the same two-stage shape but upgrades every part. It is
+        <em>Pareto-better</em> than gzip: faster at low levels and much higher ratio at high levels.
+      </p>
+      <h3>What zstd changes</h3>
+      <ul class="tight">
+        <li><b>Much larger, configurable window</b> (<code>windowLog</code>) &mdash; from ~256&nbsp;KB up
+          to gigabytes; ~8&nbsp;MB at level 19 vs gzip's fixed 32&nbsp;KB. Longer-range repeats become
+          compressible. Data is carried in <b>blocks &le; 128&nbsp;KB</b> grouped into a <b>frame</b>.</li>
+        <li><b>Tiered match finders by level:</b> <code>fast</code> (one hash) &rarr; <code>dfast</code>
+          (double hash) &rarr; <code>greedy/lazy/lazy2</code> (hash chains) &rarr;
+          <code>btlazy2/btopt/btultra</code> (<b>binary tree + optimal parse</b>). Higher levels search
+          dramatically harder.</li>
+        <li><b>FSE (Finite State Entropy)</b>, a fast <b>tANS</b> implementation, codes the
+          <em>sequences</em> (literal-lengths, match-lengths, offsets). Unlike Huffman's whole-bit codes,
+          tANS approaches the entropy limit with <em>fractional</em> bits per symbol. <b>Literals</b> are
+          Huffman-coded.</li>
+        <li><b>Repeat-offset codes</b> (a small cache of recent offsets) cheaply encode structured,
+          strided data; and an optional <b>trained dictionary</b> primes the window for many tiny inputs.</li>
+      </ul>
+      <h3>The compute-heavy part: optimal parsing (high levels)</h3>
+      <p>
+        Greedy "take the longest match now" is not optimal &mdash; a shorter match now can enable a much
+        better one next. High zstd levels instead compute the <b>minimum-cost parse</b> of a window using
+        estimated bit-costs of each candidate, via dynamic programming, then re-estimate costs and repeat.
+        This is where the time at <code>-19</code> goes.
+      </p>
+      <pre><code><span class="kw">function</span> zstd_compress(input, level):
+    <span class="kw">for</span> each block (&le; 128 KB) in input:
+        <span class="kw">if</span> level is low:
+            seqs = greedy_or_lazy_match(block, window)        <span class="cm"># hash / double-hash / chains</span>
+        <span class="kw">else</span>:                                                <span class="cm"># btopt / btultra</span>
+            costs[i] = estimated_bits_to_encode(symbol stats) <span class="cm"># initial price table</span>
+            <span class="kw">repeat</span> a few times:
+                <span class="cm"># DP: cheapest way to reach each position using literal or any match</span>
+                <span class="kw">for</span> i in 0..len(block):
+                    price[i+1] = min(price[i] + lit_cost(block[i]),
+                                     min over matches m at i of price[i] + match_cost(m))
+                seqs = backtrace(price)                       <span class="cm"># optimal literal/match parse</span>
+                recompute costs from the chosen seqs          <span class="cm"># prices converge</span>
+        <span class="cm"># Stage 2: entropy-code this block</span>
+        huffman_encode(literals)
+        FSE_encode(literal_lengths); FSE_encode(match_lengths); FSE_encode(offsets)
+        emit block (raw | RLE | compressed, whichever is smaller)</code></pre>
+    </section>
+
+    <section aria-labelledby="compare">
+      <h2 id="compare">4. Side by side</h2>
+      <table>
+        <thead><tr><th>Aspect</th><th>gzip / DEFLATE</th><th>zstd</th></tr></thead>
+        <tbody>
+          <tr><td>LZ window</td><td>32 KB (fixed)</td><td>~256 KB&ndash;GBs (configurable; ~8 MB @ −19)</td></tr>
+          <tr><td>Block size</td><td>variable DEFLATE blocks</td><td>&le; 128 KB, grouped into frames</td></tr>
+          <tr><td>Match finder</td><td>hash chains + lazy</td><td>tiered: hash &rarr; chains &rarr; binary-tree optimal parse</td></tr>
+          <tr><td>Entropy coder</td><td>Huffman (whole-bit codes)</td><td>FSE/tANS (fractional bits) + Huffman literals</td></tr>
+          <tr><td>Extras</td><td>&mdash;</td><td>repeat-offsets, trained dictionaries, checksums</td></tr>
+          <tr><td>Levels</td><td>1&ndash;9</td><td>1&ndash;19 (−22 ultra); negative "fast" levels</td></tr>
+          <tr><td>Decompression</td><td>fast, O(n)</td><td>very fast, O(n) (often faster than gzip)</td></tr>
+        </tbody>
+      </table>
+      <div class="law">
+        <b>Why zstd usually wins.</b> A bigger window finds longer-range repeats; tANS gets closer to the
+        entropy limit than Huffman's whole-bit codes; optimal parsing picks a better match sequence; and
+        repeat-offsets/dictionaries exploit structure gzip can't. Yet at low levels zstd is also
+        <em>faster</em> than gzip &mdash; it dominates the speed/ratio trade-off.
+      </div>
+    </section>
+
+    <section aria-labelledby="decode">
+      <h2 id="decode">5. Decompression is cheap for both</h2>
+      <p>
+        Both are <b>asymmetric</b>: all the effort is in compression's match <em>search</em>. Decoding is
+        a linear pass &mdash; entropy-decode the symbols, then copy literals through and copy matches from
+        the already-decoded output (the window). No search, so decompression speed barely depends on the
+        compression level used. This is why "compress once, decompress many" (software/package
+        distribution, web assets, model checkpoints) suits both.
+      </p>
+    </section>
+
+    <section aria-labelledby="llm">
+      <h2 id="llm">6. How they did on LLM data</h2>
+      <p>
+        In the <a href="../03_llm_compression/report.html">LLM weight/KV-cache study</a>, these two
+        general-purpose coders were the <b>strongest of all tools tested</b> &mdash; their large windows
+        and entropy stages capture structure that the fixed-pattern memory compressors (BPC, GPULZ) and
+        the small-window byte LZSS miss. zstd&nbsp;−19 reached <b>~2.4&times;</b> on fp32 weights and
+        <b>~4.5&times;</b> on fp32 KV cache, edging gzip&nbsp;−9 throughout &mdash; at the cost of being
+        the most compute-heavy on the compress side (optimal parsing). See that report for the full
+        granularity, ratio, and compute-complexity tables.
+      </p>
+    </section>
+
+    <div class="footer">
+      <p>author : yang-gon kim</p>
+      <p>email : yanggon@g.ucla.edu</p>
+      <p>github : <a href="https://github.com/yanggon-kim/versel_distribute">https://github.com/yanggon-kim/versel_distribute</a></p>
+    </div>
+  </main>
+</body>
+</html>
