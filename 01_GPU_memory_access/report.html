@@ -44,6 +44,13 @@ ul{margin:8px 0;padding-left:20px}li{margin:4px 0}
 .hist .bc{font-size:8.5px;fill:var(--text);text-anchor:middle}
 .hist .bx{font-size:8px;fill:var(--muted);text-anchor:middle}
 .hist .axis{stroke:var(--line);stroke-width:1}
+.linechart{width:100%;height:auto;display:block;background:var(--card);border:1px solid var(--line);border-radius:8px;margin:10px 0}
+.linechart .axis{stroke:var(--muted);stroke-width:1.2}
+.linechart .grid{stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
+.linechart .ylab{font-size:9px;fill:var(--muted);text-anchor:end}
+.linechart .xlab{font-size:10px;fill:var(--muted);text-anchor:middle}
+.linechart .axtitle{font-size:10.5px;fill:var(--muted);text-anchor:middle}
+.linechart .leg{font-size:10.5px;fill:var(--text)}
 .nodata{color:#ff8aa0;font-size:.8rem;text-align:center;padding:8px}
 .meta{font-size:.74rem;color:var(--muted);margin-top:7px}
 .gt{display:block;margin-top:3px}.gt b.ok{color:var(--kv)}.gt b.no{color:#ffcf6b}
@@ -106,6 +113,8 @@ fine at default budget. The footprint view needs enough density that intra-tenso
 introspection; framework-internal per-layer KV tensors are only partially named, so the KV
 “ground-truth tensor count” undercounts and won’t equal the run count even when the measurement is
 correct (see the ✓/≠ tags).</li>
+<li><b>The vLLM traces above are single-sequence</b> — PagedAttention's <i>most contiguous</i> case.
+Real multi-tenant serving fragments KV far more; this is measured and quantified in §5.</li>
 <li><b>Two quantized-weight cells are imperfect</b> (documented, never silently dropped): vLLM+int4
 (bitsandbytes) relocates its packed weights after our range capture → a true gap; PyTorch+MXFP4 experts
 stage through shared memory → only the dense projections are visible.</li>
@@ -149,6 +158,35 @@ consequences of how those stacks physically place/consume weights, confirmed by 
 (bf16 ~1.5&nbsp;KB, MXFP4 ~69&nbsp;KB, int4 ~1&nbsp;MB streams) that live inside a handful of large
 contiguous tensors; KV is streamed — monolithic under PyTorch, paged-but-contiguous under vLLM. The
 access/footprint split holds on every architecture and precision tested.</div>
+</section>
+
+<section class="box" id="concurrency">
+<h2>5 · Concurrency &amp; fragmentation — what real serving does to the KV pool</h2>
+<p>The histograms above trace a <b>single</b> sequence, which is PagedAttention's <i>best</i> case:
+one stream is handed contiguous blocks, so its KV looks almost monolithic. Real serving runs many
+sequences at once. Here we re-trace vLLM KV (<code>reshape_and_cache</code>) while issuing N distinct
+concurrent requests with staggered lengths (defeating prefix caching and churning the pool), sweeping
+N = 1 → 128. The y-axis is the <b>median KV access run size</b> (T=256 B); lower = more fragmented.</p>
+<svg viewBox="0 0 660 340" class="linechart"><line x1="58" y1="298" x2="492" y2="298" class="axis"/><line x1="58" y1="18" x2="58" y2="298" class="axis"/><line x1="58" y1="245.9" x2="492" y2="245.9" class="grid"/><text x="52" y="248.9" class="ylab">4KB</text><line x1="58" y1="205.7" x2="492" y2="205.7" class="grid"/><text x="52" y="208.7" class="ylab">16KB</text><line x1="58" y1="165.5" x2="492" y2="165.5" class="grid"/><text x="52" y="168.5" class="ylab">64KB</text><line x1="58" y1="125.2" x2="492" y2="125.2" class="grid"/><text x="52" y="128.2" class="ylab">256KB</text><line x1="58" y1="85.0" x2="492" y2="85.0" class="grid"/><text x="52" y="88.0" class="ylab">1MB</text><text x="58.0" y="313.0" class="xlab">1</text><text x="244.0" y="313.0" class="xlab">8</text><text x="368.0" y="313.0" class="xlab">32</text><text x="430.0" y="313.0" class="xlab">64</text><text x="492.0" y="313.0" class="xlab">128</text><text x="275.0" y="335" class="axtitle">concurrent sequences (log)</text><polyline points="58.0,113.5 244.0,238.1 368.0,266.3 492.0,274.7" fill="none" stroke="#4f8cff" stroke-width="2.2"/><circle cx="58.0" cy="113.5" r="3.1" fill="#4f8cff"/><circle cx="244.0" cy="238.1" r="3.1" fill="#4f8cff"/><circle cx="368.0" cy="266.3" r="3.1" fill="#4f8cff"/><circle cx="492.0" cy="274.7" r="3.1" fill="#4f8cff"/><line x1="506" y1="28" x2="524" y2="28" stroke="#4f8cff" stroke-width="2.2"/><circle cx="515" cy="28" r="3.1" fill="#4f8cff"/><text x="530" y="31.5" class="leg">Qwen2.5-1.5B</text><polyline points="58.0,53.1 244.0,274.7 368.0,266.3 492.0,259.7" fill="none" stroke="#22b07d" stroke-width="2.2"/><circle cx="58.0" cy="53.1" r="3.1" fill="#22b07d"/><circle cx="244.0" cy="274.7" r="3.1" fill="#22b07d"/><circle cx="368.0" cy="266.3" r="3.1" fill="#22b07d"/><circle cx="492.0" cy="259.7" r="3.1" fill="#22b07d"/><line x1="506" y1="47" x2="524" y2="47" stroke="#22b07d" stroke-width="2.2"/><circle cx="515" cy="47" r="3.1" fill="#22b07d"/><text x="530" y="50.5" class="leg">SmolLM2-1.7B</text><polyline points="58.0,113.5 244.0,238.1 368.0,266.3" fill="none" stroke="#e8913a" stroke-width="2.2"/><circle cx="58.0" cy="113.5" r="3.1" fill="#e8913a"/><circle cx="244.0" cy="238.1" r="3.1" fill="#e8913a"/><circle cx="368.0" cy="266.3" r="3.1" fill="#e8913a"/><line x1="506" y1="66" x2="524" y2="66" stroke="#e8913a" stroke-width="2.2"/><circle cx="515" cy="66" r="3.1" fill="#e8913a"/><text x="530" y="69.5" class="leg">Qwen2.5-3B</text><polyline points="58.0,41.3 244.0,274.7 368.0,274.7 430.0,266.3" fill="none" stroke="#b07ad6" stroke-width="2.2"/><circle cx="58.0" cy="41.3" r="3.1" fill="#b07ad6"/><circle cx="244.0" cy="274.7" r="3.1" fill="#b07ad6"/><circle cx="368.0" cy="274.7" r="3.1" fill="#b07ad6"/><circle cx="430.0" cy="266.3" r="3.1" fill="#b07ad6"/><line x1="506" y1="85" x2="524" y2="85" stroke="#b07ad6" stroke-width="2.2"/><circle cx="515" cy="85" r="3.1" fill="#b07ad6"/><text x="530" y="88.5" class="leg">Phi-3.5-mini (3.8B)</text><polyline points="58.0,93.3 244.0,246.0 368.0,234.2 492.0,249.9" fill="none" stroke="#e0556a" stroke-width="2.2"/><circle cx="58.0" cy="93.3" r="3.1" fill="#e0556a"/><circle cx="244.0" cy="246.0" r="3.1" fill="#e0556a"/><circle cx="368.0" cy="234.2" r="3.1" fill="#e0556a"/><circle cx="492.0" cy="249.9" r="3.1" fill="#e0556a"/><line x1="506" y1="104" x2="524" y2="104" stroke="#e0556a" stroke-width="2.2"/><circle cx="515" cy="104" r="3.1" fill="#e0556a"/><text x="530" y="107.5" class="leg">Mistral-7B</text><polyline points="58.0,88.9" fill="none" stroke="#3ac0c0" stroke-width="2.2"/><circle cx="58.0" cy="88.9" r="3.1" fill="#3ac0c0"/><line x1="506" y1="123" x2="524" y2="123" stroke="#3ac0c0" stroke-width="2.2"/><circle cx="515" cy="123" r="3.1" fill="#3ac0c0"/><text x="530" y="126.5" class="leg">GPT-OSS-20B</text></svg><table><thead><tr><th>model</th><th>1 sequence</th><th>concurrent</th><th>fold</th><th>curve (median KV access run)</th></tr></thead><tbody><tr><td>Qwen2.5-1.5B</td><td>384.0KB (1 seq)</td><td>1.5KB (c128)</td><td><b>258×</b></td><td>c1=384.0KB  c8=5.2KB  c32=2.0KB  c128=1.5KB</td></tr><tr><td>SmolLM2-1.7B</td><td>3.0MB (1 seq)</td><td>2.5KB (c128)</td><td><b>1236×</b></td><td>c1=3.0MB  c8=1.5KB  c32=2.0KB  c128=2.5KB</td></tr><tr><td>Qwen2.5-3B</td><td>384.0KB (1 seq)</td><td>2.0KB (c32)</td><td><b>193×</b></td><td>c1=384.0KB  c8=5.2KB  c32=2.0KB</td></tr><tr><td>Phi-3.5-mini (3.8B)</td><td>4.5MB (1 seq)</td><td>2.0KB (c64)</td><td><b>2320×</b></td><td>c1=4.5MB  c8=1.5KB  c32=1.5KB  c64=2.0KB</td></tr><tr><td>Mistral-7B</td><td>770.0KB (1 seq)</td><td>3.5KB (c128)</td><td><b>221×</b></td><td>c1=770.0KB  c8=4.0KB  c32=6.0KB  c128=3.5KB</td></tr><tr><td>GPT-OSS-20B <span class="b chk">cap c1</span></td><td>896KB (1 seq)</td><td>896KB (c1)</td><td><b>1×</b></td><td>c1=896KB</td></tr></tbody></table>
+<p class="an"><b>How &amp; why.</b> With N sequences decoding together, vLLM's block manager interleaves
+their blocks in the shared pool, so any one stream's KV is scattered across the pool. The median
+contiguous access run collapses from <b>hundreds of KB–MB (1 seq)</b> to a <b>~1.5–6 KB block-slice
+floor</b> — a <b>200×–2300×</b> reduction on every model tested. The big drop happens by just
+<b>~8 concurrent sequences</b>; past that it drifts around the floor (a single sequence already spans
+many blocks — 256 tokens ÷ 16-token blocks ≈ 16 blocks — so N sequences produce thousands of
+block-scale fragments, e.g. Qwen-1.5B at c128 = ~21,800 runs of 1.5 KB). The floor differs slightly by
+model because it is set by the per-block contiguous slice (head count × head dim × dtype). Crucially
+the <b>footprint stays compact</b> — those thousands of slices still pack into a small number of
+MB-scale pool regions at coarse tolerance — so paging fragments the <i>access pattern</i> while
+keeping memory nearly fully utilized: exactly PagedAttention's design tradeoff, in one measurement.</p>
+<p class="an"><b>GPT-OSS-20B is memory-capped, not exempt.</b> At ~13 GB the model leaves only ~1.8 GB
+of KV pool on a 16 GB card, so even 8 concurrent sequences OOM under NVBit — we can only show its
+single-sequence point. On a larger GPU it would fragment like the rest. Qwen2.5-3B's c128 point was
+also OOM-killed (its curve stops at c32).</p>
+<div class="callout"><b>Resolves the §2 caveat.</b> The single-sequence numbers in §3 are an
+<i>upper bound</i> on vLLM KV contiguity. Under realistic concurrency the KV access stream fragments
+200×–2300× to near-block granularity — so in production, vLLM's KV is far <i>less</i> contiguous than
+the §3 histograms suggest, while PyTorch's monolithic cache is unaffected (it isn't paged).</div>
 </section>
 
 <footer>Generated from live NVBit traces (<code>contig_runs.py</code> → <code>run_size_histograms.json</code>,
