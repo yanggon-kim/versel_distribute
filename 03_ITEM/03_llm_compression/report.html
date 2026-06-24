@@ -360,8 +360,48 @@
       </p>
     </section>
 
+    <section aria-labelledby="gpu">
+      <h2 id="gpu">9. CPU vs GPU codecs (nvCOMP)</h2>
+      <p>
+        The headline study uses CPU codecs (cramjam max levels) + a CPU rANS. NVIDIA's
+        <b>nvCOMP</b> runs the same codec <em>families</em> on the GPU &mdash; the path the related
+        paper (arXiv 2502.15443) used. We ran nvCOMP LZ4 / Snappy / GDeflate / zstd / ANS on all 215
+        buffers (round-trip verified). Native-dtype geomean ratio (CPU = cramjam-max / rANS; GPU =
+        nvCOMP) and GPU throughput (geomean over buffers &ge; 1 MiB):
+      </p>
+      <div class="scroll"><table>
+        <thead><tr><th>family</th><th class="num">CPU wt</th><th class="num">GPU wt</th><th class="num">CPU KV</th><th class="num">GPU KV</th><th class="num">GPU enc</th><th class="num">GPU dec</th></tr></thead>
+        <tbody>
+        <tr><td><b>LZ4</b></td><td class="num">1.005</td><td class="num">1.001</td><td class="num">1.745</td><td class="num">1.609</td><td class="num">1258</td><td class="num">6072</td></tr>
+<tr><td><b>Snappy</b></td><td class="num">1.002</td><td class="num">0.995</td><td class="num">1.417</td><td class="num">1.441</td><td class="num">1615</td><td class="num">13853</td></tr>
+<tr><td><b>GDeflate</b></td><td class="num">1.249</td><td class="num">1.247</td><td class="num">2.115</td><td class="num">1.785</td><td class="num">848</td><td class="num">3127</td></tr>
+<tr><td><b>zstd</b></td><td class="num">1.280</td><td class="num">1.262</td><td class="num">2.282</td><td class="num">2.039</td><td class="num">755</td><td class="num">1687</td></tr>
+<tr><td><b>ANS</b></td><td class="num">1.271</td><td class="num">1.164</td><td class="num">1.244</td><td class="num">1.172</td><td class="num">30861</td><td class="num">55522</td></tr>
+        </tbody>
+      </table></div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-top:-4px;">
+        wt/KV = native-dtype weight/KV ratio (×); enc/dec = GPU MB/s. GDeflate is compared to CPU
+        gzip-9; ANS (nvCOMP) to our CPU order-0 rANS.
+      </p>
+      <div class="law">
+        <b>GPU codecs trade a little ratio for 100&ndash;1000&times; throughput.</b> On weights the
+        ratios nearly match the CPU (GPU zstd 1.26 vs CPU 1.28; GPU GDeflate 1.25 ≈ CPU gzip 1.25) &mdash;
+        weights are entropy-bound, so the window doesn't matter. On <b>KV cache the GPU gives up more</b>
+        (GPU zstd 2.04 vs CPU 2.28 native; 2.77 vs 3.75 fp32), because nvCOMP uses smaller blocks/windows
+        for parallelism and KV's gains come from long-range repetition. Meanwhile throughput is the point:
+        <b>GPU ANS ≈ 31 GB/s encode / 56 GB/s decode</b>, and GPU zstd ~0.75 GB/s encode is ~180&times;
+        faster than CPU <code>zstd&nbsp;-19</code> (~4 MB/s).
+      </p>
+      <p>
+        <b>Cross-check:</b> nvCOMP's GPU <b>ANS</b> (1.16 wt / 1.17 KV native) tracks our CPU order-0
+        <b>rANS</b> (1.27 / 1.24) &mdash; same entropy family, GPU slightly lower from block-wise tables.
+        Takeaway: for a deployment, nvCOMP ANS/zstd give near-CPU ratios at GPU speed; for the absolute
+        best ratio, the CPU max-level coders (bzip2/xz, §2) still win, especially on KV cache.
+      </p>
+    </section>
+
     <section aria-labelledby="verify">
-      <h2 id="verify">9. Verification — does it reproduce the earlier study?</h2>
+      <h2 id="verify">10. Verification — does it reproduce the earlier study?</h2>
       <p>Restricting the new data to the original 3 models (Qwen2.5-3B, Mistral-7B, gpt-oss-20b),
         native dtype, reproduces the prior numbers within ~1%:</p>
       <table>
@@ -383,7 +423,7 @@
     </section>
 
     <section aria-labelledby="conclusions">
-      <h2 id="conclusions">10. Conclusions</h2>
+      <h2 id="conclusions">11. Conclusions</h2>
       <ul class="tight">
         <li><b>Weights → entropy-bound.</b> Dictionary LZ finds nothing (≈1.0&times;); all gain is
           entropy/transform coding (~1.25&ndash;1.5&times; on bf16). Best lossless: <b>bzip2</b> (BWT
@@ -400,7 +440,7 @@
     </section>
 
     <section aria-labelledby="method">
-      <h2 id="method">11. Methodology &amp; limitations</h2>
+      <h2 id="method">12. Methodology &amp; limitations</h2>
       <ul class="tight">
         <li><b>Verified:</b> 1720 round-trip-verified codec
           runs (lzss/shrink/gzip/zstd/bzip2/xz/brotli + rANS); 0 anomalies. BPC is analytic
