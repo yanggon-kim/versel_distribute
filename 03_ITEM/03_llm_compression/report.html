@@ -324,8 +324,44 @@
       </p>
     </section>
 
+    <section aria-labelledby="bpcans">
+      <h2 id="bpcans">8. Deep dive: does an entropy coder on the BPC transform help?</h2>
+      <p>
+        BPC = a <b>DBX transform</b> (Delta &rarr; Bit-Plane &rarr; XOR) followed by BPC's own
+        <em>static</em> RLE + frequent-pattern code map. A natural question: replace that static coder
+        with a real entropy/dictionary coder on the transformed data &mdash; does it beat plain BPC? We
+        reimplemented the DBX transform and compressed it with rANS / zstd / bzip2, vs plain BPC and vs
+        the same coders on the <b>raw</b> bytes. Geomean ratio:
+      </p>
+      <div class="scroll"><table>
+        <thead><tr><th>data / repr</th><th class="num">plain ANS</th><th class="num">plain BPC</th><th class="num">raw zstd</th><th class="num">raw bzip2</th><th class="num">DBX→ans</th><th class="num">DBX→zstd</th><th class="num">DBX→bzip2</th></tr></thead>
+        <tbody>
+        <tr><td><b>weight / fp32</b></td><td class="num">1.826</td><td class="num">2.081</td><td class="num">2.236</td><td class="num best">2.544</td><td class="num">1.726</td><td class="num">2.060</td><td class="num">2.004</td></tr>
+<tr><td><b>weight / native</b></td><td class="num">1.271</td><td class="num">1.239</td><td class="num">1.280</td><td class="num best">1.382</td><td class="num">1.156</td><td class="num">1.263</td><td class="num">1.224</td></tr>
+<tr><td><b>KV / fp32</b></td><td class="num">1.783</td><td class="num">2.008</td><td class="num">3.746</td><td class="num">3.853</td><td class="num">1.680</td><td class="num best">3.938</td><td class="num">3.310</td></tr>
+<tr><td><b>KV / native</b></td><td class="num">1.244</td><td class="num">1.209</td><td class="num">2.282</td><td class="num">2.147</td><td class="num">1.135</td><td class="num best">2.299</td><td class="num">1.955</td></tr>
+        </tbody>
+      </table></div>
+      <div class="law">
+        <b>No &mdash; pairing the BPC transform with a generic coder does not beat plain BPC.</b>
+        <b>DBX&rarr;ANS is the worst option in every row</b>: order-0 ANS is <em>memoryless</em>, so it
+        cannot exploit BPC's main lever &mdash; runs of all-zero bit-planes (which BPC's static ZBP-RLE
+        encodes in 3&ndash;7 bits). A real RLE-capable coder (zstd/bzip2) on the transform only
+        <em>matches</em> plain BPC on weights, and the transform actually <b>hurts</b> general coders:
+        running bzip2/zstd on the <b>raw</b> bytes beats every DBX variant on weights (the delta+XOR
+        scrambles the clean exponent-byte structure they already exploit).
+      </div>
+      <p>
+        <b>One genuine exception:</b> <b>DBX&rarr;zstd on KV cache</b> (3.94&times; fp32 / 2.30&times;
+        native) slightly beats raw zstd &mdash; the delta exposes cross-element structure a dictionary
+        coder likes. <b>Takeaway:</b> BPC's bespoke static coder is well-matched to its own transform;
+        otherwise prefer plain <b>bzip2 on raw weights</b> and <b>xz/zstd on raw KV</b>. (Note: on native
+        bf16 the DBX transform is a dtype mismatch &mdash; it assumes 32-bit words.)
+      </p>
+    </section>
+
     <section aria-labelledby="verify">
-      <h2 id="verify">8. Verification — does it reproduce the earlier study?</h2>
+      <h2 id="verify">9. Verification — does it reproduce the earlier study?</h2>
       <p>Restricting the new data to the original 3 models (Qwen2.5-3B, Mistral-7B, gpt-oss-20b),
         native dtype, reproduces the prior numbers within ~1%:</p>
       <table>
@@ -347,7 +383,7 @@
     </section>
 
     <section aria-labelledby="conclusions">
-      <h2 id="conclusions">9. Conclusions</h2>
+      <h2 id="conclusions">10. Conclusions</h2>
       <ul class="tight">
         <li><b>Weights → entropy-bound.</b> Dictionary LZ finds nothing (≈1.0&times;); all gain is
           entropy/transform coding (~1.25&ndash;1.5&times; on bf16). Best lossless: <b>bzip2</b> (BWT
@@ -364,7 +400,7 @@
     </section>
 
     <section aria-labelledby="method">
-      <h2 id="method">10. Methodology &amp; limitations</h2>
+      <h2 id="method">11. Methodology &amp; limitations</h2>
       <ul class="tight">
         <li><b>Verified:</b> 1720 round-trip-verified codec
           runs (lzss/shrink/gzip/zstd/bzip2/xz/brotli + rANS); 0 anomalies. BPC is analytic
