@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V4 Sparse Attention — Part II: Predicting the Selected KV Set</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  h4{font-size:.96rem;margin:16px 0 6px;color:#33415c;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  tr.hi td{background:#e7f5ec;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .gloss{border:1px dashed var(--border);border-radius:8px;background:#fbfcff;padding:10px 14px;margin:10px 0;font-size:.92rem;}
+  .gloss b{color:var(--accent);}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  .pgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:10px 0;}
+  .pc{border:1px solid var(--border);border-radius:8px;background:#fbfcff;padding:12px 14px;}
+  .pc b{display:block;margin-bottom:3px;}
+  .pc span{font-size:.86rem;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#problem">1 · The prediction problem</a>
+    <a href="#preds">2 · The predictors</a>
+    <a href="#metric">3 · How we score them</a>
+    <a href="#results">4 · Results</a>
+    <a href="#learned">5 · Our learned predictor</a>
+    <a href="#design">6 · Design implications</a>
+    <a href="#future">7 · Future directions</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V4 Sparse Attention — Part&nbsp;II</h1>
+      <p class="sub">Given that the selected KV set is predictable (<a href="../00_part1_characterization/report.html">Part&nbsp;I</a>), <b>how well can we actually predict it?</b> We compare classic cache policies and a small learned model, scored by how much of the next selection a fixed memory budget would contain.</p>
+      <div class="tags">
+        <span class="tag">9 predictors + oracle</span>
+        <span class="tag live">held-out evaluation</span>
+        <span class="tag">Recall@B, B = 256…2048</span>
+        <span class="tag">learned ranker</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">§</span>Overview</h2>
+      <p class="lead">A memory system that keeps a small "hot set" of KV entries in fast memory needs a <b>predictor</b>: which entries will the next token select? Part&nbsp;I showed the answer is mostly "the recently-selected ones." Here we turn that into concrete policies and measure them.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">LRU</div><div class="l">simple recency policy — the best cheap baseline</div></div>
+        <div class="kpi"><div class="v">89.5%</div><div class="l">of next selection captured by 1024 recent entries (13% of pool) at 30K</div></div>
+        <div class="kpi"><div class="v">recency ≫ frequency</div><div class="l">how-recent matters far more than how-often</div></div>
+        <div class="kpi"><div class="v">learned &gt; all</div><div class="l">a 7-feature model wins at every budget — by a little</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="problem">
+      <h2><span class="num">§1</span>The prediction problem</h2>
+      <p class="lead">Before the model reveals which 512 entries it will select for the next token, propose a candidate set of size <b>B</b>; we then check how much of the real selection you got right.</p>
+      <p>The size <b>B</b> is the <b>memory budget</b> — how many entries you're willing to keep "hot" in fast memory (HBM). A predictor uses only what it has seen so far (past selections) — no peeking at the future. We score it with <b>Recall@B</b>:</p>
+      <div class="gloss"><b>Recall@B</b> = (how many of the next selection's 512 entries are in your size-B candidate set) ÷ 512. Recall@512 of 0.73 means: with a 512-entry hot set, 73% of what the model actually wanted was already there; the other 27% would be a slow-tier miss.</div>
+      <div class="fig">
+        <svg viewBox="0 0 760 130" role="img" aria-label="prediction and recall">
+          <g font-size="12" fill="#172033">
+            <text x="10" y="20" font-weight="700">history of past selections</text>
+            <g fill="#eaf2ff" stroke="#1f6feb">
+              <rect x="14" y="34" width="44" height="26" rx="4"/><rect x="64" y="34" width="44" height="26" rx="4"/>
+              <rect x="114" y="34" width="44" height="26" rx="4"/>
+            </g>
+            <text x="36" y="51" text-anchor="middle" font-size="10">S(t-3)</text>
+            <text x="86" y="51" text-anchor="middle" font-size="10">S(t-2)</text>
+            <text x="136" y="51" text-anchor="middle" font-size="10">S(t-1)</text>
+            <path d="M160 47 L210 47" stroke="#9aa6b8" stroke-width="1.4" marker-end="url(#a)"/>
+            <rect x="212" y="30" width="120" height="34" rx="6" fill="#fff7e6" stroke="#b54708"/>
+            <text x="272" y="51" text-anchor="middle" font-weight="700" fill="#b54708">predictor → C (size B)</text>
+            <path d="M334 47 L384 47" stroke="#9aa6b8" stroke-width="1.4" marker-end="url(#a)"/>
+            <rect x="386" y="30" width="120" height="34" rx="6" fill="#e7f5ec" stroke="#1a7f37"/>
+            <text x="446" y="51" text-anchor="middle" font-weight="700" fill="#1a7f37">actual S(t)</text>
+            <text x="540" y="40" font-size="12" fill="#172033" font-weight="700">Recall@B</text>
+            <text x="540" y="58" font-size="11.5" fill="#647083">= |C ∩ S(t)| / |S(t)|</text>
+            <text x="14" y="100" font-size="12" fill="#647083">Bigger B → higher recall but more fast-memory used. The art is high recall at small B.</text>
+          </g>
+          <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#9aa6b8"/></marker></defs>
+        </svg>
+      </div>
+    </section>
+
+    <section class="card" id="preds">
+      <h2><span class="num">§2</span>The predictors, explained simply</h2>
+      <p class="lead">All are <b>online policies</b>: they watch the stream of selections and rank candidate entries. We take the top-B of that ranking as the prediction.</p>
+      <div class="pgrid">
+        <div class="pc"><b>previous-set</b><span>Just reuse the last token's selection. Cheap, but can't exceed 512 entries.</span></div>
+        <div class="pc"><b>history-union (W)</b><span>The union of the last W selections. Bigger W = bigger, higher-coverage set.</span></div>
+        <div class="pc"><b>LRU (recency)</b><span>Rank entries by how recently they were selected; keep the most-recent B. Classic cache policy.</span></div>
+        <div class="pc"><b>LFU (frequency)</b><span>Rank by how often each entry has been selected; keep the most-frequent B.</span></div>
+        <div class="pc"><b>LFU-aging</b><span>Frequency, but old hits decay — blends "often" with "lately."</span></div>
+        <div class="pc"><b>recency-frequency</b><span>A weighted mix of recency and frequency scores.</span></div>
+        <div class="pc"><b>neighbor</b><span>Previous set plus index-adjacent entries (in case neighbors get picked).</span></div>
+        <div class="pc"><b>cross-layer</b><span>Predict a layer's selection from the previous layer's selection at the same token.</span></div>
+        <div class="pc"><b>oracle</b><span>Cheats by looking at the answer — an upper bound, not a real policy.</span></div>
+      </div>
+      <div class="fig">
+        <svg viewBox="0 0 760 150" role="img" aria-label="LRU vs LFU">
+          <g font-size="12" fill="#172033">
+            <text x="20" y="20" font-weight="700" fill="#1f6feb">LRU keeps what was selected most recently</text>
+            <g>
+              <rect x="20" y="34" width="30" height="22" fill="#cfe0ff" stroke="#1f6feb"/>
+              <rect x="54" y="34" width="30" height="22" fill="#9ec2ff" stroke="#1f6feb"/>
+              <rect x="88" y="34" width="30" height="22" fill="#5b9bff" stroke="#1f6feb"/>
+              <rect x="122" y="34" width="30" height="22" fill="#1f6feb" stroke="#1f6feb"/>
+              <text x="20" y="72" font-size="10" fill="#647083">older</text>
+              <text x="135" y="72" font-size="10" fill="#1f6feb" font-weight="700">newest = highest rank</text>
+            </g>
+            <text x="420" y="20" font-weight="700" fill="#8250df">LFU keeps what was selected most often</text>
+            <g>
+              <rect x="420" y="50" width="26" height="6" fill="#8250df"/><text x="452" y="56" font-size="10" fill="#647083">entry A ×2</text>
+              <rect x="420" y="38" width="78" height="6" fill="#8250df"/><text x="504" y="44" font-size="10" fill="#647083">entry B ×6 (kept)</text>
+              <rect x="420" y="62" width="40" height="6" fill="#8250df"/><text x="466" y="68" font-size="10" fill="#647083">entry C ×3</text>
+            </g>
+            <text x="20" y="110" font-size="12" fill="#647083">Result (next section): because selections are driven by <b>recency</b>, LRU beats LFU — frequency alone</text>
+            <text x="20" y="128" font-size="12" fill="#647083">keeps stale popular entries that the model has moved on from.</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <section class="card" id="metric">
+      <h2><span class="num">§3</span>How we score them (fairly)</h2>
+      <ul class="notes">
+        <li><b>Data:</b> the recorded selection sequences from Part&nbsp;I (correct vLLM model, contexts 4K/8K/30K, ~191 decode steps each, synthetic + natural).</li>
+        <li><b>Budgets B:</b> 256, 512, 768, 1024, 1536, 2048 (top-k is 512, so B=512 is "1×").</li>
+        <li><b>No leakage:</b> the heuristic policies use only each sequence's own past; the learned model is trained on some requests and evaluated on <i>held-out</i> ones.</li>
+        <li><b>Oracle</b> is reported as the ceiling: Recall@512 = 1.0 by construction.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="results">
+      <h2><span class="num">§4</span>Results</h2>
+      <p class="lead">At the hardest setting (30K context, ~7,700 candidates, 15× sparse), here is Recall@B for the main policies:</p>
+      <table>
+        <thead><tr><th>predictor</th><th class="num">B=256</th><th class="num">B=512</th><th class="num">B=768</th><th class="num">B=1024</th><th class="num">B=1536</th><th class="num">B=2048</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">previous-set</td><td class="num">0.378</td><td class="num">0.733</td><td class="num">0.733</td><td class="num">0.733</td><td class="num">0.733</td><td class="num">0.733</td></tr>
+          <tr><td class="rowlabel">history-union W=16</td><td class="num">0.410</td><td class="num">0.733</td><td class="num">0.848</td><td class="num">0.893</td><td class="num">0.925</td><td class="num">0.930</td></tr>
+          <tr class="hi"><td class="rowlabel">LRU (recency)</td><td class="num">0.410</td><td class="num">0.733</td><td class="num">0.848</td><td class="num">0.895</td><td class="num">0.935</td><td class="num">0.951</td></tr>
+          <tr><td class="rowlabel">LFU (frequency)</td><td class="num">0.392</td><td class="num">0.606</td><td class="num">0.731</td><td class="num">0.809</td><td class="num">0.891</td><td class="num">0.930</td></tr>
+          <tr><td class="rowlabel">LFU-aging</td><td class="num">0.436</td><td class="num">0.702</td><td class="num">0.826</td><td class="num">0.885</td><td class="num">0.934</td><td class="num">0.952</td></tr>
+          <tr><td class="rowlabel">cross-layer</td><td class="num">0.197</td><td class="num">0.364</td><td class="num">0.364</td><td class="num">0.364</td><td class="num">0.364</td><td class="num">0.364</td></tr>
+          <tr><td class="rowlabel">oracle (ceiling)</td><td class="num">0.500</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/recall_vs_B_30k.png" alt="Recall vs budget B at 30K context">
+        <figcaption class="cap">Recall@B at 30K (held-out). LRU and the learned model climb steadily with budget; previous-set plateaus at 512; pure frequency lags.</figcaption>
+      </figure>
+      <h4>What the numbers say</h4>
+      <ul class="notes">
+        <li><b>LRU is the best simple policy at a budget.</b> Keeping the 1,024 most-recent entries (just 13% of ~7,700) covers <b>89.5%</b> of the next selection; 2,048 → <b>95%</b>.</li>
+        <li><b>Recency ≫ frequency.</b> Pure LFU is the weakest history method at B=512 (0.61 vs LRU 0.73) — popularity goes stale.</li>
+        <li><b>previous-set / history-union plateau</b> once B exceeds their fixed size; a <i>ranked</i> policy (LRU) keeps improving as you grant more budget.</li>
+        <li><b>Cross-layer signal is real but weak</b> (0.36 @512) — a useful auxiliary feature, not a primary predictor.</li>
+      </ul>
+      <p>Shorter contexts are easier: at 8K, LRU reaches 0.96 @1024 and 0.99 @2048; at 4K, 0.99 @1024.</p>
+      <div class="two" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <figure><img src="assets/recall_vs_B_8k.png" alt="Recall vs B at 8K"><figcaption class="cap">8K context — higher recall at every budget (less sparse).</figcaption></figure>
+        <figure><img src="assets/recall_vs_B_nat_prose8k.png" alt="Recall vs B on natural prose 8K"><figcaption class="cap">Natural prose 8K — real text behaves like the synthetic case.</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="card" id="learned">
+      <h2><span class="num">§5</span>Our proposal: a small learned predictor</h2>
+      <p class="lead">Can a model that <i>combines</i> these signals do better than any single heuristic? We trained a lightweight logistic-regression ranker on 7 per-candidate features, on a train split of requests, and evaluated it on <b>held-out</b> requests.</p>
+      <h4>Features (per candidate entry, from history only)</h4>
+      <p><code class="k">in_prev</code>, <code class="k">recency</code>, <code class="k">freq</code>, <code class="k">freq_w8</code>, <code class="k">age</code>, <code class="k">streak</code>, <code class="k">decay</code>. The learned weights are interpretable and echo the whole study:</p>
+      <table>
+        <thead><tr><th>feature</th><th class="num">weight</th><th>reading</th></tr></thead>
+        <tbody>
+          <tr class="hi"><td class="rowlabel">recency</td><td class="num">+3.80</td><td>how recently selected — by far the strongest signal</td></tr>
+          <tr><td class="rowlabel">streak</td><td class="num">+1.65</td><td>currently on a run of selections</td></tr>
+          <tr><td class="rowlabel">decay</td><td class="num">+1.58</td><td>recency-weighted frequency</td></tr>
+          <tr><td class="rowlabel">freq</td><td class="num">+1.09</td><td>raw frequency — weakly positive</td></tr>
+          <tr><td class="rowlabel">freq_w8</td><td class="num">+0.08</td><td>windowed frequency — negligible</td></tr>
+          <tr><td class="rowlabel">age</td><td class="num">−0.06</td><td>older first-seen — slightly negative</td></tr>
+        </tbody>
+      </table>
+      <h4>Learned vs best heuristic (held-out)</h4>
+      <table>
+        <thead><tr><th>context</th><th class="num">B</th><th class="num">best heuristic</th><th class="num">learned</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">30K</td><td class="num">256</td><td class="num">0.435 (lfu-aging)</td><td class="num">0.447</td></tr>
+          <tr><td class="rowlabel">30K</td><td class="num">512</td><td class="num">0.732 (lru)</td><td class="num">0.741</td></tr>
+          <tr><td class="rowlabel">30K</td><td class="num">1024</td><td class="num">0.894 (lru)</td><td class="num">0.898</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">512</td><td class="num">0.802 (lru)</td><td class="num">0.809</td></tr>
+          <tr><td class="rowlabel">4K</td><td class="num">512</td><td class="num">0.861 (lru)</td><td class="num">0.865</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><b>Honest result.</b> The learned ranker is the <b>best at every budget on held-out data</b>, and the margin is largest at <b>tight budgets</b> (where ranking quality matters most). But the gain over plain LRU is <b>modest</b> (~0.5–1.5 points). LRU is a strong, almost-free baseline; the learned model earns its keep mainly when HBM is scarce or a recall target must be squeezed. The dominance of the <code class="k">recency</code> weight explains why: with index-only features, a learned model is essentially "a well-tuned recency policy."</div>
+    </section>
+
+    <section class="card" id="design">
+      <h2><span class="num">§6</span>Design implications</h2>
+      <ul class="notes">
+        <li><b>Predictor of choice:</b> recency-ranked residency (LRU) for the bulk; switch to LFU-aging when the per-layer budget drops below ~1× top-k.</li>
+        <li><b>Budget → coverage knob:</b> at 30K, recall rises 0.73 → 0.90 → 0.95 as B goes 512 → 1024 → 2048 — a clean dial to hit a target hit-rate.</li>
+        <li><b>Per-layer budgets:</b> Part&nbsp;I showed layers differ in stability; pair stable layers with smaller budgets, churny layers with more headroom.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="future">
+      <h2><span class="num">§7</span>Future directions</h2>
+      <ul class="notes">
+        <li><b>Capture the indexer's scores</b>, not just which entries it picked. The model computes a relevance score for every candidate before taking the top-512; those scores would unlock score-based predictors (score-decay, rank-velocity, boundary-aware) and likely give a learned model real headroom beyond LRU.</li>
+        <li><b>Build the HBM–LPDDR simulator</b> to convert Recall@B (an upper bound) into <b>TimelyRecall</b> — accounting for prefetch deadlines, link bandwidth, and eviction, i.e. whether the right entry actually arrives in time.</li>
+        <li><b>Longer context (128K–256K)</b> on multi-GPU (H200) to see how prediction holds at extreme sparsity.</li>
+        <li><b>More sparse-attention models</b> — DeepSeek-V3.2, GLM-DSA, MiniMax-MSA, NSA/SSA/MoBA — and <b>cross-model transfer</b> (train a predictor on one model, test on another).</li>
+        <li><b>Stronger learned models</b> (gradient-boosted trees, GRU/tiny-transformer over recent selection events), especially once scores are available as features.</li>
+      </ul>
+      <div class="callout win"><b>Bottom line.</b> Sparse-attention KV selection is predictable enough that a small, recency-driven hot set covers the large majority of future accesses — strong evidence that a tiered HBM↔LPDDR KV memory with a simple predictor is viable. The remaining wins are in timing-aware evaluation and richer (score-based) prediction.</div>
+    </section>
+
+    <div class="footer">
+      <p>Yang-gon Kim · <a href="https://github.com/yanggon-kim/sparse_attn">code &amp; raw data on GitHub</a> · <a href="../00_part1_characterization/report.html">&larr; Part I</a> · <a href="../../index.html">Report Archive</a></p>
+    </div>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>

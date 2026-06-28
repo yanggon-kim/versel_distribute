@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V4 Sparse Attention — Part I: What It Is &amp; How Predictable Its KV Selection Is</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+    --csa:#1f6feb; --csa-bg:#eaf2ff; --hca:#8250df; --hca-bg:#f3eefe; --local:#647083; --local-bg:#eef1f5;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  h4{font-size:.96rem;margin:16px 0 6px;color:#33415c;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:880px){.two{grid-template-columns:1fr;} .wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .gloss{border:1px dashed var(--border);border-radius:8px;background:#fbfcff;padding:10px 14px;margin:10px 0;font-size:.92rem;}
+  .gloss b{color:var(--accent);}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;margin:6px 2px 2px;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .sw{width:13px;height:13px;border-radius:3px;display:inline-block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#problem">1 · Why long context is hard</a>
+    <a href="#what">2 · What is V4 sparse attention</a>
+    <a href="#hypo">3 · The hypothesis</a>
+    <a href="#method">4 · How we measured</a>
+    <a href="#metrics">5 · The metrics, explained</a>
+    <a href="#results">6 · Results &amp; meaning</a>
+    <a href="#robust">7 · Robustness &amp; real text</a>
+    <a href="#takeaways">8 · Takeaways</a>
+    <a href="#limits">9 · Limitations</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V4 Sparse Attention — Part&nbsp;I</h1>
+      <p class="sub">What the model's "sparse attention" actually is, and a measurement of how <b>predictable</b> its per-token KV selection is. Written for readers new to these concepts, with diagrams throughout.</p>
+      <div class="tags">
+        <span class="tag">DeepSeek-V4-Flash (284B/13B MoE)</span>
+        <span class="tag live">measured on NVIDIA B200 via vLLM</span>
+        <span class="tag">60 synthetic + 22 natural prompts</span>
+        <span class="tag">context 4K–30K</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">§</span>Overview in one minute</h2>
+      <p class="lead">Modern long-context LLMs don't look at every past word for every new word — that would be far too slow. Instead they <b>select a small subset</b> of the past to attend to, per token, per layer. This report explains that selection mechanism in DeepSeek-V4, then measures a simple but consequential question: <b>is the selected set predictable from recent history?</b> If yes, a memory system could keep just the likely-needed entries in fast memory.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">512</div><div class="l">KV entries the model picks per token, per CSA layer (top-k)</div></div>
+        <div class="kpi"><div class="v">73–86%</div><div class="l">of the next token's pick is already in the <i>previous</i> token's pick</div></div>
+        <div class="kpi"><div class="v">≥93%</div><div class="l">covered by a small recent-history set, even at 15× sparsity</div></div>
+        <div class="kpi"><div class="v">σ ≤ 0.013</div><div class="l">spread across prompts — the effect is stable, not luck</div></div>
+      </div>
+      <div class="callout"><b>Plain-language thesis.</b> The set of past entries a token attends to is mostly the same as what the last few tokens attended to. That "recency" makes the selection cheap to anticipate — the foundation for the prediction methods in <a href="../01_part2_prediction/report.html">Part&nbsp;II</a>.</div>
+    </section>
+
+    <section class="card" id="problem">
+      <h2><span class="num">§1</span>Why long context is expensive</h2>
+      <p class="lead">To understand the trick, first see the problem it solves.</p>
+      <p>A transformer answers each new word by <b>"attending"</b> to earlier words: it compares the new word's <i>query</i> against every earlier word's <i>key</i>, and mixes their <i>values</i> by how well they match. With <code class="k">N</code> words in the context, each new word compares against up to <code class="k">N</code> earlier ones — so processing a whole document of length <code class="k">N</code> costs on the order of <code class="k">N&times;N</code> comparisons. Double the document, quadruple the work.</p>
+      <p>The model also must <b>store</b> a key and value for every past token — the so-called <b>KV cache</b>. At a million tokens this is enormous, and just <i>reading</i> it from GPU memory each step becomes the bottleneck.</p>
+      <div class="fig">
+        <svg viewBox="0 0 760 210" role="img" aria-label="Dense versus sparse attention">
+          <text x="10" y="20" font-size="14" font-weight="700" fill="#172033">Dense attention: every query looks at every key (N×N)</text>
+          <!-- dense grid -->
+          <g transform="translate(20,34)">
+            <rect x="0" y="0" width="150" height="150" fill="#eaf2ff" stroke="#d8dee8"/>
+            <g fill="#1f6feb">
+              <!-- fill grid dots -->
+              <g>
+                <!-- generate 8x8 dots -->
+              </g>
+            </g>
+            <!-- dots via lines for compactness -->
+            <g stroke="#9ec2ff" stroke-width="14">
+              <line x1="9" y1="9" x2="141" y2="9"/><line x1="9" y1="28" x2="141" y2="28"/>
+              <line x1="9" y1="47" x2="141" y2="47"/><line x1="9" y1="66" x2="141" y2="66"/>
+              <line x1="9" y1="85" x2="141" y2="85"/><line x1="9" y1="104" x2="141" y2="104"/>
+              <line x1="9" y1="123" x2="141" y2="123"/><line x1="9" y1="141" x2="141" y2="141"/>
+            </g>
+            <text x="0" y="172" font-size="11" fill="#647083">keys →</text>
+            <text x="-8" y="-6" font-size="11" fill="#647083">queries ↓</text>
+          </g>
+          <text x="320" y="20" font-size="14" font-weight="700" fill="#172033">Sparse attention: each query looks at a few selected keys</text>
+          <g transform="translate(330,34)">
+            <rect x="0" y="0" width="150" height="150" fill="#fff" stroke="#d8dee8"/>
+            <!-- a few highlighted cells per row -->
+            <g fill="#1a7f37">
+              <rect x="20" y="6" width="14" height="14"/><rect x="96" y="6" width="14" height="14"/>
+              <rect x="40" y="25" width="14" height="14"/><rect x="120" y="25" width="14" height="14"/>
+              <rect x="8" y="44" width="14" height="14"/><rect x="70" y="44" width="14" height="14"/>
+              <rect x="50" y="63" width="14" height="14"/><rect x="110" y="63" width="14" height="14"/>
+              <rect x="24" y="82" width="14" height="14"/><rect x="88" y="82" width="14" height="14"/>
+              <rect x="60" y="101" width="14" height="14"/><rect x="128" y="101" width="14" height="14"/>
+              <rect x="14" y="120" width="14" height="14"/><rect x="78" y="120" width="14" height="14"/>
+              <rect x="44" y="136" width="14" height="14"/><rect x="120" y="136" width="14" height="14"/>
+            </g>
+            <text x="0" y="172" font-size="11" fill="#647083">keys →</text>
+          </g>
+          <g transform="translate(520,60)">
+            <text x="0" y="0" font-size="12.5" fill="#172033" font-weight="700">The cost gap</text>
+            <text x="0" y="22" font-size="12" fill="#647083">Dense: ~N comparisons</text>
+            <text x="0" y="40" font-size="12" fill="#647083">per query → huge at 1M.</text>
+            <text x="0" y="64" font-size="12" fill="#1a7f37" font-weight="700">Sparse: a fixed</text>
+            <text x="0" y="82" font-size="12" fill="#1a7f37" font-weight="700">small budget (e.g. 512)</text>
+            <text x="0" y="100" font-size="12" fill="#647083">per query → scales flat.</text>
+          </g>
+        </svg>
+        <p class="cap">Left: dense attention fills the whole grid. Right: sparse attention keeps only a few cells per row — the model's job is to pick the <i>right</i> few.</p>
+      </div>
+      <div class="callout"><b>Analogy.</b> Reading a 1,000-page book to answer one question, you don't re-read every page for every sentence you write — you jump to the few relevant pages. Sparse attention teaches the model to do the same.</div>
+    </section>
+
+    <section class="card" id="what">
+      <h2><span class="num">§2</span>What DeepSeek-V4 sparse attention is</h2>
+      <p class="lead">DeepSeek-V4 attacks the cost in two ways at once: it <b>compresses</b> the past into fewer entries, then <b>selects</b> only a few of those entries to attend to. (Details from the DeepSeek-V4 technical report.)</p>
+
+      <h3>Step 1 — Compression: squeeze many tokens into one entry</h3>
+      <p>Instead of one KV entry per token, the model learns to <b>summarize a block of tokens into a single "compressed entry."</b> Two compression strengths are used:</p>
+      <ul class="notes">
+        <li><b>CSA — Compressed Sparse Attention:</b> every <code class="k">m = 4</code> tokens become 1 entry (a 4× shrink). Used together with selection (Step 2).</li>
+        <li><b>HCA — Heavily Compressed Attention:</b> every <code class="k">m&prime; = 128</code> tokens become 1 entry (a 128× shrink). So few entries result that the model just attends to all of them (no selection needed).</li>
+      </ul>
+      <div class="fig">
+        <svg viewBox="0 0 760 150" role="img" aria-label="Compression of tokens into entries">
+          <text x="10" y="18" font-size="13" font-weight="700" fill="#172033">Compression (CSA, m = 4): every 4 tokens → 1 learned summary entry</text>
+          <g transform="translate(12,30)">
+            <!-- tokens -->
+            <g fill="#eef1f5" stroke="#cfd6e0">
+              <!-- group 1 -->
+              <rect x="0" y="20" width="22" height="22"/><rect x="24" y="20" width="22" height="22"/>
+              <rect x="48" y="20" width="22" height="22"/><rect x="72" y="20" width="22" height="22"/>
+              <!-- group 2 -->
+              <rect x="120" y="20" width="22" height="22"/><rect x="144" y="20" width="22" height="22"/>
+              <rect x="168" y="20" width="22" height="22"/><rect x="192" y="20" width="22" height="22"/>
+              <!-- group 3 -->
+              <rect x="240" y="20" width="22" height="22"/><rect x="264" y="20" width="22" height="22"/>
+              <rect x="288" y="20" width="22" height="22"/><rect x="312" y="20" width="22" height="22"/>
+            </g>
+            <text x="0" y="58" font-size="10.5" fill="#647083">tokens 0–3</text>
+            <text x="120" y="58" font-size="10.5" fill="#647083">tokens 4–7</text>
+            <text x="240" y="58" font-size="10.5" fill="#647083">tokens 8–11</text>
+            <!-- arrows -->
+            <g stroke="#9aa6b8" fill="none" stroke-width="1.4" marker-end="url(#ar)">
+              <path d="M47 44 L47 72"/><path d="M167 44 L167 72"/><path d="M287 44 L287 72"/>
+            </g>
+            <!-- compressed entries -->
+            <g fill="#eaf2ff" stroke="#1f6feb">
+              <rect x="32" y="74" width="30" height="24" rx="4"/>
+              <rect x="152" y="74" width="30" height="24" rx="4"/>
+              <rect x="272" y="74" width="30" height="24" rx="4"/>
+            </g>
+            <text x="360" y="90" font-size="12" fill="#1f6feb" font-weight="700">… 250K entries for 1M tokens</text>
+          </g>
+          <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#9aa6b8"/></marker></defs>
+        </svg>
+        <p class="cap">A compressed entry is a <i>learned weighted summary</i> of its block — like a one-line digest of a paragraph, keeping what matters.</p>
+      </div>
+
+      <h3>Step 2 — The "lightning indexer": pick the top-512 entries to attend to</h3>
+      <p>For each new token, a small, fast network — the <b>lightning indexer</b> — scores <i>all</i> compressed entries for relevance, then keeps only the <b>top <code class="k">k = 512</code></b>. The expensive attention then runs over just those 512 (plus a small sliding window of the most recent tokens, so local detail is never lost).</p>
+      <div class="fig">
+        <svg viewBox="0 0 760 196" role="img" aria-label="Lightning indexer top-k selection flow">
+          <g font-size="12" fill="#172033">
+            <rect x="10" y="78" width="92" height="40" rx="6" fill="#eef1f5" stroke="#cfd6e0"/>
+            <text x="56" y="103" text-anchor="middle">new token</text>
+            <text x="56" y="62" text-anchor="middle" font-size="10.5" fill="#647083">query</text>
+
+            <path d="M104 98 L150 98" stroke="#9aa6b8" stroke-width="1.4" marker-end="url(#ar2)"/>
+
+            <rect x="152" y="70" width="120" height="56" rx="6" fill="#eaf2ff" stroke="#1f6feb"/>
+            <text x="212" y="92" text-anchor="middle" font-weight="700" fill="#1f6feb">lightning</text>
+            <text x="212" y="108" text-anchor="middle" font-weight="700" fill="#1f6feb">indexer</text>
+            <text x="212" y="140" text-anchor="middle" font-size="10.5" fill="#647083">scores all entries (cheap, FP4, 64 heads)</text>
+
+            <path d="M274 98 L320 98" stroke="#9aa6b8" stroke-width="1.4" marker-end="url(#ar2)"/>
+
+            <!-- scored entries bar -->
+            <g>
+              <text x="372" y="40" text-anchor="middle" font-size="10.5" fill="#647083">relevance score per compressed entry</text>
+              <g>
+                <rect x="324" y="64" width="14" height="20" fill="#cdd7e6"/>
+                <rect x="340" y="54" width="14" height="30" fill="#1a7f37"/>
+                <rect x="356" y="74" width="14" height="10" fill="#cdd7e6"/>
+                <rect x="372" y="50" width="14" height="34" fill="#1a7f37"/>
+                <rect x="388" y="70" width="14" height="14" fill="#cdd7e6"/>
+                <rect x="404" y="58" width="14" height="26" fill="#1a7f37"/>
+                <rect x="420" y="76" width="14" height="8" fill="#cdd7e6"/>
+              </g>
+              <line x1="320" y1="84" x2="440" y2="84" stroke="#647083" stroke-width="1"/>
+            </g>
+
+            <path d="M442 74 L488 74" stroke="#9aa6b8" stroke-width="1.4" marker-end="url(#ar2)"/>
+            <rect x="490" y="52" width="120" height="44" rx="6" fill="#e7f5ec" stroke="#1a7f37"/>
+            <text x="550" y="72" text-anchor="middle" font-weight="700" fill="#1a7f37">keep top-512</text>
+            <text x="550" y="88" text-anchor="middle" font-size="10.5" fill="#1a7f37">= S(layer, token)</text>
+
+            <path d="M550 98 L550 130" stroke="#9aa6b8" stroke-width="1.4" marker-end="url(#ar2)"/>
+            <rect x="470" y="132" width="160" height="40" rx="6" fill="#eaf2ff" stroke="#1f6feb"/>
+            <text x="550" y="156" text-anchor="middle" font-weight="700" fill="#1f6feb">attend over the 512 selected</text>
+          </g>
+          <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#9aa6b8"/></marker></defs>
+        </svg>
+        <p class="cap">The green set on the right — the top-512 selected entries for a given layer <code class="k">l</code> and token <code class="k">t</code> — is what we call <b>S<sub>l,t</sub></b>. This whole study is about S<sub>l,t</sub>.</p>
+      </div>
+
+      <h3>How the 43 layers are arranged</h3>
+      <p>DeepSeek-V4-Flash has 43 transformer layers. They alternate between the two compression types, with a few plain local layers:</p>
+      <div class="fig">
+        <svg viewBox="0 0 760 92" role="img" aria-label="Layer arrangement strip">
+          <g font-size="10">
+            <!-- 43 cells -->
+            <g id="strip"></g>
+          </g>
+          <!-- draw strip with simple pattern: 0,1 local; 2..41 alt CSA/HCA; 42 local -->
+          <g transform="translate(10,26)">
+            <!-- We render 43 rects programmatically-ish by hand in groups -->
+            <g>
+              <rect x="0" y="0" width="15" height="26" fill="#eef1f5" stroke="#cfd6e0"/><rect x="16" y="0" width="15" height="26" fill="#eef1f5" stroke="#cfd6e0"/>
+            </g>
+            <!-- alternating from layer 2 -->
+            <g id="alt"></g>
+            <script type="application/noop"></script>
+          </g>
+          <g transform="translate(10,26)" id="altdraw">
+            <!-- 20 CSA (blue) and 20 HCA (purple) alternating, layers 2..41 -->
+            <!-- positions x = 32 + i*16 -->
+            <g>
+              <rect x="32" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="48" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="64" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="80" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="96" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="112" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="128" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="144" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="160" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="176" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="192" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="208" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="224" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="240" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="256" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="272" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="288" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="304" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="320" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="336" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="352" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="368" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="384" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="400" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="416" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="432" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="448" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="464" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="480" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="496" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="512" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="528" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="544" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="560" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="576" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="592" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="608" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="624" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="640" y="0" width="15" height="26" fill="#eaf2ff" stroke="#1f6feb"/><rect x="656" y="0" width="15" height="26" fill="#f3eefe" stroke="#8250df"/>
+              <rect x="672" y="0" width="15" height="26" fill="#eef1f5" stroke="#cfd6e0"/>
+            </g>
+          </g>
+        </svg>
+        <div class="legend">
+          <span><span class="sw" style="background:#eef1f5;border:1px solid #cfd6e0"></span> local / sliding-window (layers 0,1,42)</span>
+          <span><span class="sw" style="background:#eaf2ff;border:1px solid #1f6feb"></span> CSA — 21 layers, has the indexer (selects top-512)</span>
+          <span><span class="sw" style="background:#f3eefe;border:1px solid #8250df"></span> HCA — 20 layers, attends all (no selection)</span>
+        </div>
+        <p class="cap">Only the <b>CSA layers</b> actually <i>select</i> — those are the layers we instrument and study.</p>
+      </div>
+
+      <h3>Why this is efficient (numbers from the paper)</h3>
+      <p>Compressing then selecting turns the quadratic blow-up into roughly flat per-token cost. The DeepSeek-V4 report puts the savings at a fraction of the previous generation (V3.2) at 1M-token context:</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">~10–27%</div><div class="l">of V3.2's per-token attention FLOPs</div></div>
+        <div class="kpi"><div class="v">~7–10%</div><div class="l">of V3.2's KV-cache size</div></div>
+        <div class="kpi"><div class="v">1,048,576</div><div class="l">supported context length (1M tokens)</div></div>
+      </div>
+      <div class="gloss"><b>S<sub>l,t</sub></b> = the set of compressed KV entries that CSA layer <code class="k">l</code> selects (its top-512) when generating token <code class="k">t</code>. Everything below measures how this set behaves over time.</div>
+    </section>
+
+    <section class="card" id="hypo">
+      <h2><span class="num">§3</span>The hypothesis — and why it matters for hardware</h2>
+      <p class="lead">If the selected set <b>S<sub>l,t</sub></b> changes only slowly from token to token, you don't need <i>all</i> compressed entries in fast memory — only the ones likely to be picked next.</p>
+      <p>GPU memory (HBM) is fast but small and expensive. A larger, slower tier (e.g. LPDDR) could hold the bulk of the KV cache, while a small <b>predicted candidate set</b> is kept "hot" in HBM, fetched ahead of time. The whole approach hinges on one empirical question: <b>how predictable is S<sub>l,t</sub>?</b> That is what Part&nbsp;I answers.</p>
+      <div class="fig">
+        <svg viewBox="0 0 760 150" role="img" aria-label="HBM LPDDR tiering idea">
+          <g font-size="12" fill="#172033">
+            <rect x="20" y="30" width="210" height="92" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+            <text x="125" y="52" text-anchor="middle" font-weight="700" fill="#1a7f37">HBM (fast, small)</text>
+            <text x="125" y="72" text-anchor="middle" font-size="11" fill="#33415c">predicted candidate set</text>
+            <text x="125" y="90" text-anchor="middle" font-size="11" fill="#33415c">(the few likely-needed entries)</text>
+            <text x="125" y="110" text-anchor="middle" font-size="11" fill="#1a7f37" font-weight="700">~1024 entries ≈ 13%</text>
+
+            <rect x="430" y="20" width="300" height="112" rx="8" fill="#eef1f5" stroke="#647083"/>
+            <text x="580" y="44" text-anchor="middle" font-weight="700" fill="#43506a">LPDDR (slow, large)</text>
+            <text x="580" y="66" text-anchor="middle" font-size="11" fill="#647083">the full compressed KV cache</text>
+            <text x="580" y="84" text-anchor="middle" font-size="11" fill="#647083">(thousands of entries)</text>
+
+            <path d="M430 76 C 360 76, 300 76, 232 76" stroke="#1f6feb" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+            <text x="330" y="66" text-anchor="middle" font-size="11" fill="#1f6feb" font-weight="700">prefetch likely entries</text>
+          </g>
+          <defs><marker id="ar3" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 z" fill="#1f6feb"/></marker></defs>
+        </svg>
+        <p class="cap">If prediction works, the green box covers almost every actual selection — so the model rarely has to wait on the slow tier.</p>
+      </div>
+    </section>
+
+    <section class="card" id="method">
+      <h2><span class="num">§4</span>How we measured it</h2>
+      <p class="lead">We ran the real model, recorded exactly which entries it selected, and analyzed the sequences offline.</p>
+      <ul class="notes">
+        <li><b>Correct model, real selections.</b> We run DeepSeek-V4-Flash with <b>vLLM</b> on an NVIDIA B200 and verify it produces correct answers (it retrieves facts buried 16K tokens back). We <i>hook</i> the 21 CSA indexers so that every time a layer selects its top-512, we copy that set out to disk — one row per (layer, token).</li>
+        <li><b>Workloads.</b> Two kinds. <b>Synthetic "needle"</b> prompts (a fact buried in filler at varied positions) give controlled, repeatable cases. <b>Natural</b> prompts (real technical prose and code) test that findings aren't an artifact of synthetic text.</li>
+        <li><b>Contexts &amp; sparsity.</b> 4K, 8K, 16K, 30K tokens. Because top-k is fixed at 512 while candidates grow with context, sparsity ranges from ~2× (4K) to ~15× (30K) — i.e. at 30K the model keeps only ~1 in 15 entries.</li>
+        <li><b>Decoding.</b> Greedy (deterministic), up to ~191 generated tokens per prompt so we can watch the selection evolve over a long sequence.</li>
+      </ul>
+      <div class="callout"><b>Why this is trustworthy.</b> These are the <i>actual</i> selections of a correctly-running production model — not a simulation. The model passing fact-retrieval with the hooks attached confirms the instrumentation doesn't disturb it.</div>
+    </section>
+
+    <section class="card" id="metrics">
+      <h2><span class="num">§5</span>The metrics, explained in plain words</h2>
+      <p class="lead">Every number below is one of these. Each compares the current selection <b>S<sub>t</sub></b> to recent ones.</p>
+      <h4>Previous-set recall</h4>
+      <p>Of the 512 entries the model selects <i>now</i>, what fraction were <b>also</b> in the selection one token ago? "0.73" means 73% of today's picks were already picked last step. Higher = more predictable from the immediate past.</p>
+      <h4>History-union recall @ window W</h4>
+      <p>Take the union of the selections from the last <code class="k">W</code> tokens; what fraction of the current selection does it cover? A bigger window covers more but is a bigger "hot set" to keep in fast memory. We report W = 2, 8, 16.</p>
+      <h4>Candidate-size vs recall</h4>
+      <p>The trade-off curve: if you keep a candidate set of size <code class="k">B</code> in HBM, how much of the next selection does it contain? This is the headline knob for the memory system.</p>
+      <h4>Temporal decay (recall vs lag k)</h4>
+      <p>How similar is today's selection to the one <code class="k">k</code> tokens ago? If it stays high for large <code class="k">k</code>, a multi-step history is useful (you can prefetch with lookahead).</p>
+      <h4>Per-layer Jaccard</h4>
+      <p>The overlap (intersection ÷ union) between consecutive selections, measured separately per layer — reveals which layers are stable and which churn.</p>
+      <h4>Selected-entry lifetime</h4>
+      <p>Once an entry gets selected, for how many consecutive steps does it keep being selected before dropping out?</p>
+    </section>
+
+    <section class="card" id="results">
+      <h2><span class="num">§6</span>Results — and what the numbers mean</h2>
+
+      <h3>Headline: selections are strongly predictable from recent history</h3>
+      <p>Keeping just a recent-history "hot set" covers most of the next selection. At 16K context (~4,100 candidate entries), the previous selection alone covers 73% of the next, and a 16-step history union (~960 entries, 23% of candidates) covers 89%:</p>
+      <table>
+        <thead><tr><th>Candidate set</th><th class="num">size (of ~4,100)</th><th class="num">recall of next selection</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">previous selection</td><td class="num">512 (12.5%)</td><td class="num">0.732</td></tr>
+          <tr><td class="rowlabel">history union, W=2</td><td class="num">632</td><td class="num">0.807</td></tr>
+          <tr><td class="rowlabel">history union, W=8</td><td class="num">882</td><td class="num">0.880</td></tr>
+          <tr><td class="rowlabel">history union, W=16</td><td class="num">961 (23%)</td><td class="num">0.892</td></tr>
+          <tr><td class="rowlabel">oracle (perfect)</td><td class="num">512</td><td class="num">1.000</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/candidate_size_vs_recall_16k.png" alt="Candidate-set size versus recall at 16K context">
+        <figcaption class="cap">Candidate size vs recall (16K, 24 prompts). More hot entries → higher coverage; the curve rises steeply then flattens — diminishing returns past a modest size.</figcaption>
+      </figure>
+      <div class="callout win"><b>What this means.</b> A memory system would <i>not</i> need the whole KV cache in fast memory — a small, recency-based hot set already captures ~90% of what the model will ask for next.</div>
+
+      <h3>How it scales with context (more sparsity = harder, but still strong)</h3>
+      <p>As context grows, the model selects 512 from a larger pool, so single-step prediction gets harder — but a recent-history union stays very effective even at 15× sparsity:</p>
+      <table>
+        <thead><tr><th>Context</th><th class="num">candidates</th><th class="num">sparsity</th><th class="num">prev-recall</th><th class="num">union-8</th><th class="num">union-16</th><th class="num">per-sample σ</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">1,036</td><td class="num">2×</td><td class="num">0.864</td><td class="num">0.972</td><td class="num">0.985</td><td class="num">0.004</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">2,050</td><td class="num">4×</td><td class="num">0.802</td><td class="num">0.944</td><td class="num">0.966</td><td class="num">0.007</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">4,100</td><td class="num">6×</td><td class="num">0.746</td><td class="num">0.884</td><td class="num">0.893</td><td class="num">0.013</td></tr>
+          <tr><td class="rowlabel">30K</td><td class="num">7,692</td><td class="num">15×</td><td class="num">0.733</td><td class="num">0.902</td><td class="num">0.933</td><td class="num">0.011</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Read it this way: even at 30K with 15× sparsity, an 8–16 step history covers <b>≥90%</b> of the next selection.</p>
+      <figure>
+        <img src="assets/candidate_size_vs_recall_30k.png" alt="Candidate-set size versus recall at 30K context">
+        <figcaption class="cap">Candidate size vs recall at 30K (the sparsest case). Even when the model keeps only ~1 in 15 entries, a modest recent-history set still covers the large majority of the next selection.</figcaption>
+      </figure>
+
+      <h3>Temporal decay: selections stay correlated many steps back</h3>
+      <p>Recall of the current selection against the one <code class="k">k</code> steps earlier. It decays gently — so a multi-step lookahead is informative (useful for prefetching ahead of time):</p>
+      <table>
+        <thead><tr><th>lag k →</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">12</th><th class="num">16</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">0.86</td><td class="num">0.84</td><td class="num">0.81</td><td class="num">0.79</td><td class="num">0.77</td><td class="num">0.76</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">0.80</td><td class="num">0.77</td><td class="num">0.73</td><td class="num">0.69</td><td class="num">0.67</td><td class="num">0.65</td></tr>
+          <tr><td class="rowlabel">30K</td><td class="num">0.73</td><td class="num">0.69</td><td class="num">0.64</td><td class="num">0.59</td><td class="num">0.58</td><td class="num">0.56</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Not all layers are equally predictable</h3>
+      <p>Consecutive-selection overlap (Jaccard) varies by layer: most CSA layers sit around 0.55–0.58, a few mid-stack layers churn more (~0.47), and some late layers are very stable (up to 0.83). This argues for <b>per-layer</b> memory budgets rather than one-size-fits-all.</p>
+      <figure>
+        <img src="assets/consecutive_jaccard_by_layer_30k.png" alt="Consecutive-selection Jaccard by CSA layer at 30K">
+        <figcaption class="cap">Per-layer temporal stability (30K). Taller bar = a layer whose selection changes little step-to-step (more predictable).</figcaption>
+      </figure>
+
+      <h3>Selected-entry lifetime</h3>
+      <p>Most selected entries are <b>transient</b> — a typical entry stays selected for a mean of ~3.1 steps (median 1), but a tail persists up to ~13 steps. So a good policy keeps "sticky" entries and quickly evicts one-shot ones.</p>
+    </section>
+
+    <section class="card" id="robust">
+      <h2><span class="num">§7</span>Is it robust? Many samples &amp; real text</h2>
+      <p class="lead">A single prompt could be a fluke. It isn't.</p>
+      <p><b>Many samples.</b> Across 24 diverse 16K prompts (different facts, positions, phrasings) the previous-set recall is <b>0.744 ± 0.013</b> — every single prompt lands in 0.72–0.77. The effect has tiny spread.</p>
+      <p><b>Real text matches synthetic.</b> Natural prose and code (sliced from real documents) reproduce the same locality as the controlled needles:</p>
+      <table>
+        <thead><tr><th>Dataset</th><th class="num">prev-recall</th><th class="num">union-8</th><th class="num">union-16</th><th class="num">σ</th><th class="num">N</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">NAT prose 8K</td><td class="num">0.785</td><td class="num">0.943</td><td class="num">0.966</td><td class="num">0.031</td><td class="num">12</td></tr>
+          <tr><td class="rowlabel">SYN needle 8K</td><td class="num">0.802</td><td class="num">0.944</td><td class="num">0.966</td><td class="num">0.007</td><td class="num">12</td></tr>
+          <tr><td class="rowlabel">NAT prose 16K</td><td class="num">0.730</td><td class="num">0.915</td><td class="num">0.945</td><td class="num">0.015</td><td class="num">6</td></tr>
+          <tr><td class="rowlabel">SYN needle 16K</td><td class="num">0.746</td><td class="num">0.884</td><td class="num">0.893</td><td class="num">0.013</td><td class="num">24</td></tr>
+          <tr><td class="rowlabel">NAT code 8K</td><td class="num">0.804</td><td class="num">0.951</td><td class="num">0.971</td><td class="num">0.011</td><td class="num">4</td></tr>
+        </tbody>
+      </table>
+      <div class="callout win"><b>Conclusion.</b> Temporal locality of the selected set is a <b>stable, content-general property</b> of DeepSeek-V4's sparse attention — not an artifact of one prompt or of synthetic data.</div>
+    </section>
+
+    <section class="card" id="takeaways">
+      <h2><span class="num">§8</span>Takeaways</h2>
+      <ul class="notes">
+        <li>DeepSeek-V4 attends to only a <b>top-512</b> selected, compressed slice of the past per CSA layer.</li>
+        <li>That selection is <b>highly predictable from recent history</b>: ~73–86% overlap with the previous step; ~90–99% covered by a short history window.</li>
+        <li>It holds <b>across context lengths, 60+ prompts, and real text</b>, with tiny variance.</li>
+        <li>Layers differ in stability → <b>per-layer budgets</b> make sense.</li>
+        <li>This is the green light for the prediction methods in <a href="../01_part2_prediction/report.html"><b>Part&nbsp;II</b></a>.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="limits">
+      <h2><span class="num">§9</span>Honest limitations</h2>
+      <ul class="notes">
+        <li>"Recall" here is an <b>upper bound</b> on what a real system achieves — it ignores prefetch <i>timing</i> and bandwidth (that's the future simulator).</li>
+        <li>A selected entry that was <b>never seen before</b> can't be predicted by any history method, so coverage has a natural ceiling below 100%.</li>
+        <li>Single-GPU memory capped our context at ~32K; reaching 128K–256K needs multi-GPU.</li>
+        <li>Selections come from the FP4/FP8 quantized model with FP8 KV cache; quantization may shift selections slightly versus full precision.</li>
+        <li>Workloads are synthetic + this project's own text; a public long-context benchmark would broaden external validity.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      <p>Yang-gon Kim · <a href="https://github.com/yanggon-kim/sparse_attn">code &amp; raw data on GitHub</a> · <a href="../../index.html">Report Archive</a></p>
+      <p>Source for the mechanism: DeepSeek-V4 technical report. Measurements: this project (vLLM on NVIDIA B200).</p>
+    </div>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>
