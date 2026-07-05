@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom HBM Base Die + LPDDR Extension — Ramulator v1 Design</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6;
+    --hbm:#1f6feb; --hbm-bg:#e8f0fe; --lp:#7c3aed; --lp-bg:#f1eafe; --dma:#b54708; --dma-bg:#fdf0e6;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:Arial,Helvetica,sans-serif; color:var(--text); background:var(--bg); line-height:1.6; }
+  a { color:var(--accent); }
+  .wrap { display:grid; grid-template-columns:240px minmax(0,1fr); gap:28px; width:min(100%,1180px); margin:0 auto; padding:36px 24px 64px; }
+  nav.toc { position:sticky; top:24px; align-self:start; font-size:.92rem; }
+  nav.toc .crumb { color:var(--muted); font-size:.8rem; margin-bottom:14px; }
+  nav.toc .crumb a { color:var(--muted); }
+  nav.toc a.item { display:block; padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+  nav.toc a.item:hover { background:#eef5ff; color:var(--accent); }
+  main { min-width:0; }
+  header.page h1 { font-size:clamp(1.7rem,3.6vw,2.4rem); line-height:1.12; margin:0; }
+  header.page .sub { color:var(--muted); margin-top:10px; font-size:1.02rem; }
+  .tags { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+  .tag { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:999px; background:#eef2f7; color:#43506a; border:1px solid var(--border); }
+  .tag.hbm { background:var(--hbm-bg); color:var(--hbm); }
+  .tag.lp { background:var(--lp-bg); color:var(--lp); }
+  .tag.dma { background:var(--dma-bg); color:var(--dma); }
+  section.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 28px rgba(23,32,51,.06); padding:26px; margin-bottom:22px; scroll-margin-top:20px; }
+  section.card > h2 { margin:0 0 6px; font-size:1.35rem; }
+  section.card > h2 .num { color:var(--accent); font-weight:800; margin-right:8px; }
+  .lead { color:var(--muted); margin:0 0 18px; }
+  h3 { font-size:1.05rem; margin:22px 0 8px; }
+  p { margin:10px 0; }
+  code.k { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em; background:#eef2f7; border:1px solid var(--border); border-radius:4px; padding:1px 5px; color:#33415c; }
+  pre.code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55; background:#0b1020; color:#dbe4f5; border-radius:8px; padding:16px 18px; overflow:auto; }
+  pre.code .c { color:#7f93b8; }
+  .headline { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin:4px 0 8px; }
+  .kpi { border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:#fbfcff; }
+  .kpi .v { font-size:1.5rem; font-weight:800; }
+  .kpi .l { font-size:.8rem; color:var(--muted); margin-top:2px; }
+  .callout { border-left:4px solid var(--accent); background:#f3f8ff; padding:14px 18px; border-radius:0 8px 8px 0; margin:16px 0; }
+  .callout.win { border-left-color:var(--good); background:var(--good-bg); }
+  .callout.warn { border-left-color:var(--warn); background:var(--warn-bg); }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; margin:8px 0 4px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f1f4f9; font-size:.82rem; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tbody tr:hover { background:#f7faff; }
+  td.rowlabel { text-align:left; font-weight:700; white-space:nowrap; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82em; }
+  .diagrambox { width:100%; overflow:auto; }
+  svg.diagram { width:100%; height:auto; display:block; min-width:680px; }
+  @media (max-width: 860px) { .wrap { grid-template-columns:minmax(0,1fr); } nav.toc { position:static; display:flex; flex-wrap:wrap; gap:4px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc" aria-label="Table of contents">
+    <div class="crumb"><a href="../../index.html">Report Archive</a> / HBM Memory Controller</div>
+    <a class="item" href="#s1">1. Why: design purposes</a>
+    <a class="item" href="#s2">2. Architecture</a>
+    <a class="item" href="#s3">3. Unified address space</a>
+    <a class="item" href="#s4">4. Per-tier clocking</a>
+    <a class="item" href="#s5">5. Migration engine (DMA)</a>
+    <a class="item" href="#s6">6. Framework infrastructure</a>
+    <a class="item" href="#s7">7. Validation &amp; measurements</a>
+    <a class="item" href="#s8">8. Limits &amp; v2 roadmap</a>
+    <a class="item" href="#s9">9. Code &amp; artifacts</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Custom HBM Base Die + LPDDR Extension — Ramulator v1 Design</h1>
+      <p class="sub">How the HBM4-era "custom HBM" architecture — a logic base die hosting the HBM controllers,
+      off-chip LPDDR controllers, unified-address-space steering, and a tier-to-tier migration engine — was
+      modeled in Ramulator 2.1, why each design decision was made, and what the model measures.</p>
+      <div class="tags">
+        <span class="tag">Ramulator 2.1</span>
+        <span class="tag hbm">HBM4 near tier</span>
+        <span class="tag lp">LPDDR5 far tier</span>
+        <span class="tag dma">Migration DMA</span>
+        <span class="tag">C++20 + Python config</span>
+        <span class="tag">13 tests, regression-clean</span>
+      </div>
+    </header>
+
+    <section class="card" id="s1">
+      <h2><span class="num">1</span>Why: the design purposes</h2>
+      <p class="lead">Stock Ramulator models a flat GPU+HBM system. The research target is the base die as a
+      three-way memory hub — and the questions that only a simulator can answer quantitatively.</p>
+
+      <p>From HBM4 onward the HBM base die can be a <strong>logic die</strong> (KAIST TERALAB roadmap; NVIDIA
+      patents US&nbsp;11,789,649 / US&nbsp;12,001,725; Samsung cHBM; Intel&ndash;AMD UCIe-Memory). Once it hosts
+      customer logic, two things happen at once: the HBM memory controller moves <em>off the GPU into the base
+      die</em>, and the base die grows <em>external off-chip I/O</em> of its own — serial channels to LPDDR
+      devices. Each HBM site becomes the head of a small memory network: a high-bandwidth near tier (the stack
+      above) fused with a high-capacity far tier (the LPDDR beside), presented to the GPU as
+      <strong>one unified memory</strong>.</p>
+
+      <p>The v1 model exists to make three first-order research questions measurable:</p>
+      <table>
+        <thead><tr><th>Question</th><th>What the model provides</th></tr></thead>
+        <tbody>
+          <tr><td>What are the bandwidth/latency characteristics of each tier as seen through one base die?</td>
+              <td>Per-tier controllers with correct clock domains and wall-clock stats (§7, tier characterization)</td></tr>
+          <tr><td>How much does background tier-to-tier migration interfere with foreground GPU traffic — and which mechanisms control it?</td>
+              <td>A DMA engine that bypasses the GPU link but contends inside the DRAM controllers (§7, isolation levers)</td></tr>
+          <tr><td>What does a capacity-tier usage model (KV-cache / weight warming) look like at the memory-system level?</td>
+              <td>Configurable block migration with regions, patterns, rate control (§5)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Intent statements that shaped every decision</h3>
+      <ul>
+        <li><strong>Reuse, don't fork, the device models.</strong> Upstream's validated <code class="k">HBM34</code> and
+            <code class="k">LPDDR5</code> controllers and their generated DRAM models are used unchanged; all new behavior
+            lives <em>above</em> them (memory-system level) or <em>beside</em> them (DMA engine). Upstream's
+            latency/throughput validation suites keep passing untouched.</li>
+        <li><strong>Model traffic, not data.</strong> The DMA generates request patterns; no bytes move — matching the
+            fidelity level of the rest of Ramulator (requests + timing).</li>
+        <li><strong>Everything configurable from Python</strong> with zero hand-written binding code, via Ramulator's
+            macro-scanning code generator.</li>
+        <li><strong>Every commit builds green</strong>; the branch is regression-clean against upstream's four test suites.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="s2">
+      <h2><span class="num">2</span>Architecture</h2>
+      <p class="lead">One new composite memory system is the base die; the tiers are plain upstream controllers;
+      the DMA is an optional child reaching the tiers through an internal port.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 430" role="img" aria-label="Base die architecture block diagram">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <!-- GPU -->
+        <rect x="330" y="14" width="240" height="52" rx="8" fill="#eef2f7" stroke="#d8dee8"/>
+        <text x="450" y="38" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">GPU (frontend)</text>
+        <text x="450" y="56" text-anchor="middle" font-size="11" fill="#647083">SimpleO3 / trace replay — one flat address space</text>
+        <!-- GPU link -->
+        <line x1="450" y1="66" x2="450" y2="102" stroke="#43506a" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="462" y="90" font-size="11" fill="#647083">send(addr) — the only GPU path</text>
+        <!-- Base die -->
+        <rect x="40" y="104" width="820" height="304" rx="10" fill="#ffffff" stroke="#d8dee8"/>
+        <text x="58" y="130" font-size="13" font-weight="800" fill="#172033">HBMLPDDRBaseDie&nbsp;&nbsp;(IMemorySystem impl — "the base die")</text>
+        <!-- Steering -->
+        <rect x="300" y="144" width="300" height="58" rx="8" fill="#f3f8ff" stroke="#1f6feb"/>
+        <text x="450" y="168" text-anchor="middle" font-size="13" font-weight="700" fill="#1f6feb">address steering (MML)</text>
+        <text x="450" y="186" text-anchor="middle" font-size="11" fill="#647083">addr &lt; near ? HBM pool : LPDDR pool ; per-pool interleave</text>
+        <!-- HBM pool -->
+        <rect x="70" y="240" width="330" height="88" rx="8" fill="#e8f0fe" stroke="#1f6feb"/>
+        <text x="235" y="264" text-anchor="middle" font-size="13" font-weight="700" fill="#1f6feb">near pool: hbm_controllers = [HBM34 × N]</text>
+        <text x="235" y="283" text-anchor="middle" font-size="11" fill="#43506a">one controller = one channel • ticks every composite tick</text>
+        <text x="235" y="301" text-anchor="middle" font-size="11" fill="#43506a">HBM4-8000: 0.25 ns/tick • 32 GB/s per channel</text>
+        <!-- LPDDR pool -->
+        <rect x="500" y="240" width="330" height="88" rx="8" fill="#f1eafe" stroke="#7c3aed"/>
+        <text x="665" y="264" text-anchor="middle" font-size="13" font-weight="700" fill="#7c3aed">far pool: lpddr_controllers = [LPDDR5 × M]</text>
+        <text x="665" y="283" text-anchor="middle" font-size="11" fill="#43506a">off-chip I/O extension • ticks every 5th composite tick</text>
+        <text x="665" y="301" text-anchor="middle" font-size="11" fill="#43506a">LPDDR5-6400: 1.25 ns/tick • 12.8 GB/s per channel</text>
+        <!-- steering arrows -->
+        <line x1="380" y1="202" x2="240" y2="238" stroke="#1f6feb" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="520" y1="202" x2="660" y2="238" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr)"/>
+        <!-- DMA -->
+        <rect x="280" y="348" width="340" height="46" rx="8" fill="#fdf0e6" stroke="#b54708"/>
+        <text x="450" y="368" text-anchor="middle" font-size="13" font-weight="700" fill="#b54708">dma_engine: MigrationEngine (optional)</text>
+        <text x="450" y="385" text-anchor="middle" font-size="11" fill="#43506a">reads src tier → posts writes to dst tier, via IDMAHost::dma_send()</text>
+        <!-- DMA arrows -->
+        <line x1="330" y1="346" x2="235" y2="330" stroke="#b54708" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="570" y1="346" x2="665" y2="330" stroke="#b54708" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="450" y="414" text-anchor="middle" font-size="11" fill="#b54708" font-weight="700">bypasses the GPU-facing send(): zero GPU-link bandwidth; contention only inside the DRAM controllers</text>
+      </svg>
+      </div>
+
+      <h3>Paper concept → implementation mapping</h3>
+      <table>
+        <thead><tr><th>Paper concept (NVIDIA patent / KAIST)</th><th>v1 implementation</th></tr></thead>
+        <tbody>
+          <tr><td>Logic base layer / base die</td><td><code class="k">HBMLPDDRBaseDieSystem</code> — new <code class="k">IMemorySystem</code> impl (<span class="mono">memory_system/impl/hbm_lpddr_basedie_system.cpp</span>)</td></tr>
+          <tr><td>Memory-management logic (MML), interface mapping</td><td><code class="k">send()</code> address steering + per-pool transaction-granularity interleave</td></tr>
+          <tr><td>HBM controller in the base die (near pool)</td><td><code class="k">hbm_controllers</code> child list — upstream <code class="k">HBM34</code>, unchanged</td></tr>
+          <tr><td>Device controllers + off-package links 112/114 (far pool)</td><td><code class="k">lpddr_controllers</code> child list — upstream <code class="k">LPDDR5</code>, unchanged</td></tr>
+          <tr><td>Migration engine</td><td><code class="k">MigrationEngine</code> (<code class="k">IDMAEngine</code> impl) via the <code class="k">IDMAHost</code> port</td></tr>
+          <tr><td>"No alternate path to either memory"</td><td>Only <code class="k">send()</code> (GPU) and <code class="k">dma_send()</code> (internal) exist</td></tr>
+          <tr><td>Migration consumes no processor-interface bandwidth</td><td><code class="k">dma_send()</code> bypasses <code class="k">send()</code>; the only shared resources are the DRAM channels themselves — the physically real contention point</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <strong>Why a new memory system instead of extending <code class="k">GenericDRAM</code>:</strong> the stock
+        implementation bakes in homogeneity — one clock ratio forced on all controllers, transaction size taken
+        from controller&nbsp;0, a single flat channel list. Heterogeneous tiers break all three. A separate
+        implementation carries zero regression risk for upstream configurations.
+      </div>
+    </section>
+
+    <section class="card" id="s3">
+      <h2><span class="num">3</span>Unified address space &amp; steering</h2>
+      <p class="lead">Pool sizes are derived, not configured — the address map follows the DRAM organization automatically.</p>
+
+      <pre class="code"><span class="c">// per-channel capacity comes from the controller itself (new IController::get_addressable_bytes)</span>
+per_channel_bytes = (&Pi; level_sizes[1..N-1] / internal_prefetch_size) &times; tx_bytes
+near_size = per_HBM_channel &times; |hbm_controllers|     <span class="c">// HBM4_32Gb_8Hi → 1 GiB/ch</span>
+far_size  = per_LPDDR_channel &times; |lpddr_controllers| <span class="c">// LPDDR5_16Gb_x16 → 2 GiB/ch (rank=2 → 4 GiB)</span>
+
+<span class="c">// steering (the MML), on every GPU request</span>
+addr &lt; near_size            → HBM pool,   pool_addr = addr
+addr &lt; near_size + far_size → LPDDR pool, pool_addr = addr - near_size
+else                        → error "outside the unified address space"
+
+<span class="c">// per-pool interleave at transaction (32 B) granularity</span>
+channel = (pool_addr &gt;&gt; log2(tx)) &amp; (pool_channels - 1)
+intra_channel_addr = pool_addr with the channel bits spliced out
+<span class="c">// the controller's own addr_mapper (RoBaRaCoCh, …) decodes intra → bank/row/column</span></pre>
+
+      <p>The LPDDR extension is <strong>fully configurable from Python</strong>: channel count = list length,
+      capacity = org preset + overrides (e.g. <code class="k">rank=2</code>), bandwidth = timing preset. The GPU
+      never observes which tier served a request except through its latency.</p>
+
+      <div class="callout warn">
+        <strong>Deliberate consequence:</strong> interleaving at 32&nbsp;B granularity means address-range separation
+        is <em>not</em> channel separation — any large region spans all channels of its pool, exactly like real
+        systems. Resource partitioning therefore requires the levers measured in §7.
+      </div>
+    </section>
+
+    <section class="card" id="s4">
+      <h2><span class="num">4</span>Per-tier clocking</h2>
+      <p class="lead">Two real clock domains behind one composite tick.</p>
+      <p>The composite ticks in the <strong>HBM tick domain</strong> (HBM4-8000: tCK&nbsp;500&nbsp;ps, 2&nbsp;ticks/CK
+      → 0.25&nbsp;ns). LPDDR controllers tick once every <code class="k">lpddr_tick_divider</code> composite ticks.
+      The divider is <strong>auto-derived</strong> from the controllers' actual per-tick periods
+      (1.25&nbsp;/&nbsp;0.25&nbsp;=&nbsp;5 for the default pairing), accepted within 1% of an integer, and
+      overridable — otherwise initialization throws with instructions. Because every controller measures time in
+      its own tick domain, upstream's per-controller stats (<code class="k">avg_read_latency</code> in ticks,
+      <code class="k">*_throughput_MBps</code>) remain wall-clock correct per tier with no changes; experiment
+      scripts convert ticks → ns with the per-tier period.</p>
+    </section>
+
+    <section class="card" id="s5">
+      <h2><span class="num">5</span>Migration engine (the base-die DMA)</h2>
+      <p class="lead">"Read a block from LPDDR, put it into HBM" (or the reverse) as a request-level state machine —
+      only the traffic pattern is modeled.</p>
+
+      <table>
+        <thead><tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">direction</td><td class="mono">lpddr_to_hbm</td><td>or <span class="mono">hbm_to_lpddr</span></td></tr>
+          <tr><td class="rowlabel">block_size</td><td class="num">4096</td><td>bytes per transfer block (multiple of 32 B tx)</td></tr>
+          <tr><td class="rowlabel">num_blocks</td><td class="num">0</td><td>total blocks; 0 = migrate continuously</td></tr>
+          <tr><td class="rowlabel">pattern / seed</td><td class="mono">sequential</td><td>or <span class="mono">random</span> (block-aligned, seeded — deterministic runs)</td></tr>
+          <tr><td class="rowlabel">inter_block_gap</td><td class="num">0</td><td>composite ticks between blocks — <strong>the rate throttle</strong></td></tr>
+          <tr><td class="rowlabel">max_inflight_reads</td><td class="num">8</td><td>outstanding-read window</td></tr>
+          <tr><td class="rowlabel">src/dst_region_offset/size</td><td class="num">0 / rest of pool</td><td>pool-relative windows — enables ping-pong / double-buffer placement</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>Block lifecycle:</strong> open block (cursor or random base within regions) → issue 32&nbsp;B reads
+      to the source tier up to the in-flight cap → each read's completion callback immediately posts the mirrored
+      write to the destination tier → block completes when all writes are <em>accepted</em> → gap countdown →
+      next block. Backpressure is honored everywhere (rejected sends retry; counted as
+      <code class="k">read_stalls</code>/<code class="k">write_stalls</code>).</p>
+
+      <div class="callout warn">
+        <strong>Design decision — posted writes (learned the hard way).</strong> The first implementation waited for
+        writes to <em>retire</em> to DRAM and deadlocked under foreground load: controllers drain writes only in
+        write mode (write queue &gt; 80% watermark, or read queue empty), and a steady GPU read stream keeps the
+        read queue non-empty while a 16-write block never reaches the watermark — 0 blocks completed in 40k ticks.
+        Posted completion (done at buffer <em>accept</em>) matches real fire-and-forget DMA engines, while the
+        accepted writes still occupy the destination write buffer and exert fully realistic drain-mode
+        interference — the very mechanism §7 quantifies.
+      </div>
+
+      <div class="callout">
+        <strong>Design decision — <code class="k">source_id = -1</code>.</strong> Controllers index per-core stat arrays
+        (sized by the frontend's core count) for any request with a real source id; a DMA "fake core id" would
+        corrupt them. All DMA requests are maintenance-style (<code class="k">-1</code>), enforced in
+        <code class="k">dma_send()</code> — with the side benefit that frontend-visible per-core stats are provably
+        unpolluted by migration traffic.
+      </div>
+    </section>
+
+    <section class="card" id="s6">
+      <h2><span class="num">6</span>Framework infrastructure it required</h2>
+      <p class="lead">Two small, generic extensions to Ramulator's component framework — plus one upstream bug fix.</p>
+      <table>
+        <thead><tr><th>Change</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Named child lists<br><span class="mono">RAMULATOR_CREATE_NAMED_CHILD_LIST</span></td>
+              <td>The config system could attach only <em>one</em> list per interface to a component; the base die needs two lists of
+              <code class="k">IController</code> (<code class="k">hbm_controllers</code>, <code class="k">lpddr_controllers</code>). Added a keyed
+              C++ overload + macro and taught the regex-based codegen to emit <code class="k">ChildList("controller", key="hbm_controllers")</code> —
+              so the Python API gained first-class keyword arguments with zero hand-written bindings. Regenerating all existing wrappers is byte-identical.</td></tr>
+          <tr><td class="rowlabel"><span class="mono">IController::get_addressable_bytes()</span></td>
+              <td>Pool sizes must be derived from the DRAM organization. The formula is exactly the address space upstream's flat
+              address mappers decode, so derived pools and the mappers agree by construction.</td></tr>
+          <tr><td class="rowlabel">Python <span class="mono">Component.to_config()</span> fix</td>
+              <td>The DMA engine is the repo's first <em>optional</em> single-child slot; unset optional slots serialized the class-level
+              descriptor object itself and crashed config conversion. Latent upstream bug, surfaced by this design, fixed by keying on
+              instance-dict membership.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="s7">
+      <h2><span class="num">7</span>Validation &amp; what the model already measured</h2>
+      <p class="lead">13 dedicated tests plus upstream regression (smoke, device timings, controller scheduling,
+      latency-throughput) — and two experiments that answer the §1 questions.</p>
+
+      <h3>7.1 Tier characterization through one base die (2 ch HBM4-8000 vs 2 ch LPDDR5-6400)</h3>
+      <div class="headline">
+        <div class="kpi"><div class="v">2.23&times;</div><div class="l">HBM : LPDDR achieved bandwidth (45.7 vs 20.5 GB/s, 1:1 R/W streaming)</div></div>
+        <div class="kpi"><div class="v">1.89&times;</div><div class="l">LPDDR : HBM unloaded random-read latency (92.7 vs 49.1 ns)</div></div>
+        <div class="kpi"><div class="v">71% / 80%</div><div class="l">of theoretical peak reached (HBM / LPDDR)</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Pattern</th><th class="num">Read BW</th><th class="num">Write BW</th><th class="num">Total BW</th><th class="num">Peak</th><th class="num">Unloaded read latency</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">HBM-only</td><td class="num">22.8 GB/s</td><td class="num">22.8 GB/s</td><td class="num"><strong>45.7 GB/s</strong></td><td class="num">64.0</td><td class="num"><strong>49.1 ns</strong> (196 HBM ticks)</td></tr>
+          <tr><td class="rowlabel">LPDDR-only</td><td class="num">10.3 GB/s</td><td class="num">10.3 GB/s</td><td class="num"><strong>20.5 GB/s</strong></td><td class="num">25.6</td><td class="num"><strong>92.7 ns</strong> (74 LPDDR ticks)</td></tr>
+        </tbody>
+      </table>
+      <p>The classic near/far tiering ratio from the literature, reproduced in the model — with the tick-domain
+      subtlety that raw tick counts (196 vs 74) are misleading until converted to nanoseconds.</p>
+
+      <h3>7.2 Migration interference &amp; the isolation levers (ping-pong study)</h3>
+      <p>GPU streams reads into HBM region A at fixed 32 GB/s while the DMA fills region B from LPDDR
+      (double-buffering placement). Default <code class="k">RoBaRaCoCh</code> mapper:</p>
+      <table>
+        <thead><tr><th>DMA mode</th><th class="num">GPU latency vs off</th><th class="num">GPU BW</th><th class="num">Migration rate</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">off</td><td class="num">1.00&times; (46.1 ns)</td><td class="num">32.0 GB/s</td><td class="num">—</td></tr>
+          <tr><td class="rowlabel">unthrottled</td><td class="num">1.50&times;</td><td class="num">26.0 GB/s</td><td class="num">9.0 GB/s</td></tr>
+          <tr><td class="rowlabel">write buffer 128</td><td class="num"><strong>1.18&times;</strong></td><td class="num">29.2 GB/s</td><td class="num"><strong>9.0 GB/s</strong></td></tr>
+          <tr><td class="rowlabel">throttle (gap4k)</td><td class="num">1.14&times;</td><td class="num">30.2 GB/s</td><td class="num">2.8 GB/s</td></tr>
+          <tr><td class="rowlabel">gap4k + wbuf128</td><td class="num"><strong>1.06&times;</strong></td><td class="num">31.1 GB/s</td><td class="num">2.8 GB/s</td></tr>
+          <tr><td class="rowlabel">heavy throttle (gap16k)</td><td class="num">1.05&times;</td><td class="num">31.4 GB/s</td><td class="num">0.9 GB/s</td></tr>
+        </tbody>
+      </table>
+      <div class="callout win">
+        <strong>Findings.</strong> (1)&nbsp;Interference is dominated by the controller's <em>read/write turnaround</em>
+        (write-drain mode blocking reads), not bank/row conflicts — row-conflict counters barely move while
+        write-path levers recover most of the loss. (2)&nbsp;Write-buffer batching is the "free" lever: 1.50&times;→1.18&times;
+        at the full migration rate. (3)&nbsp;Throttling is dose-dependent — pace migration to the ping-pong deadline
+        (<span class="mono">region_size / phase_time</span>), no slower and no faster. (4)&nbsp;Contiguous-region bank
+        partitioning via <code class="k">ChRaBaRoCo</code> is an <em>anti-lever</em>: it collapses the GPU's own bank
+        parallelism (baseline capacity 19.6&nbsp;&lt;&nbsp;32&nbsp;GB/s offered) and degrades 2.57&times; under load.
+      </div>
+    </section>
+
+    <section class="card" id="s8">
+      <h2><span class="num">8</span>v1 limits &amp; v2 roadmap</h2>
+      <p class="lead">Deliberate constraints (enforced with explicit errors) and the extensions they motivate.</p>
+      <table>
+        <thead><tr><th>v1 limitation</th><th>v2 direction (ordered by research value)</th></tr></thead>
+        <tbody>
+          <tr><td>No GPU-vs-migration QoS — write-drain policy treats DMA and GPU writes identically</td>
+              <td><strong>1. QoS arbitration</strong>: GPU reads preempt migration writes unless the buffer is critical — targets the unreached operating point (full 9 GB/s <em>and</em> &lt;1.1&times;)</td></tr>
+          <tr><td>Static near/far partition</td>
+              <td><strong>2. Interleaved near pool</strong> (patent Fig. 3A): carve part of LPDDR into the near range at a programmable ratio — far-tier bandwidth becomes <em>additive</em></td></tr>
+          <tr><td>Pattern/rate-driven DMA only</td>
+              <td><strong>3. Access-driven migration</strong>: frequency counters / stream inference as triggers — a new <code class="k">IDMAEngine</code> impl, not a rewrite</td></tr>
+          <tr><td>Single base-die site per simulation</td>
+              <td><strong>4. Multi-site scaling</strong>: N base dies + GPU-side site decode (named child lists already support grouping)</td></tr>
+          <tr><td>Equal 32 B tx across tiers; pow-2 channels per pool; DMA lifetime = frontend lifetime</td>
+              <td>Constraint lifting: per-pool tx validation, modulo interleave, run-until-drained</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="s9">
+      <h2><span class="num">9</span>Code &amp; artifacts</h2>
+      <ul>
+        <li>Repository: <a href="https://github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie">github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie</a>
+            (branch <code class="k">feature/hbm-lpddr-basedie</code>; <code class="k">main</code> = vanilla upstream baseline for diffing)</li>
+        <li>Full design document: <a href="https://github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie/blob/feature/hbm-lpddr-basedie/00_doc/01_design/v1/v1_basedie_design.md"><span class="mono">00_doc/01_design/v1/v1_basedie_design.md</span></a></li>
+        <li>Research context: <a href="https://github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie/blob/feature/hbm-lpddr-basedie/00_doc/files/gpu_hbm_lpddr_custom_base_die.md"><span class="mono">00_doc/files/gpu_hbm_lpddr_custom_base_die.md</span></a></li>
+        <li>Runnable: <span class="mono">examples/hbm_lpddr_basedie_config.py</span> (full demo),
+            <span class="mono">examples/hbm_vs_lpddr_access_patterns.py</span> (§7.1),
+            <span class="mono">examples/ping_pong_isolation_study.py</span> (§7.2),
+            <span class="mono">tests/test_basedie.py</span> (13 tests)</li>
+      </ul>
+      <p class="lead" style="margin-top:14px;">Written 2026-07-05 · Yang-gon Kim · model built on Ramulator 2.1 (CMU-SAFARI)</p>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>
