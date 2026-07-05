@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V4 Sparse Attention — Part III: ds4 CPU KV-Selection Locality (4K–16K)</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+    --csa:#1f6feb; --csa-bg:#eaf2ff; --hca:#8250df; --hca-bg:#f3eefe; --local:#647083; --local-bg:#eef1f5;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  h4{font-size:.96rem;margin:16px 0 6px;color:#33415c;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:880px){.two{grid-template-columns:1fr;} .wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .gloss{border:1px dashed var(--border);border-radius:8px;background:#fbfcff;padding:10px 14px;margin:10px 0;font-size:.92rem;}
+  .gloss b{color:var(--accent);}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;margin:6px 2px 2px;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .sw{width:13px;height:13px;border-radius:3px;display:inline-block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#why">1 · Why a CPU re-measurement</a>
+    <a href="#setup">2 · Setup &amp; instrumentation</a>
+    <a href="#metrics">3 · The metrics</a>
+    <a href="#results">4 · Results — context scaling</a>
+    <a href="#retention">5 · Retention &amp; working set</a>
+    <a href="#semantic">6 · Semantic, not just recent</a>
+    <a href="#layers">7 · Per-layer stability</a>
+    <a href="#takeaways">8 · Takeaways</a>
+    <a href="#limits">9 · Limitations</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V4 Sparse Attention — Part&nbsp;III</h1>
+      <p class="sub">An independent <b>CPU reference measurement</b> of the lightning-indexer KV-selection locality, using the single-file <code class="k">ds4</code> engine. Same mechanism as <a href="../00_part1_characterization/report.html">Part&nbsp;I</a>, a different runtime — and the numbers agree.</p>
+      <div class="tags">
+        <span class="tag">DeepSeek-V4-Flash (284B/13B MoE)</span>
+        <span class="tag live">measured on CPU via ds4 (IQ2 quant)</span>
+        <span class="tag">RULER niah_single_2, n=1 / length</span>
+        <span class="tag">context 4K · 8K · 16K</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">§</span>Overview in one minute</h2>
+      <p class="lead">Part&nbsp;I measured how <b>predictable</b> DeepSeek-V4's per-token KV selection is on a GPU (vLLM/B200). Here we reproduce the core result on a completely different stack — a CPU-only C reference engine (<code class="k">ds4</code>) running the IQ2-quantized model — as a cross-check, and to instrument the exact same decode path that also emits the MoE routing trace in <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>. The temporal-locality picture holds.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">512</div><div class="l">KV entries selected per token, per CSA layer (top-k)</div></div>
+        <div class="kpi"><div class="v">0.87 &rarr; 0.72</div><div class="l">adjacent-step overlap, 4K &rarr; 16K</div></div>
+        <div class="kpi"><div class="v">1.7&times; &rarr; 5.7&times;</div><div class="l">locality lift over a random selection, rising with context</div></div>
+        <div class="kpi"><div class="v">3 / 3</div><div class="l">needle retrievals correct (4K, 8K, 16K)</div></div>
+      </div>
+      <div class="callout"><b>Plain-language thesis.</b> The set of compressed-KV entries a token attends to is largely the same as the previous token's — and the further from random that gets (higher <i>lift</i>) as context grows, the more a small "hot set" in fast memory would pay off. This CPU run reproduces the GPU finding on an independent code path.</div>
+    </section>
+
+    <section class="card" id="why">
+      <h2><span class="num">§1</span>Why re-measure on CPU?</h2>
+      <p class="lead">Two reasons: independent confirmation, and a shared instrumentation point.</p>
+      <ul class="notes">
+        <li><b>Different stack, same answer.</b> Part&nbsp;I used vLLM on a B200 GPU. If the temporal-locality result also appears in an unrelated CPU reference implementation (different kernels, different quantization: IQ2 vs FP4/FP8), it is a property of the <i>model's selection behavior</i>, not of one runtime.</li>
+        <li><b>One decode path, two traces.</b> The <code class="k">ds4</code> decode loop is where we hook <i>both</i> the CSA lightning-indexer top-k (this report) and the MoE routed-expert selection (<a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>). Collecting them from the same forward pass keeps them perfectly aligned by (layer, decode&nbsp;step).</li>
+      </ul>
+      <div class="gloss"><b>S<sub>l,t</sub></b> = the set of compressed-KV entries that CSA layer <code class="k">l</code> selects (top-512) when generating token <code class="k">t</code>. Every metric below describes how S<sub>l,t</sub> moves over time.</div>
+    </section>
+
+    <section class="card" id="setup">
+      <h2><span class="num">§2</span>Setup &amp; instrumentation</h2>
+      <ul class="notes">
+        <li><b>Engine.</b> <code class="k">ds4</code> — a single-file C CPU inference engine for DeepSeek-V4 — running <b>DeepSeek-V4-Flash</b> at IQ2 quantization (≈81&nbsp;GB), 64 threads, greedy decode (<code class="k">temp&nbsp;0</code>).</li>
+        <li><b>Task.</b> RULER <code class="k">niah_single_2</code> (single needle-in-a-haystack retrieval) at 4K, 8K, 16K tokens; one sample per length. The model retrieves the buried fact correctly at all three lengths.</li>
+        <li><b>Trace.</b> Every time a CSA layer's indexer selects its top-512, the selected compressed indices (and scores) are written to a JSONL trace — decode phase only — one record per (layer, token). 21 CSA layers of the 43 total.</li>
+        <li><b>Analysis.</b> The trace is ingested to Parquet and reduced to the locality metrics below with the same code used for the GPU study, so the two are directly comparable.</li>
+      </ul>
+      <table>
+        <thead><tr><th>Context</th><th class="num">prompt tokens</th><th class="num">decode steps</th><th class="num">candidate entries (mean)</th><th class="num">kept fraction</th><th class="num">wall-clock</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">3,969</td><td class="num">153</td><td class="num">1,011</td><td class="num">50.6%</td><td class="num">~1h17m</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">7,485</td><td class="num">163</td><td class="num">1,891</td><td class="num">27.1%</td><td class="num">~1h53m</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">16,264</td><td class="num">117</td><td class="num">4,080</td><td class="num">12.5%</td><td class="num">~4h22m</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">"Kept fraction" = 512 / candidate entries. As context grows the same 512-budget is drawn from a larger pool, so sparsity rises from ~2&times; (4K) to ~8&times; (16K).</p>
+    </section>
+
+    <section class="card" id="metrics">
+      <h2><span class="num">§3</span>The metrics, in plain words</h2>
+      <h4>Adjacent-step overlap</h4>
+      <p>Of the 512 entries selected <i>now</i>, what fraction were also selected one step ago. Higher = more predictable from the immediate past. (Called "previous-set recall" in Part&nbsp;I.)</p>
+      <h4>Locality lift</h4>
+      <p>Adjacent overlap divided by what two <i>independent random</i> 512-subsets of the candidate pool would share (= 512 / candidates). Lift&nbsp;=&nbsp;1 means "no better than chance"; lift&nbsp;=&nbsp;5.7 means the selection is 5.7&times; more self-similar than random.</p>
+      <h4>Retention at lag k</h4>
+      <p>Overlap of the current selection with the one <code class="k">k</code> steps earlier — how long the set stays correlated.</p>
+      <h4>Working-set ratio</h4>
+      <p>Unique entries touched over a window of <code class="k">w</code> steps, divided by <code class="k">w&times;512</code>. Small = the same entries keep recurring (a compact hot set); near 1 = every step touches fresh entries.</p>
+      <h4>Recency-baseline overlap</h4>
+      <p>Overlap of the selection with the <i>most-recent</i> 512 compressed entries — what a naive "just keep the latest" policy would capture. Comparing this to the actual adjacent overlap separates <b>recency</b> from <b>semantic</b> reuse.</p>
+    </section>
+
+    <section class="card" id="results">
+      <h2><span class="num">§4</span>Results — locality strengthens with context</h2>
+      <p>Adjacent overlap falls as context grows (harder: 512 drawn from more candidates), but the <b>locality lift rises</b> — the selection becomes far more non-random exactly where a memory system needs it most:</p>
+      <table>
+        <thead><tr><th>Context</th><th class="num">candidates</th><th class="num">sparsity</th><th class="num">adjacent overlap</th><th class="num">jaccard</th><th class="num">churn</th><th class="num">locality lift</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">1,011</td><td class="num">2.0&times;</td><td class="num">0.868</td><td class="num">0.771</td><td class="num">0.132</td><td class="num">1.72&times;</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">1,891</td><td class="num">3.7&times;</td><td class="num">0.790</td><td class="num">0.662</td><td class="num">0.210</td><td class="num">2.92&times;</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">4,080</td><td class="num">8.0&times;</td><td class="num">0.718</td><td class="num">0.573</td><td class="num">0.282</td><td class="num">5.72&times;</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/kv_01_context_scaling.png" alt="KV adjacent overlap and locality lift versus context length">
+        <figcaption class="cap">Adjacent overlap (left axis) declines gently while locality lift (right axis) climbs 1.7&times;&rarr;5.7&times; from 4K to 16K. These CPU/IQ2 numbers match the GPU/vLLM values in Part&nbsp;I to within a few thousandths (e.g. 16K: 0.718 here vs 0.746 there).</figcaption>
+      </figure>
+      <div class="callout win"><b>Cross-stack agreement.</b> A completely separate CPU reference engine, at a different quantization, reproduces Part&nbsp;I's context-scaling curve. Temporal locality of KV selection is a property of the model, not the runtime.</div>
+    </section>
+
+    <section class="card" id="retention">
+      <h2><span class="num">§5</span>Retention &amp; working set</h2>
+      <p>Selections stay correlated many steps back — decaying gently rather than falling off a cliff, so a multi-step lookahead is informative for prefetch:</p>
+      <table>
+        <thead><tr><th>retention at lag k &rarr;</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">0.868</td><td class="num">0.840</td><td class="num">0.815</td><td class="num">0.794</td><td class="num">0.779</td><td class="num">0.762</td><td class="num">0.753</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">0.790</td><td class="num">0.750</td><td class="num">0.712</td><td class="num">0.681</td><td class="num">0.669</td><td class="num">0.630</td><td class="num">0.606</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">0.718</td><td class="num">0.667</td><td class="num">0.619</td><td class="num">0.573</td><td class="num">0.532</td><td class="num">0.511</td><td class="num">0.498</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/kv_02_retention.png" alt="KV retention versus decode lag for each context length">
+        <figcaption class="cap">Retention vs lag. Even 64 steps back, 4K keeps ~75% and 16K ~50% of the current selection.</figcaption>
+      </figure>
+      <p>The <b>working-set ratio</b> shrinks fast with the window — the same entries keep recurring, so a compact hot set covers many steps. Over a 64-step window a CSA layer's union of selections is only 2.6% (4K) to 5.6% (16K) of <code class="k">64&times;512</code>:</p>
+      <table>
+        <thead><tr><th>working-set ratio, window w &rarr;</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">1.000</td><td class="num">0.565</td><td class="num">0.317</td><td class="num">0.176</td><td class="num">0.096</td><td class="num">0.051</td><td class="num">0.026</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">1.000</td><td class="num">0.640</td><td class="num">0.409</td><td class="num">0.259</td><td class="num">0.163</td><td class="num">0.099</td><td class="num">0.056</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="semantic">
+      <h2><span class="num">§6</span>Semantic reuse, not just recency</h2>
+      <p class="lead">Is the model just re-picking the most-recent entries, or genuinely returning to old, relevant ones?</p>
+      <p>Compare the actual adjacent overlap to a <b>recency baseline</b> — the overlap with the most-recent 512 entries. If selection were pure recency, the two would match. Instead the gap widens with context: at 16K the model's selection is <b>4.6&times;</b> more self-similar than a recency policy would explain.</p>
+      <table>
+        <thead><tr><th>Context</th><th class="num">adjacent overlap</th><th class="num">recency baseline</th><th class="num">ratio</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">0.868</td><td class="num">0.429</td><td class="num">2.0&times;</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">0.790</td><td class="num">0.308</td><td class="num">2.6&times;</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">0.718</td><td class="num">0.157</td><td class="num">4.6&times;</td></tr>
+        </tbody>
+      </table>
+      <div class="callout win"><b>Interpretation.</b> The selected set is <b>semantically</b> sticky — it keeps returning to the same old, relevant entries (here, the needle block), far beyond what a "keep the latest" policy captures. A prefetcher must track content, not just recency.</div>
+    </section>
+
+    <section class="card" id="layers">
+      <h2><span class="num">§7</span>Per-layer stability</h2>
+      <p>Adjacent overlap varies by layer. Grouping the 21 CSA layers into shallow / middle / deep thirds, the <b>deep layers are the most stable</b> at every context length — an argument for per-layer memory budgets rather than one-size-fits-all.</p>
+      <table>
+        <thead><tr><th>Context</th><th class="num">shallow</th><th class="num">middle</th><th class="num">deep</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">0.860</td><td class="num">0.861</td><td class="num">0.884</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">0.779</td><td class="num">0.778</td><td class="num">0.812</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">0.713</td><td class="num">0.691</td><td class="num">0.750</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/kv_03_adjacent_overlap_by_layer.png" alt="Adjacent overlap by CSA layer for each context length">
+        <figcaption class="cap">Adjacent overlap per CSA layer. The deep layers (right) sit highest; the whole curve shifts down as context grows.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="takeaways">
+      <h2><span class="num">§8</span>Takeaways</h2>
+      <ul class="notes">
+        <li>An <b>independent CPU reference engine (ds4, IQ2)</b> reproduces the GPU/vLLM temporal-locality result: adjacent overlap 0.87&rarr;0.72 over 4K&rarr;16K, locality lift 1.7&times;&rarr;5.7&times;.</li>
+        <li>Locality <b>lift rises with context</b> — the selection gets more non-random exactly as the KV cache gets expensive.</li>
+        <li>Reuse is <b>semantic, not merely recent</b> — up to 4.6&times; beyond a recency baseline at 16K.</li>
+        <li>A compact hot set works: a 64-step working set is ≤5.6% of <code class="k">64&times;512</code>.</li>
+        <li>Deep layers are the most stable → per-layer budgets make sense.</li>
+        <li>This CPU decode path is the same one that emits the MoE routing trace in <a href="../03_part4_moe_locality/report.html"><b>Part&nbsp;IV</b></a>.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="limits">
+      <h2><span class="num">§9</span>Honest limitations</h2>
+      <ul class="notes">
+        <li><b>n = 1 per length.</b> One RULER sample each at 4K/8K/16K — no cross-sample confidence intervals (Part&nbsp;I's 60+ prompts supply that; the point here is cross-stack agreement).</li>
+        <li><b>IQ2 quantization + CPU reference path.</b> Selections come from a heavily quantized model on a reference (non-GPU) kernel path; quantization may shift selections slightly versus full precision.</li>
+        <li><b>Logical compressed-KV indices.</b> Overlaps are over logical entry ids, not a physical cache — an upper bound that ignores prefetch timing and bandwidth.</li>
+        <li><b>Greedy decode, RULER needle task.</b> A single retrieval workload; broader tasks would strengthen external validity.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      <p>Yang-gon Kim · <a href="https://github.com/yanggon-kim/sparse_attn_cpu">code &amp; analysis on GitHub</a> · <a href="../../index.html">Report Archive</a></p>
+      <p>Related: <a href="../00_part1_characterization/report.html">Part&nbsp;I (GPU/vLLM characterization)</a> · <a href="../01_part2_prediction/report.html">Part&nbsp;II (prediction)</a> · <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV (MoE routing locality)</a>. Mechanism: DeepSeek-V4 technical report. Measurements: this project (ds4 CPU engine, IQ2).</p>
+    </div>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>

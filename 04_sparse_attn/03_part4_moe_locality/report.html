@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V4 Sparse Attention — Part IV: MoE Expert-Selection Locality</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+    --csa:#1f6feb; --csa-bg:#eaf2ff; --hca:#8250df; --hca-bg:#f3eefe; --local:#647083; --local-bg:#eef1f5;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  h4{font-size:.96rem;margin:16px 0 6px;color:#33415c;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:880px){.two{grid-template-columns:1fr;} .wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .gloss{border:1px dashed var(--border);border-radius:8px;background:#fbfcff;padding:10px 14px;margin:10px 0;font-size:.92rem;}
+  .gloss b{color:var(--accent);}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;margin:6px 2px 2px;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .sw{width:13px;height:13px;border-radius:3px;display:inline-block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#what">1 · What MoE routing is</a>
+    <a href="#method">2 · How we measured</a>
+    <a href="#metrics">3 · The metrics</a>
+    <a href="#results">4 · Learned routing is local</a>
+    <a href="#context">5 · Context-independent</a>
+    <a href="#hash">6 · Hash layers are not local</a>
+    <a href="#retention">7 · Retention &amp; working set</a>
+    <a href="#hw">8 · Why hardware cares</a>
+    <a href="#takeaways">9 · Takeaways</a>
+    <a href="#limits">10 · Limitations</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V4 Sparse Attention — Part&nbsp;IV</h1>
+      <p class="sub">The <b>other</b> sparse selection in DeepSeek-V4: which <b>experts</b> each token routes to in the Mixture-of-Experts FFN — and how <b>temporally local</b> that routing is. Measured from the same <code class="k">ds4</code> CPU decode path as <a href="../02_part3_cpu_kv_locality/report.html">Part&nbsp;III</a>.</p>
+      <div class="tags">
+        <span class="tag">DeepSeek-V4-Flash (256 experts / 6 active)</span>
+        <span class="tag live">measured on CPU via ds4 (IQ2 quant)</span>
+        <span class="tag">RULER niah_single_2, n=1 / length</span>
+        <span class="tag">context 4K · 8K · 16K</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">§</span>Overview in one minute</h2>
+      <p class="lead">DeepSeek-V4 is sparse in <b>two</b> ways per layer. The attention picks a small set of past KV entries (Parts&nbsp;I–III). The <b>feed-forward</b> block is a Mixture-of-Experts: it routes each token to just <b>6 of 256</b> experts. This report asks the same locality question of that routing: <b>do consecutive tokens reuse the same experts?</b> If they do, an expert-caching memory system can keep the hot ones close.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">6 / 256</div><div class="l">experts activated per token, per layer (+1 shared)</div></div>
+        <div class="kpi"><div class="v">~2.2 / 6</div><div class="l">experts carried over from the previous token (learned layers)</div></div>
+        <div class="kpi"><div class="v">16&times;</div><div class="l">more self-similar than random expert choice (6/256)</div></div>
+        <div class="kpi"><div class="v">flat</div><div class="l">routing locality is the same at 4K, 8K, 16K</div></div>
+      </div>
+      <div class="callout"><b>Plain-language thesis.</b> A token's chosen experts are substantially the same as the previous token's — about <b>2 of 6</b> persist step to step, 16&times; above chance. Unlike KV selection, this holds <i>independent of context length</i>, because the expert pool is fixed at 256. The three deterministic hash-routed layers are the exception: they are <i>not</i> temporally local, by construction.</div>
+    </section>
+
+    <section class="card" id="what">
+      <h2><span class="num">§1</span>What MoE expert routing is</h2>
+      <p class="lead">A Mixture-of-Experts FFN replaces one big feed-forward network with many small "experts" and a router that picks a few per token.</p>
+      <ul class="notes">
+        <li><b>256 routed experts, 6 active.</b> For each token, at each layer, a router scores all 256 experts and the <b>top&nbsp;6</b> run; their outputs are combined by the router weights. A <b>shared</b> expert (+1) always runs.</li>
+        <li><b>How the 6 are chosen (learned layers).</b> The router computes an affinity per expert — <code class="k">sqrt(softplus(logit))</code> — adds a learned selection bias, and keeps the top-6. This is the routing we expect to reflect token content.</li>
+        <li><b>The first 3 layers are different: hash routing.</b> DeepSeek-V4-Flash routes the earliest layers by a fixed <b>token-id &rarr; experts</b> hash table (no learned scoring). We flag these separately throughout, because their "locality" is purely a function of whether the same token id repeats — not of learned behavior.</li>
+      </ul>
+      <div class="gloss"><b>E<sub>l,t</sub></b> = the set of 6 experts that layer <code class="k">l</code> selects for token <code class="k">t</code>. Random choice of 6 from 256 gives an expected adjacent overlap of <b>6/256 = 0.0234</b> — the yardstick for everything below.</div>
+    </section>
+
+    <section class="card" id="method">
+      <h2><span class="num">§2</span>How we measured it</h2>
+      <ul class="notes">
+        <li><b>Same run, second trace.</b> We instrumented the <code class="k">ds4</code> CPU decode path so that, right after the router selects its 6 experts, it logs <code class="k">(layer, decode&nbsp;step, token, the 6 expert ids, their weights)</code> — one record per (layer, token), decode phase only. This runs alongside the KV-indexer trace of <a href="../02_part3_cpu_kv_locality/report.html">Part&nbsp;III</a>, from the <i>same</i> forward pass.</li>
+        <li><b>Coverage.</b> MoE routing happens in <b>every</b> layer's FFN (43 layers) — denser than the CSA indexer's 21 layers. Of those, 3 are hash-routed and 40 are learned-routed.</li>
+        <li><b>Workload.</b> RULER <code class="k">niah_single_2</code> at 4K, 8K, 16K; greedy decode; DeepSeek-V4-Flash at IQ2. 117–163 decode steps per run &times; 43 layers &times; 6 experts.</li>
+        <li><b>Analysis.</b> The same id-set locality metrics used for KV selection, applied to the 6-expert sets, with hash and learned layers reported separately.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="metrics">
+      <h2><span class="num">§3</span>The metrics, in plain words</h2>
+      <h4>Adjacent-step overlap</h4>
+      <p>Of the 6 experts chosen <i>now</i>, what fraction were also chosen one step ago. 0.37 means ~2.2 of the 6 carried over.</p>
+      <h4>Locality lift</h4>
+      <p>Adjacent overlap divided by the random baseline (6/256 = 0.0234). Lift 16 means the routing is 16&times; more self-similar than choosing 6 experts at random.</p>
+      <h4>Retention at lag k</h4>
+      <p>Overlap of the current expert set with the one <code class="k">k</code> steps earlier — how long a chosen expert tends to stay chosen.</p>
+      <h4>Working-set ratio</h4>
+      <p>Distinct experts touched over <code class="k">w</code> steps, divided by <code class="k">w&times;6</code>. Small = a compact set of experts recurs; large = routing spreads across the pool.</p>
+    </section>
+
+    <section class="card" id="results">
+      <h2><span class="num">§4</span>Learned routing is strongly temporally local</h2>
+      <p>Across the 40 learned-routing layers, consecutive tokens reuse about <b>37%</b> of their 6 experts — <b>16&times;</b> the random baseline. That is far from independent per-token routing:</p>
+      <table>
+        <thead><tr><th>Context</th><th class="num">adjacent overlap</th><th class="num">experts carried / 6</th><th class="num">jaccard</th><th class="num">churn</th><th class="num">locality lift</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">0.376</td><td class="num">2.26</td><td class="num">0.257</td><td class="num">0.624</td><td class="num">16.0&times;</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">0.373</td><td class="num">2.24</td><td class="num">0.256</td><td class="num">0.627</td><td class="num">15.9&times;</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">0.374</td><td class="num">2.24</td><td class="num">0.256</td><td class="num">0.626</td><td class="num">16.0&times;</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Learned layers only (hash layers excluded). "Experts carried / 6" = adjacent overlap &times; 6.</p>
+      <figure>
+        <img src="assets/moe_01_adjacent_overlap_by_layer.png" alt="MoE adjacent-step expert overlap by layer">
+        <figcaption class="cap">Adjacent-step expert overlap per layer. Learned layers (circles) sit near 0.37 — 16&times; the dashed random line at 0.023 — while the three hash-routed layers (×, near the floor) route almost independently step to step.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="context">
+      <h2><span class="num">§5</span>It is context-independent — unlike KV selection</h2>
+      <p class="lead">The single most striking contrast with the attention side.</p>
+      <p>KV-selection locality <i>changes</i> with context: as the candidate pool grows, the lift rises (Part&nbsp;III: 1.7&times;&rarr;5.7&times; over 4K&rarr;16K). MoE routing does <b>not</b> — its pool is <b>fixed at 256 experts</b> regardless of context, so the routing-locality regime is the same at every length. The adjacent overlap is <b>0.376 / 0.373 / 0.374</b> at 4K / 8K / 16K — identical within 0.002.</p>
+      <figure>
+        <img src="assets/moe_05_context_scaling.png" alt="MoE locality versus context length, essentially flat">
+        <figcaption class="cap">MoE adjacent overlap and lift are flat across context length. The 4K/8K/16K expert-selection behavior is interchangeable — a clean consequence of the fixed 256-expert pool.</figcaption>
+      </figure>
+      <div class="callout"><b>Why it matters.</b> Sweeping context length is the right axis for studying <i>KV</i> locality (it changes the sparsity regime) but not for <i>MoE</i> locality (it does not). For expert caching, the informative axis is decode <i>length</i> — how long a hot-expert set stays warm — not prompt length.</div>
+    </section>
+
+    <section class="card" id="hash">
+      <h2><span class="num">§6</span>Hash-routed layers are not temporally local</h2>
+      <p>The first 3 layers route by a fixed <code class="k">token-id &rarr; experts</code> table. Because consecutive <i>generated</i> tokens are usually different ids, their hashed expert sets barely overlap — adjacent overlap ≈ <b>0.02</b>, essentially the random baseline (lift ≈ 1):</p>
+      <table>
+        <thead><tr><th>Routing (at 16K)</th><th class="num">layers</th><th class="num">adjacent overlap</th><th class="num">locality lift</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">learned top-6</td><td class="num">40</td><td class="num">0.374</td><td class="num">16.0&times;</td></tr>
+          <tr><td class="rowlabel">hash-routed</td><td class="num">3</td><td class="num">0.021</td><td class="num">0.9&times;</td></tr>
+          <tr><td class="rowlabel">random baseline</td><td class="num">&mdash;</td><td class="num">0.023</td><td class="num">1.0&times;</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/moe_04_hash_vs_learned.png" alt="Learned versus hash routing adjacent overlap across contexts">
+        <figcaption class="cap">Learned routing (blue) is ~16&times; above the random line at every context; hash routing (orange) sits on it. Reporting them together would understate learned locality — so they are always separated.</figcaption>
+      </figure>
+      <div class="callout warn"><b>Read carefully.</b> The hash layers' lack of locality is a property of the <i>routing rule</i> (deterministic token-id lookup on ever-changing tokens), not of the content or the model's learned behavior. It is not "worse" routing — just not cacheable by recency.</div>
+    </section>
+
+    <section class="card" id="retention">
+      <h2><span class="num">§7</span>Retention &amp; working set</h2>
+      <p>A durable near-term core plus steady turnover: a couple of experts persist across many steps while most churn. Even 64 steps back, learned-layer retention (~0.15) is still <b>6&times;</b> the random floor:</p>
+      <table>
+        <thead><tr><th>retention at lag k &rarr;</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">0.376</td><td class="num">0.264</td><td class="num">0.203</td><td class="num">0.174</td><td class="num">0.166</td><td class="num">0.143</td><td class="num">0.162</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">0.373</td><td class="num">0.270</td><td class="num">0.207</td><td class="num">0.173</td><td class="num">0.176</td><td class="num">0.150</td><td class="num">0.127</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">0.374</td><td class="num">0.270</td><td class="num">0.214</td><td class="num">0.167</td><td class="num">0.134</td><td class="num">0.153</td><td class="num">0.144</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/moe_02_retention.png" alt="MoE expert-selection retention versus lag">
+        <figcaption class="cap">Retention drops from 0.37 (lag 1) to a plateau near 0.15 — well above the 0.023 random floor. The three context curves lie on top of each other, again showing context-independence.</figcaption>
+      </figure>
+      <p>The <b>working set</b> spreads faster than for KV selection: over a 64-step window a learned layer touches ~<b>75</b> distinct experts (ratio ≈ 0.195 of <code class="k">64&times;6</code>), and across the full decode ~<b>120 of 256</b> (~47% of the pool). So the routing has a sticky core but explores broadly over time:</p>
+      <table>
+        <thead><tr><th>working-set ratio, window w &rarr;</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">1.000</td><td class="num">0.810</td><td class="num">0.666</td><td class="num">0.546</td><td class="num">0.429</td><td class="num">0.311</td><td class="num">0.200</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">1.000</td><td class="num">0.810</td><td class="num">0.664</td><td class="num">0.537</td><td class="num">0.420</td><td class="num">0.307</td><td class="num">0.195</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/moe_03_working_set.png" alt="MoE working-set growth versus window">
+        <figcaption class="cap">Working-set growth. The ratio stays high (~0.2 even at w=64) — MoE routing reuses a core but keeps reaching new experts, so an expert cache needs capacity for the tail, not just the top few.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="hw">
+      <h2><span class="num">§8</span>Why hardware cares</h2>
+      <p>In a disaggregated or offloaded MoE serving system, expert weights are large and may live in a slower/farther memory tier. The routing locality here says:</p>
+      <ul class="notes">
+        <li><b>~2 of 6 experts are predictable</b> from the previous token — a per-layer "hot expert" cache captures real reuse (16&times; over blind caching).</li>
+        <li><b>The hit rate is context-independent</b>, so a cache sized for one context length transfers to all — provisioning is simple.</li>
+        <li><b>But the tail is heavy</b>: ~47% of experts are touched across a decode, so a tiny cache saturates; capacity for the churning tail matters.</li>
+        <li><b>Skip the first 3 layers</b> for recency-based prefetch — their hash routing is not predictable from history (prefetch by token-id table instead).</li>
+      </ul>
+    </section>
+
+    <section class="card" id="takeaways">
+      <h2><span class="num">§9</span>Takeaways</h2>
+      <ul class="notes">
+        <li>Learned MoE routing is <b>strongly temporally local</b>: ~0.374 adjacent overlap (~2.2 of 6 experts persist), <b>16&times;</b> the 6/256 random baseline.</li>
+        <li>It is <b>context-independent</b> (0.374 ± 0.002 across 4K/8K/16K) — the fixed 256-expert pool means prompt length does not change the regime. This contrasts sharply with KV-selection locality, which strengthens with context.</li>
+        <li>The <b>3 hash-routed layers are not local</b> (≈ random) — a property of deterministic token-id routing, reported separately.</li>
+        <li>Retention has a <b>durable core</b> (still 6&times; random at lag 64) but the <b>working set is broad</b> (~47% of experts over a full decode).</li>
+        <li>Collected from the <b>same decode pass</b> as the KV trace in <a href="../02_part3_cpu_kv_locality/report.html"><b>Part&nbsp;III</b></a>, so attention- and FFN-sparsity are aligned per (layer, step).</li>
+      </ul>
+    </section>
+
+    <section class="card" id="limits">
+      <h2><span class="num">§10</span>Honest limitations</h2>
+      <ul class="notes">
+        <li><b>n = 1 per length</b>, IQ2 quantization, CPU reference path — quantization can shift the router's top-6 versus full precision; no cross-sample confidence intervals.</li>
+        <li><b>Context sweep is the wrong axis for MoE.</b> Because the expert pool is fixed, 4K/8K/16K mostly vary token content, not the sparsity regime; a <b>decode-length</b> sweep would probe how long the hot-expert set stays warm (future work).</li>
+        <li><b>Logical expert ids, not a physical cache</b> — overlaps are an upper bound that ignores expert-load timing and bandwidth.</li>
+        <li><b>Greedy decode on a single retrieval task</b> (RULER needle); other tasks and samplers may route differently.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      <p>Yang-gon Kim · <a href="https://github.com/yanggon-kim/sparse_attn_cpu">code &amp; analysis on GitHub</a> · <a href="../../index.html">Report Archive</a></p>
+      <p>Related: <a href="../00_part1_characterization/report.html">Part&nbsp;I</a> · <a href="../01_part2_prediction/report.html">Part&nbsp;II</a> · <a href="../02_part3_cpu_kv_locality/report.html">Part&nbsp;III (ds4 CPU KV locality)</a>. Mechanism: DeepSeek-V4 technical report. Measurements: this project (ds4 CPU engine, IQ2).</p>
+    </div>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>
