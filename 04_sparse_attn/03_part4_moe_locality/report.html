@@ -77,10 +77,11 @@
     <a href="#results">4 · Learned routing is local</a>
     <a href="#context">5 · Context-independent</a>
     <a href="#hash">6 · Hash layers are not local</a>
-    <a href="#retention">7 · Retention &amp; working set</a>
-    <a href="#hw">8 · Why hardware cares</a>
-    <a href="#takeaways">9 · Takeaways</a>
-    <a href="#limits">10 · Limitations</a>
+    <a href="#structure">7 · Per-layer routing structure</a>
+    <a href="#retention">8 · Retention &amp; working set</a>
+    <a href="#hw">9 · Why hardware cares</a>
+    <a href="#takeaways">10 · Takeaways</a>
+    <a href="#limits">11 · Limitations</a>
   </nav>
 
   <main>
@@ -187,8 +188,45 @@
       <div class="callout warn"><b>Read carefully.</b> The hash layers' lack of locality is a property of the <i>routing rule</i> (deterministic token-id lookup on ever-changing tokens), not of the content or the model's learned behavior. It is not "worse" routing — just not cacheable by recency.</div>
     </section>
 
+    <section class="card" id="structure">
+      <h2><span class="num">§7</span>Per-layer routing structure — is the overlap really "temporal"?</h2>
+      <p class="lead">Adjacent overlap conflates two things. A layer can look temporally local simply because it has <b>favorite experts</b> — a concentrated usage distribution — even if consecutive tokens were independent. Looking at each layer's decisions over the <i>whole</i> sequence separates them.</p>
+
+      <h3>Every learned layer has a preferred committee; hash layers don't</h3>
+      <p>Over a decode, each of the 40 learned layers routes with a clear favored set: its single most-used expert fires for <b>22%–85%</b> of tokens (uniform would be 2.3%), just <b>7–32 experts cover 50%</b> of the layer's routing, and normalized entropy is 0.63–0.85 (below the uniform 1.0). The 3 hash layers are near-uniform (top-expert rate 0.12–0.16, ~50 experts for 50%, entropy 0.92) — the control. Yet every learned layer still <i>touches ~half</i> the 256-pool (88–171 distinct experts), so the shape is a <b>concentrated core plus a long exploring tail</b>, never a fixed 6. The peakiest layers (L14, L15: one expert on the committee for 85% of tokens; 7 experts do half the work) cluster mid-stack; the flattest learned layer is L39 (0.22).</p>
+
+      <h3>Static preference vs dynamic correlation</h3>
+      <p>Split each layer's overlap into <b>static preference</b> — the overlap you'd get if consecutive tokens were <i>independent</i> draws from that layer's own usage distribution — and <b>dynamic correlation</b> — the excess on top. For the learned layers (consistent across 4K/8K/16K):</p>
+      <table>
+        <thead><tr><th>component</th><th class="num">adjacent overlap</th><th class="num">× over uniform</th><th class="num">what it is</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">uniform random</td><td class="num">0.023</td><td class="num">1.0×</td><td>6/256 chance floor</td></tr>
+          <tr><td class="rowlabel">static preference</td><td class="num">~0.17</td><td class="num">~7.4×</td><td>from favorite experts alone (independent tokens)</td></tr>
+          <tr><td class="rowlabel">observed</td><td class="num">0.374</td><td class="num">16.0×</td><td>static × ~2.3× dynamic step-to-step correlation</td></tr>
+        </tbody>
+      </table>
+      <p>So the ~16× "locality lift" factors as <b>≈7.4× static preference × ≈2.3× temporal correlation</b>. Both are real: static concentration is the larger <i>multiplier</i> off random, but the step-to-step correlation adds <i>at least as much</i> overlap in absolute terms (observed − static ≈ 0.20 vs static − uniform ≈ 0.14).</p>
+
+      <figure>
+        <img src="assets/moe_06_per_layer_concentration.png" alt="Per-layer expert-usage concentration and static-vs-dynamic overlap decomposition">
+        <figcaption class="cap">Top: the most-used expert's per-token rate for every layer (orange = hash, blue = learned) — learned layers are far above the 0.023 uniform line. Bottom: each learned layer's adjacent overlap split into green = static preference and blue = dynamic step-to-step correlation.</figcaption>
+      </figure>
+
+      <h3>Two modes, and a division of labor by depth</h3>
+      <p>Across layers, <code class="k">corr(static, observed) = +0.86</code> and <code class="k">corr(dynamic-multiplier, concentration) = −0.86</code>: the extra stickiness is strongest exactly where concentration is weakest. Learned layers span two mechanisms that both land near 0.37 — <b>"specialist" layers</b> (peaky: L14/15/24/26) get their overlap mostly from static preference (dynamic ≈ 1.5×), while <b>"context-tracking" layers</b> (broad: L9/20/21/23) have the highest dynamic multipliers (3.1–3.2×). By depth, concentration falls shallow→deep (top-expert rate 0.58 → 0.48) while the dynamic multiplier rises (2.18 → 2.49):</p>
+      <table>
+        <thead><tr><th>depth third</th><th class="num">layers</th><th class="num">top-expert rate</th><th class="num">observed overlap</th><th class="num">dynamic ×</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">shallow</td><td class="num">3–15</td><td class="num">0.58</td><td class="num">0.362</td><td class="num">2.18×</td></tr>
+          <tr><td class="rowlabel">middle</td><td class="num">16–28</td><td class="num">0.53</td><td class="num">0.394</td><td class="num">2.42×</td></tr>
+          <tr><td class="rowlabel">deep</td><td class="num">29–42</td><td class="num">0.48</td><td class="num">0.365</td><td class="num">2.49×</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><b>Reading.</b> Early learned layers route by <b>fixed specialists</b> (a few dominant experts), deep layers route more by <b>context</b> (weaker preference but stronger step-to-step correlation), and the mid-stack is both the most concentrated and the highest-overlap. So the apparent "temporal locality" of MoE routing is <i>mostly</i> a stable per-layer preference, with a real, separable temporal component that is largest in the least-concentrated layers.</div>
+    </section>
+
     <section class="card" id="retention">
-      <h2><span class="num">§7</span>Retention &amp; working set</h2>
+      <h2><span class="num">§8</span>Retention &amp; working set</h2>
       <p>A durable near-term core plus steady turnover: a couple of experts persist across many steps while most churn. Even 64 steps back, learned-layer retention (~0.15) is still <b>6&times;</b> the random floor:</p>
       <table>
         <thead><tr><th>retention at lag k &rarr;</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th></tr></thead>
@@ -217,7 +255,7 @@
     </section>
 
     <section class="card" id="hw">
-      <h2><span class="num">§8</span>Why hardware cares</h2>
+      <h2><span class="num">§9</span>Why hardware cares</h2>
       <p>In a disaggregated or offloaded MoE serving system, expert weights are large and may live in a slower/farther memory tier. The routing locality here says:</p>
       <ul class="notes">
         <li><b>~2 of 6 experts are predictable</b> from the previous token — a per-layer "hot expert" cache captures real reuse (16&times; over blind caching).</li>
@@ -228,8 +266,9 @@
     </section>
 
     <section class="card" id="takeaways">
-      <h2><span class="num">§9</span>Takeaways</h2>
+      <h2><span class="num">§10</span>Takeaways</h2>
       <ul class="notes">
+        <li><b>Per-layer structure:</b> every learned layer keeps a preferred committee (7–32 experts do half its routing, one expert often used in the majority of tokens); the ~16× lift ≈ <b>7.4× static preference × 2.3× temporal correlation</b>. Early layers = fixed specialists, deep layers = context trackers; hash layers are near-uniform.</li>
         <li>Learned MoE routing is <b>strongly temporally local</b>: ~0.374 adjacent overlap (~2.2 of 6 experts persist), <b>16&times;</b> the 6/256 random baseline.</li>
         <li>It is <b>context-independent</b> (0.374 ± 0.002 across 4K/8K/16K) — the fixed 256-expert pool means prompt length does not change the regime. This contrasts sharply with KV-selection locality, which strengthens with context.</li>
         <li>The <b>3 hash-routed layers are not local</b> (≈ random) — a property of deterministic token-id routing, reported separately.</li>
@@ -239,7 +278,7 @@
     </section>
 
     <section class="card" id="limits">
-      <h2><span class="num">§10</span>Honest limitations</h2>
+      <h2><span class="num">§11</span>Honest limitations</h2>
       <ul class="notes">
         <li><b>n = 1 per length</b>, IQ2 quantization, CPU reference path — quantization can shift the router's top-6 versus full precision; no cross-sample confidence intervals.</li>
         <li><b>Context sweep is the wrong axis for MoE.</b> Because the expert pool is fixed, 4K/8K/16K mostly vary token content, not the sparsity regime; a <b>decode-length</b> sweep would probe how long the hot-expert set stays warm (future work).</li>
