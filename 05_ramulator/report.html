@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ramulator 2.1 Core Course — the Concepts Behind the HBM Base-Die Model</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6;
+    --hbm:#1f6feb; --hbm-bg:#e8f0fe; --lp:#7c3aed; --lp-bg:#f1eafe; --dma:#b54708; --dma-bg:#fdf0e6;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:Arial,Helvetica,sans-serif; color:var(--text); background:var(--bg); line-height:1.6; }
+  a { color:var(--accent); }
+  .wrap { display:grid; grid-template-columns:250px minmax(0,1fr); gap:28px; width:min(100%,1200px); margin:0 auto; padding:36px 24px 64px; }
+  nav.toc { position:sticky; top:24px; align-self:start; font-size:.9rem; }
+  nav.toc .crumb { color:var(--muted); font-size:.8rem; margin-bottom:14px; }
+  nav.toc .crumb a { color:var(--muted); }
+  nav.toc a.item { display:block; padding:5px 10px; border-radius:6px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+  nav.toc a.item:hover { background:#eef5ff; color:var(--accent); }
+  main { min-width:0; }
+  header.page h1 { font-size:clamp(1.7rem,3.6vw,2.4rem); line-height:1.12; margin:0; }
+  header.page .sub { color:var(--muted); margin-top:10px; font-size:1.02rem; }
+  .tags { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+  .tag { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:999px; background:#eef2f7; color:#43506a; border:1px solid var(--border); }
+  .tag.hbm { background:var(--hbm-bg); color:var(--hbm); }
+  .tag.lp { background:var(--lp-bg); color:var(--lp); }
+  section.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 28px rgba(23,32,51,.06); padding:26px; margin-bottom:22px; scroll-margin-top:20px; }
+  section.card > h2 { margin:0 0 6px; font-size:1.35rem; }
+  section.card > h2 .num { color:var(--accent); font-weight:800; margin-right:8px; }
+  .lead { color:var(--muted); margin:0 0 18px; }
+  h3 { font-size:1.05rem; margin:22px 0 8px; }
+  p { margin:10px 0; }
+  code.k { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em; background:#eef2f7; border:1px solid var(--border); border-radius:4px; padding:1px 5px; color:#33415c; }
+  pre.code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.8rem; line-height:1.55; background:#0b1020; color:#dbe4f5; border-radius:8px; padding:14px 18px; overflow:auto; }
+  pre.code .c { color:#7f93b8; }
+  pre.code .hl { color:#8ec2ff; font-weight:700; }
+  .src { font-size:.75rem; color:var(--muted); font-family:ui-monospace,Menlo,Consolas,monospace; margin:14px 0 4px; }
+  .callout { border-left:4px solid var(--accent); background:#f3f8ff; padding:12px 18px; border-radius:0 8px 8px 0; margin:16px 0; }
+  .callout.win { border-left-color:var(--good); background:var(--good-bg); }
+  .callout.warn { border-left-color:var(--warn); background:var(--warn-bg); }
+  .tryit { border:1px dashed var(--good); background:var(--good-bg); border-radius:8px; padding:12px 16px; margin:16px 0; }
+  .tryit .tt { font-weight:800; color:var(--good); font-size:.85rem; }
+  .recap { border:1px solid var(--border); background:#fbfcff; border-radius:8px; padding:12px 18px; margin:16px 0 6px; }
+  .recap .rt { font-weight:800; color:var(--accent); font-size:.85rem; }
+  .recap ul { margin:8px 0 2px; padding-left:20px; }
+  details.quiz { border:1px solid var(--border); border-radius:8px; padding:10px 16px; margin:8px 0; background:#fbfcff; }
+  details.quiz summary { cursor:pointer; font-weight:700; color:#33415c; }
+  details.quiz[open] { background:#f3f8ff; }
+  details.quiz .ans { margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; margin:8px 0 4px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f1f4f9; font-size:.82rem; }
+  tbody tr:hover { background:#f7faff; }
+  td.rowlabel { font-weight:700; white-space:nowrap; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82em; }
+  .diagrambox { width:100%; overflow:auto; margin:14px 0; }
+  svg.diagram { width:100%; height:auto; display:block; min-width:660px; }
+  @media (max-width: 880px) { .wrap { grid-template-columns:minmax(0,1fr); } nav.toc { position:static; display:flex; flex-wrap:wrap; gap:4px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc" aria-label="Table of contents">
+    <div class="crumb"><a href="../index.html">Report Archive</a> / Ramulator</div>
+    <a class="item" href="#l1">1. The big picture</a>
+    <a class="item" href="#l2">2. The life of a request</a>
+    <a class="item" href="#l3">3. The component framework</a>
+    <a class="item" href="#l4">4. Inside a memory controller</a>
+    <a class="item" href="#l5">5. The DRAM device model</a>
+    <a class="item" href="#l6">6. Address mapping</a>
+    <a class="item" href="#l7">7. Clocks</a>
+    <a class="item" href="#l8">8. The v1 design, guided</a>
+    <a class="item" href="#appx">Appendix: reference &amp; glossary</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Ramulator 2.1 Core Course — the Concepts Behind the HBM Base-Die Model</h1>
+      <p class="sub">A self-contained eight-lesson course on the cycle-level DRAM simulator Ramulator 2.1,
+      focused on exactly the concepts needed to understand (and extend) the custom HBM base die + LPDDR
+      model. No prior Ramulator knowledge assumed. Every pseudo-code block is derived from the real source
+      (path cited); every number is from experiments run on the real model.</p>
+      <div class="tags">
+        <span class="tag">8 lessons</span>
+        <span class="tag">no prior knowledge assumed</span>
+        <span class="tag hbm">HBM4 / LPDDR5 examples</span>
+        <span class="tag lp">runnable exercises</span>
+        <span class="tag">self-grading quizzes</span>
+      </div>
+    </header>
+
+    <!-- ══════════════════════ LESSON 1 ══════════════════════ -->
+    <section class="card" id="l1">
+      <h2><span class="num">1</span>The big picture: what Ramulator actually is</h2>
+      <p class="lead">Ramulator simulates <em>when</em>, never <em>what</em> — and all of time is one loop.</p>
+
+      <p>Ramulator answers a single question, millions of times: <strong>"a memory request arrived at time T —
+      at what time does it finish?"</strong> It stores no data. There are no real bytes anywhere. It only tracks
+      timing, obeying the DRAM standard's rules (how long a row activation takes, how long after a write a read
+      may start…). A read request goes in, waits in queues, obeys DRAM timing, and comes out with a timestamp.
+      <strong>The timestamp is the product.</strong> This is enough, because an architect's questions are all
+      timing questions: sustained bandwidth? latency under load? how much does stream A slow down stream B?</p>
+
+      <p>Every simulation has exactly <strong>two top-level actors</strong>, and time advances only because a
+      loop calls <code class="k">tick()</code> on them, alternately, forever:</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 240" role="img" aria-label="Two actors and the tick loop">
+        <defs>
+          <marker id="a1arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <rect x="60" y="24" width="280" height="86" rx="10" fill="#eef2f7" stroke="#43506a" stroke-width="1.5"/>
+        <text x="200" y="54" text-anchor="middle" font-size="15" font-weight="800" fill="#172033">frontend</text>
+        <text x="200" y="74" text-anchor="middle" font-size="11" fill="#647083">makes traffic: SimpleO3 (CPU model)</text>
+        <text x="200" y="90" text-anchor="middle" font-size="11" fill="#647083">or LoadStoreTrace ("LD 0 / ST 64" file)</text>
+        <rect x="560" y="24" width="280" height="86" rx="10" fill="#e8f0fe" stroke="#1f6feb" stroke-width="1.5"/>
+        <text x="700" y="54" text-anchor="middle" font-size="15" font-weight="800" fill="#1f6feb">memory_system</text>
+        <text x="700" y="74" text-anchor="middle" font-size="11" fill="#647083">decides when each request completes:</text>
+        <text x="700" y="90" text-anchor="middle" font-size="11" fill="#647083">GenericDRAM, or v1's HBMLPDDRBaseDie</text>
+        <line x1="342" y1="58" x2="556" y2="58" stroke="#43506a" stroke-width="2.2" marker-end="url(#a1arr)"/>
+        <text x="449" y="48" text-anchor="middle" font-size="12" font-weight="700" fill="#43506a">send(request) → bool</text>
+        <line x1="556" y1="86" x2="342" y2="86" stroke="#1a7f37" stroke-width="2" marker-end="url(#a1arr)" stroke-dasharray="5 4"/>
+        <text x="449" y="106" text-anchor="middle" font-size="11" fill="#1a7f37">callback(request) when a read completes</text>
+        <!-- tick train fe:mem = 1:8 -->
+        <text x="60" y="152" font-size="12" font-weight="700" fill="#172033">time = the loop's tick train (example: frontend clock_ratio 1 : memory clock_ratio 8)</text>
+        <g font-size="10" text-anchor="middle">
+          <rect x="60"  y="166" width="30" height="26" rx="4" fill="#eef2f7" stroke="#43506a"/><text x="75"  y="183" font-weight="800" fill="#172033">F</text>
+          <rect x="94"  y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="109" y="183" fill="#1f6feb">M</text>
+          <rect x="128" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="143" y="183" fill="#1f6feb">M</text>
+          <rect x="162" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="177" y="183" fill="#1f6feb">M</text>
+          <rect x="196" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="211" y="183" fill="#1f6feb">M</text>
+          <rect x="230" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="245" y="183" fill="#1f6feb">M</text>
+          <rect x="264" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="279" y="183" fill="#1f6feb">M</text>
+          <rect x="298" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="313" y="183" fill="#1f6feb">M</text>
+          <rect x="332" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="347" y="183" fill="#1f6feb">M</text>
+          <rect x="366" y="166" width="30" height="26" rx="4" fill="#eef2f7" stroke="#43506a"/><text x="381" y="183" font-weight="800" fill="#172033">F</text>
+          <rect x="400" y="166" width="30" height="26" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="415" y="183" fill="#1f6feb">M</text>
+          <text x="450" y="183" font-size="12" fill="#647083">… until frontend.is_finished()</text>
+        </g>
+        <text x="60" y="218" font-size="11" fill="#647083">F = one frontend tick (may send one request) · M = one memory tick (DRAM advances one cycle).</text>
+        <text x="60" y="234" font-size="11" fill="#647083">The ratio is also the experimenter's offered-load knob: 1 request per 8 memory ticks here.</text>
+      </svg>
+      </div>
+
+      <p class="src">pseudo-code of the real main loop — src/ramulator/python/bindings.cpp, Simulation::run()</p>
+      <pre class="code">fe_ratio  = frontend.clock_ratio          <span class="c">// e.g. 1</span>
+mem_ratio = memory_system.clock_ratio     <span class="c">// e.g. 8</span>
+loop forever:
+  every mem_ratio iterations:  <span class="hl">frontend.tick()</span>        <span class="c">// maybe sends one request</span>
+  if frontend.is_finished():   break                    <span class="c">// trace done → SIMULATION OVER</span>
+  every fe_ratio iterations:   <span class="hl">memory_system.tick()</span>   <span class="c">// DRAM advances one cycle</span></pre>
+
+      <p>Two facts hiding in this loop explain real behavior of the v1 model:</p>
+      <ul>
+        <li><strong>The gear ratio is the offered-load knob.</strong> <code class="k">LoadStoreTrace</code> sends at
+        most one request per frontend tick, so "frontend ticks per memory tick" <em>is</em> the request rate.
+        Bandwidth experiments use fe:mem = 2:1 (saturating); latency probes use 1:16 (nearly idle).</li>
+        <li><strong>The frontend ends the world.</strong> The loop exits when the frontend finishes; the memory
+        system gets no vote. The v1 migration DMA lives inside the memory system — when the trace runs out, the
+        simulation stops mid-flight, in-flight DMA blocks and all. DMA experiments must pad the trace.</li>
+      </ul>
+
+      <p>A tick is dimensionless. Physical time appears only when you multiply by the tick period from the DRAM
+      spec: HBM4-8000 → <strong>0.25&nbsp;ns/tick</strong>; LPDDR5-6400 → <strong>1.25&nbsp;ns/tick</strong>. A
+      real trap from our experiments: HBM reported 196 ticks average read latency and LPDDR 74 ticks — LPDDR
+      "looks" faster until you convert: 49&nbsp;ns vs 93&nbsp;ns.</p>
+
+      <div class="tryit"><span class="tt">TRY IT</span> — from <span class="mono">01_github/ramulator2/</span> (after building):
+      <div class="mono">PYTHONPATH=python python3 examples/example_config.py</div>
+      By the end of Lesson 2 you will know exactly which two timestamps produced the printed <span class="mono">Avg read latency</span>.</div>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li>Ramulator simulates <strong>when</strong>, never <strong>what</strong>. No data exists anywhere.</li>
+          <li>Two actors — frontend → memory system — ticked alternately by one loop at a configurable gear ratio.</li>
+          <li>The frontend finishing is the only thing that ends a simulation.</li>
+          <li>Ticks are dimensionless; multiply by the tier's tick period (0.25 / 1.25 ns) to get real time.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q1 — Your DMA engine still has 3 blocks in flight when the frontend's trace runs out. What happens?</summary>
+        <div class="ans">The simulation ends immediately — the loop breaks on <code class="k">is_finished()</code> before
+        the memory system ticks again. The in-flight blocks simply never complete (stats would show e.g.
+        <span class="mono">blocks_completed=3</span> with reads issued for a fourth). This is why DMA experiments pad the
+        frontend trace with filler requests.</div>
+      </details>
+      <details class="quiz"><summary>Q2 — 100 ticks avg latency on HBM4-8000 vs 30 ticks on LPDDR5-6400: which answered faster in real time?</summary>
+        <div class="ans">HBM: 100 × 0.25 = 25 ns, vs LPDDR: 30 × 1.25 = 37.5 ns. The larger tick count is the faster memory.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 2 ══════════════════════ -->
+    <section class="card" id="l2">
+      <h2><span class="num">2</span>The life of one request</h2>
+      <p class="lead">One struct, one bool, one callback — and the read/write asymmetry that shaped the whole v1 project.</p>
+
+      <p class="src">the core object (fields that matter) — src/ramulator/base/request.h</p>
+      <pre class="code">struct Request:
+  addr        <span class="c">// flat byte address, e.g. 0x1000</span>
+  addr_vec    <span class="c">// same address decoded: [channel, rank, bank, row, column]  (Lesson 6)</span>
+  type_id     <span class="c">// Read = 0 or Write = 1 — nothing else enters through send()</span>
+  source_id   <span class="c">// which core sent it; -1 = "internal traffic" (crucial for v1, Lesson 8)</span>
+  size_bytes  <span class="c">// must be set, ≤ one DRAM transaction (32 B for HBM4/LPDDR5)</span>
+  arrive, depart              <span class="c">// timestamps: entered / finished  ← THE PRODUCT</span>
+  callback(Request&amp;)          <span class="c">// "call me when it's done"</span>
+  <span class="c">// note what is ABSENT: no data pointer, no payload, no value.</span></pre>
+
+      <p class="src">how a frontend sends — src/ramulator/frontend/impl/memory_trace/loadstore_trace.cpp, tick()</p>
+      <pre class="code">tick():
+  line = trace[cursor]                          <span class="c">// e.g. "LD 4096"</span>
+  req  = Request(line.addr, line.is_write ? Write : Read)
+  req.size_bytes = memory_system.get_tx_bytes() <span class="c">// 32 B</span>
+  sent = <span class="hl">memory_system.send(req)</span>
+  if sent: cursor += 1                          <span class="c">// advance ONLY on success ← backpressure!</span></pre>
+
+      <p>Three idioms in those six lines appear everywhere in Ramulator, including the v1 DMA engine:</p>
+      <ul>
+        <li><strong>① <code class="k">send()</code> returns a bool — backpressure.</strong> Full queues ⇒
+        <code class="k">false</code> ⇒ nothing happened; retry the same request next tick. Queues never overflow;
+        senders stall. The MigrationEngine's <span class="mono">read_stalls / write_stalls</span> stats are literally
+        counters of <code class="k">send()==false</code>.</li>
+        <li><strong>② The request is copied in</strong> — the sender forgets it, except through…</li>
+        <li><strong>③ The callback.</strong> Completion is event-driven: when a read finishes, the controller invokes
+        your lambda with <code class="k">depart</code> filled in. <span class="mono">latency = depart − arrive</span> is
+        where every latency statistic is born. In v1, <em>a read's callback is what issues the matching write to the
+        other tier</em> — reads chain into writes with no other coordination.</li>
+      </ul>
+
+      <h3>Reads and writes are asymmetric — the most consequential fact in this course</h3>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 250" role="img" aria-label="Read vs write completion timelines">
+        <defs>
+          <marker id="a2arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <!-- READ lane -->
+        <text x="40" y="30" font-size="13" font-weight="800" fill="#1f6feb">READ — someone is waiting for the answer</text>
+        <line x1="40" y1="66" x2="860" y2="66" stroke="#d8dee8" stroke-width="2"/>
+        <circle cx="90" cy="66" r="5" fill="#1f6feb"/><text x="90" y="50" text-anchor="middle" font-size="10.5" fill="#43506a">send() → arrive</text>
+        <rect x="150" y="54" width="130" height="24" rx="5" fill="#eef2f7" stroke="#d8dee8"/><text x="215" y="70" text-anchor="middle" font-size="10.5" fill="#43506a">waits in read buffer</text>
+        <rect x="320" y="54" width="60" height="24" rx="5" fill="#e8f0fe" stroke="#1f6feb"/><text x="350" y="70" text-anchor="middle" font-size="10.5" fill="#1f6feb">ACT</text>
+        <rect x="400" y="54" width="60" height="24" rx="5" fill="#e8f0fe" stroke="#1f6feb"/><text x="430" y="70" text-anchor="middle" font-size="10.5" fill="#1f6feb">RD</text>
+        <line x1="460" y1="66" x2="620" y2="66" stroke="#1f6feb" stroke-width="2" stroke-dasharray="5 4"/>
+        <text x="540" y="55" text-anchor="middle" font-size="10.5" fill="#647083">read_latency ticks</text>
+        <circle cx="640" cy="66" r="5" fill="#1a7f37"/><text x="640" y="50" text-anchor="middle" font-size="10.5" fill="#1a7f37" font-weight="700">depart → callback fires</text>
+        <text x="740" y="70" font-size="10.5" fill="#1a7f37">latency = depart − arrive</text>
+        <!-- WRITE lane -->
+        <text x="40" y="122" font-size="13" font-weight="800" fill="#b54708">WRITE — nobody is waiting (a "posted" write)</text>
+        <line x1="40" y1="158" x2="860" y2="158" stroke="#d8dee8" stroke-width="2"/>
+        <circle cx="90" cy="158" r="5" fill="#b54708"/><text x="90" y="142" text-anchor="middle" font-size="10.5" fill="#43506a">send() accepted</text>
+        <circle cx="150" cy="158" r="5" fill="#1a7f37"/><text x="168" y="142" text-anchor="middle" font-size="10.5" fill="#1a7f37" font-weight="700">"done!" (immediately)</text>
+        <rect x="240" y="146" width="240" height="24" rx="5" fill="#fdf0e6" stroke="#b54708"/><text x="360" y="162" text-anchor="middle" font-size="10.5" fill="#b54708">sits in the WRITE BUFFER…</text>
+        <rect x="560" y="146" width="180" height="24" rx="5" fill="#fdf0e6" stroke="#b54708" stroke-dasharray="4 3"/><text x="650" y="162" text-anchor="middle" font-size="10.5" fill="#b54708">…drained later, in a batch</text>
+        <text x="40" y="204" font-size="11" fill="#647083">Why batches? The DRAM data bus is bidirectional — every read↔write direction switch wastes dead cycles</text>
+        <text x="40" y="220" font-size="11" fill="#647083">(bus-turnaround timing like tWTR). Controllers accumulate writes and drain them in bursts (Lesson 4's "write mode").</text>
+        <text x="40" y="242" font-size="11" font-weight="700" fill="#b54708">This asymmetry caused a v1 deadlock AND turned out to be the dominant interference mechanism we measured.</text>
+      </svg>
+      </div>
+
+      <div class="callout warn"><strong>The two v1 war stories, both born here.</strong>
+      (1)&nbsp;The first MigrationEngine waited for its writes to <em>really</em> retire before declaring a block done —
+      and deadlocked: under a steady GPU read stream, "whenever convenient" is <em>never</em> (0 blocks in 40,000 ticks).
+      Fix: count writes done at accept — posted, like real DMA hardware.
+      (2)&nbsp;In the ping-pong study, GPU-vs-DMA interference was dominated by write-drain batching, not bank conflicts;
+      enlarging the write buffer 4× recovered most of the GPU's latency (1.50× → 1.18×) at zero migration cost.</div>
+
+      <p>One more door exists: <code class="k">priority_send()</code>, for internal DRAM maintenance commands
+      (refresh, forced precharges — <span class="mono">type_id = −1</span>). v1's DMA does <em>not</em> use it: the DMA
+      sends ordinary reads/writes so it experiences ordinary queueing.</p>
+
+      <div class="tryit"><span class="tt">TRY IT</span> — run the example again; connect
+      <span class="mono">Avg read latency</span> = mean(<span class="mono">depart − arrive</span>) over every read whose
+      callback fired, and <span class="mono">Read requests</span> = accepted <code class="k">send()</code> calls.</div>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li><code class="k">Request</code> = address + type + size + <span class="mono">arrive/depart</span> + callback. No data.</li>
+          <li><code class="k">send() == false</code> means "queue full, retry next tick". Senders own the retry.</li>
+          <li>Reads complete later via callback (real latency); writes complete at accept and drain lazily in batches.</li>
+          <li><code class="k">priority_send()</code> is a separate door for maintenance commands.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q3 — Why must LoadStoreTrace NOT advance its cursor when send() returns false?</summary>
+        <div class="ans">The rejected request was not accepted — nothing holds it. Advancing would silently drop a memory
+        access from the workload; retrying preserves it.</div>
+      </details>
+      <details class="quiz"><summary>Q4 — A write's callback fired. Has the data reached the DRAM cells? Where is the request?</summary>
+        <div class="ans">No (and no data exists anyway). The request sits in the controller's write buffer awaiting a
+        write-mode drain. The callback fired at accept because writes are posted.</div>
+      </details>
+      <details class="quiz"><summary>Q5 — Why did "wait until my writes retire" deadlock the first MigrationEngine?</summary>
+        <div class="ans">Its 16-write blocks never filled the 32-entry write buffer past the 80% watermark, and the steady
+        GPU read stream meant the "read queue empty" condition never triggered either — so write mode never engaged, the
+        writes never retired, and the engine waited forever.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 3 ══════════════════════ -->
+    <section class="card" id="l3">
+      <h2><span class="num">3</span>The component framework: Python config → C++ objects</h2>
+      <p class="lead">How <code class="k">ramulator.controller.HBM34(...)</code> becomes a live C++ object tree with zero binding code — the machinery v1 extended.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 300" role="img" aria-label="Python config to C++ component tree">
+        <defs>
+          <marker id="a3arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <!-- python -->
+        <rect x="20" y="30" width="250" height="120" rx="8" fill="#eef2f7" stroke="#43506a"/>
+        <text x="145" y="52" text-anchor="middle" font-size="12.5" font-weight="800" fill="#172033">1. Python objects</text>
+        <text x="32" y="74" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">HBM34(</text>
+        <text x="44" y="90" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">dram=HBM4(...),</text>
+        <text x="44" y="106" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">scheduler=FRFCFS(),</text>
+        <text x="44" y="122" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">addr_mapper=RoBaRaCoCh())</text>
+        <text x="32" y="142" font-size="10" fill="#647083">.to_config() → nested dict</text>
+        <line x1="272" y1="90" x2="322" y2="90" stroke="#43506a" stroke-width="2" marker-end="url(#a3arr)"/>
+        <!-- confignode -->
+        <rect x="326" y="30" width="200" height="120" rx="8" fill="#f3f8ff" stroke="#1f6feb"/>
+        <text x="426" y="52" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f6feb">2. ConfigNode tree</text>
+        <text x="338" y="74" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">{"impl": "HBM34",</text>
+        <text x="348" y="90" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">"scheduler":</text>
+        <text x="358" y="106" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">{"impl": "FRFCFS"},</text>
+        <text x="348" y="122" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">"dram": {...}, ...}</text>
+        <line x1="528" y1="90" x2="578" y2="90" stroke="#43506a" stroke-width="2" marker-end="url(#a3arr)"/>
+        <text x="553" y="78" text-anchor="middle" font-size="10" fill="#647083">factory</text>
+        <!-- tree -->
+        <rect x="582" y="20" width="300" height="270" rx="8" fill="#ffffff" stroke="#d8dee8"/>
+        <text x="732" y="44" text-anchor="middle" font-size="12.5" font-weight="800" fill="#172033">3. live C++ component tree</text>
+        <rect x="642" y="58" width="180" height="34" rx="6" fill="#e8f0fe" stroke="#1f6feb"/>
+        <text x="732" y="80" text-anchor="middle" font-size="11" font-weight="700" fill="#1f6feb">HBM34Controller</text>
+        <rect x="602" y="130" width="120" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="662" y="149" text-anchor="middle" font-size="10.5" fill="#43506a">FRFCFS scheduler</text>
+        <rect x="742" y="130" width="120" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="802" y="149" text-anchor="middle" font-size="10.5" fill="#43506a">RoBaRaCoCh mapper</text>
+        <rect x="602" y="180" width="120" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="662" y="199" text-anchor="middle" font-size="10.5" fill="#43506a">NoRefresh manager</text>
+        <rect x="742" y="180" width="120" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="802" y="199" text-anchor="middle" font-size="10.5" fill="#43506a">DRAM device (HBM4)</text>
+        <line x1="700" y1="94" x2="662" y2="128" stroke="#43506a" stroke-width="1.5" marker-end="url(#a3arr)"/>
+        <line x1="764" y1="94" x2="802" y2="128" stroke="#43506a" stroke-width="1.5" marker-end="url(#a3arr)"/>
+        <line x1="662" y1="162" x2="662" y2="178" stroke="#43506a" stroke-width="1.5" marker-end="url(#a3arr)"/>
+        <line x1="802" y1="162" x2="802" y2="178" stroke="#43506a" stroke-width="1.5" marker-end="url(#a3arr)"/>
+        <text x="732" y="238" text-anchor="middle" font-size="10" fill="#647083">built recursively by RAMULATOR_CREATE_CHILD</text>
+        <text x="732" y="254" text-anchor="middle" font-size="10" fill="#647083">calls inside each parent's init()</text>
+        <text x="732" y="278" text-anchor="middle" font-size="10" fill="#1a7f37" font-weight="700">stats auto-nest along this same tree</text>
+        <!-- codegen backarrow -->
+        <line x1="426" y1="152" x2="426" y2="196" stroke="#7c3aed" stroke-width="1.6" stroke-dasharray="5 4"/>
+        <rect x="240" y="200" width="372" height="66" rx="8" fill="#f1eafe" stroke="#7c3aed"/>
+        <text x="426" y="222" text-anchor="middle" font-size="11.5" font-weight="700" fill="#7c3aed">the code generator closes the loop</text>
+        <text x="426" y="240" text-anchor="middle" font-size="10" fill="#43506a">regex-scans C++ for the macros → generates the Python wrapper classes</text>
+        <text x="426" y="256" text-anchor="middle" font-size="10" fill="#43506a">(python/ramulator/&lt;interface&gt;/*.py) — nobody writes bindings by hand</text>
+      </svg>
+      </div>
+
+      <p><strong>Interfaces and implementations.</strong> Every component type has an abstract interface
+      (<code class="k">IController</code>, <code class="k">IScheduler</code>, <code class="k">IMemorySystem</code>, … and in
+      v1 our new <code class="k">IDMAEngine</code>) declaring what others may ask of it. Every concrete component inherits
+      the interface plus a common <code class="k">Implementation</code> base, and wires itself in with macros — which do
+      double duty as <em>runtime code</em> and <em>codegen markers</em>:</p>
+
+      <p class="src">the three magic macros — src/ramulator/base/base.h (usage pattern)</p>
+      <pre class="code">class FRFCFS : public IScheduler, public Implementation {
+  <span class="hl">RAMULATOR_REGISTER_IMPLEMENTATION</span>(IScheduler, FRFCFS, "FRFCFS")
+      <span class="c">// → self-registers in the factory → becomes ramulator.scheduler.FRFCFS(...) in Python</span>
+  void init() {
+    <span class="hl">RAMULATOR_PARSE_PARAM</span>(m_knob, int, "knob").default_val(4)
+      <span class="c">// → config parameter, auto-exposed as a Python keyword argument</span>
+  }
+}
+<span class="c">// inside a parent's init(): build children from the config subtree</span>
+<span class="hl">RAMULATOR_CREATE_CHILD</span>(m_scheduler, IScheduler)
+<span class="hl">RAMULATOR_CREATE_CHILD_LIST</span>(m_controllers, IController)     <span class="c">// key = "controllers"</span>
+
+<span class="c">// ── the v1 extension: one component, TWO lists of the same interface ──</span>
+<span class="hl">RAMULATOR_CREATE_NAMED_CHILD_LIST</span>(m_hbm_controllers,   IController, "hbm_controllers")
+<span class="hl">RAMULATOR_CREATE_NAMED_CHILD_LIST</span>(m_lpddr_controllers, IController, "lpddr_controllers")</pre>
+
+      <p>There is <strong>no registry file and no binding code</strong>. A new scheduler is one <span class="mono">.cpp</span>
+      file with these macros plus one line in a <span class="mono">CMakeLists.txt</span> (source lists are explicit —
+      forget the CMake line and your component silently doesn't exist). The stock
+      <code class="k">CREATE_CHILD_LIST</code> hard-wires its config key to "interface name + s", so a component could own
+      only one list per interface; the base die needs two lists of <code class="k">IController</code> — hence the named
+      variant, which is why the Python API has first-class <span class="mono">hbm_controllers=[…]</span> /
+      <span class="mono">lpddr_controllers=[…]</span> arguments.</p>
+
+      <h3>Lifecycle rules that bite (they bit us)</h3>
+      <ul>
+        <li><code class="k">init()</code> runs <strong>at the end of the constructor</strong> — parse params, create
+        children. A child is fully initialized right after its <code class="k">CREATE_CHILD</code> line.</li>
+        <li><code class="k">setup()</code> runs once <strong>after the whole tree exists</strong> — cross-component wiring
+        only, and it must not recurse into children. v1's MigrationEngine finds its host here (in
+        <code class="k">init()</code> the parent is still mid-construction).</li>
+        <li>Codegen gotcha: a brand-new <em>interface</em> must land together with at least one <em>implementation</em>,
+        or the generated Python package imports a subpackage that doesn't exist — and codegen itself imports
+        <code class="k">ramulator</code>. Chicken, meet egg.</li>
+      </ul>
+
+      <p><strong>Stats ride the same tree.</strong> <code class="k">m_stats.add("name", counter)</code> in
+      <code class="k">init()</code>; collection walks the component tree and nests each child under its interface name.
+      Same-interface siblings become a <em>list</em> distinguished by <span class="mono">id</span> — which is why v1
+      labels controllers <span class="mono">"HBM Channel 0"</span> / <span class="mono">"LPDDR Channel 1"</span> and
+      experiment scripts filter <span class="mono">stats["memory_system"]["controller"]</span> by prefix.</p>
+
+      <div class="tryit"><span class="tt">TRY IT</span> — open
+      <span class="mono">python/ramulator/dma_engine/migration_engine.py</span>. Every <span class="mono">Param(...)</span>
+      line corresponds 1:1 to a <span class="mono">RAMULATOR_PARSE_PARAM</span> in the C++. Nobody wrote that file by hand.</div>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li>Interface = contract; implementation = macro-registered class; factory + config tree builds everything recursively.</li>
+          <li>The macros are simultaneously runtime code and codegen markers. New component = one .cpp + one CMake line.</li>
+          <li><code class="k">init()</code>: params &amp; children (in constructor). <code class="k">setup()</code>: cross-wiring (after tree exists).</li>
+          <li>v1 added named child lists; stats auto-nest, same-interface siblings become an id-tagged list.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q6 — New scheduler .cpp with all the right macros, rebuilt, but ramulator.scheduler.MyScheduler doesn't exist. Most likely cause?</summary>
+        <div class="ans">The .cpp was never added to the relevant CMakeLists.txt — source lists are explicit, so the file
+        was never compiled and its self-registration never ran. (Second guess: codegen didn't rerun — rebuild.)</div>
+      </details>
+      <details class="quiz"><summary>Q7 — Why does MigrationEngine locate its IDMAHost in setup() rather than init()?</summary>
+        <div class="ans">Children are created during the parent's own init(), so at the child's init() the parent is still
+        mid-construction — casting it is not yet safe. setup() runs after the whole tree exists.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 4 ══════════════════════ -->
+    <section class="card" id="l4">
+      <h2><span class="num">4</span>Inside a memory controller</h2>
+      <p class="lead">One controller = one DRAM channel: four queues, a scheduler, the write-mode watermarks, and one command per tick.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 300" role="img" aria-label="Controller queues, scheduler, and write-mode watermark gauge">
+        <defs>
+          <marker id="a4arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <!-- queues -->
+        <text x="30" y="34" font-size="12.5" font-weight="800" fill="#172033">the four request buffers</text>
+        <rect x="30" y="48"  width="220" height="34" rx="6" fill="#e8f0fe" stroke="#1f6feb"/><text x="140" y="70" text-anchor="middle" font-size="11" fill="#1f6feb">active buffer — row already open</text>
+        <rect x="30" y="90"  width="220" height="34" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="140" y="112" text-anchor="middle" font-size="11" fill="#43506a">priority buffer — refresh etc.</text>
+        <rect x="30" y="132" width="220" height="34" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="140" y="154" text-anchor="middle" font-size="11" fill="#43506a">read buffer (32)</text>
+        <rect x="30" y="174" width="220" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/><text x="140" y="196" text-anchor="middle" font-size="11" fill="#b54708">write buffer (32) — posted writes</text>
+        <text x="30" y="232" font-size="10.5" fill="#647083">full read/write buffer ⇒ send() returns false (backpressure)</text>
+        <text x="30" y="248" font-size="10.5" fill="#647083">pick order: active &gt; priority &gt; (write mode ? writes : reads)</text>
+        <!-- scheduler -->
+        <line x1="252" y1="70"  x2="330" y2="128" stroke="#43506a" stroke-width="1.6" marker-end="url(#a4arr)"/>
+        <line x1="252" y1="107" x2="330" y2="136" stroke="#43506a" stroke-width="1.6" marker-end="url(#a4arr)"/>
+        <line x1="252" y1="149" x2="330" y2="146" stroke="#43506a" stroke-width="1.6" marker-end="url(#a4arr)"/>
+        <line x1="252" y1="191" x2="330" y2="156" stroke="#43506a" stroke-width="1.6" marker-end="url(#a4arr)"/>
+        <rect x="334" y="112" width="170" height="62" rx="8" fill="#f3f8ff" stroke="#1f6feb"/>
+        <text x="419" y="136" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1f6feb">scheduler (FRFCFS)</text>
+        <text x="419" y="154" text-anchor="middle" font-size="10" fill="#43506a">prefers a request that can</text>
+        <text x="419" y="167" text-anchor="middle" font-size="10" fill="#43506a">issue NOW (row hits win)</text>
+        <line x1="506" y1="143" x2="566" y2="143" stroke="#43506a" stroke-width="2" marker-end="url(#a4arr)"/>
+        <text x="536" y="132" text-anchor="middle" font-size="10" fill="#647083">1 cmd/tick</text>
+        <rect x="570" y="112" width="130" height="62" rx="8" fill="#e8f0fe" stroke="#1f6feb"/>
+        <text x="635" y="140" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1f6feb">DRAM device</text>
+        <text x="635" y="158" text-anchor="middle" font-size="10" fill="#43506a">(Lesson 5)</text>
+        <!-- watermark gauge -->
+        <text x="740" y="34" font-size="12.5" font-weight="800" fill="#172033">write-mode gauge</text>
+        <rect x="760" y="48" width="56" height="200" rx="6" fill="#fbfcff" stroke="#d8dee8"/>
+        <rect x="760" y="48" width="56" height="60" rx="6" fill="#fdf0e6"/>
+        <line x1="748" y1="88"  x2="828" y2="88"  stroke="#b54708" stroke-width="2"/>
+        <text x="742" y="84" text-anchor="end" font-size="10" fill="#b54708" font-weight="700">0.8 high</text>
+        <text x="742" y="98" text-anchor="end" font-size="9.5" fill="#b54708">above ⇒ ENTER</text>
+        <text x="742" y="110" text-anchor="end" font-size="9.5" fill="#b54708">write mode</text>
+        <line x1="748" y1="208" x2="828" y2="208" stroke="#1a7f37" stroke-width="2"/>
+        <text x="742" y="204" text-anchor="end" font-size="10" fill="#1a7f37" font-weight="700">0.2 low</text>
+        <text x="742" y="218" text-anchor="end" font-size="9.5" fill="#1a7f37">below (&amp; reads wait)</text>
+        <text x="742" y="230" text-anchor="end" font-size="9.5" fill="#1a7f37">⇒ EXIT write mode</text>
+        <text x="788" y="268" text-anchor="middle" font-size="10" fill="#647083">write buffer fill</text>
+        <text x="788" y="283" text-anchor="middle" font-size="10" fill="#647083">(also: reads empty ⇒ enter)</text>
+      </svg>
+      </div>
+
+      <p class="src">the watermark machinery, near-verbatim — src/ramulator/controller/controller_base.cpp, set_write_mode()</p>
+      <pre class="code">if not write_mode:
+  if write_buf.size &gt; <span class="hl">0.8</span> * write_buf.max  or  read_buf.size == 0:
+    write_mode = true          <span class="c">// writes piled up, or nothing better to do</span>
+else:
+  if write_buf.size &lt; <span class="hl">0.2</span> * write_buf.max  and  read_buf.size != 0:
+    write_mode = false         <span class="c">// mostly drained AND reads are waiting</span>
+<span class="c">// while in write mode: writes drain back-to-back, ARRIVING READS WAIT.</span></pre>
+
+      <p>On <code class="k">send()</code> the controller also implements two address-keyed shortcuts:
+      <strong>read-after-write forwarding</strong> (a read hitting a buffered write's address is answered next cycle —
+      the buffer is the freshest copy) and <strong>write coalescing</strong> (a second write to a buffered address merges).
+      v1 consequence: the composite keeps <span class="mono">req.addr</span> global for both GPU and DMA traffic so these
+      shortcuts behave consistently across the two streams.</p>
+
+      <p class="src">one tick, seven steps — src/ramulator/controller/impl/generic_ddr_controller.cpp, tick()</p>
+      <pre class="code">tick():
+  1  m_clk += 1;  <span class="hl">serve_completed_reads()</span>   <span class="c">// any pending read with depart ≤ now → fire its callback</span>
+  2  refresh_manager.tick()                  <span class="c">// may inject maintenance via the priority buffer</span>
+  3  pre_schedule hooks (row policy, plugins)
+  4  candidate = pick from: active &gt; priority &gt; (write_mode ? write_buf : read_buf)
+       within a buffer, the scheduler chooses (FRFCFS: ready-now beats older)
+  5  cmd = device.<span class="hl">get_preq_command</span>(candidate)    <span class="c">// "what does it need next?"  (Lesson 5)</span>
+       if not device.<span class="hl">check_timing</span>(cmd): try another candidate
+  6  device.issue_command(cmd)               <span class="c">// AT MOST ONE DRAM COMMAND PER TICK</span>
+  7  if cmd was final (RD/WR): retire — reads get depart = now + read_latency
+     if cmd was ACT: promote request to the active buffer;  update stats; on_issue hooks</pre>
+
+      <p>So a single read on a closed bank takes <em>multiple trips</em> through this loop: tick k issues
+      <code class="k">ACT</code>, ticks later <code class="k">RD</code> issues, and <span class="mono">read_latency</span>
+      ticks after that a future tick's step 1 fires your callback. (HBM's <code class="k">HBM34</code> controller is the
+      one exception to "one command per tick": HBM has two command buses — row and column — so it can issue one of each
+      per cycle, with half-cycle pairing rules.)</p>
+
+      <table>
+        <thead><tr><th>Stat you'll actually read</th><th>Meaning</th><th>Unit trap</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">avg_read_latency</td><td>mean depart − arrive</td><td><strong>in this controller's ticks</strong> — convert per tier</td></tr>
+          <tr><td class="rowlabel">read/write_throughput_MBps</td><td>served bytes / wall time</td><td>already wall-clock correct (uses own tCK)</td></tr>
+          <tr><td class="rowlabel">row_hits / misses / conflicts</td><td>row-buffer locality</td><td>conflict = someone else's row was open</td></tr>
+          <tr><td class="rowlabel">num_read/write_reqs</td><td>accepted requests</td><td>how v1 tests assert steering correctness</td></tr>
+          <tr><td class="rowlabel">read/write_queue_len_avg</td><td>mean occupancy</td><td>the smoking gun when diagnosing saturation</td></tr>
+        </tbody>
+      </table>
+
+      <div class="tryit"><span class="tt">TRY IT</span> —
+      <div class="mono">PYTHONPATH=python pytest tests/controller_scheduling -q</div>
+      then read <span class="mono">tests/controller_scheduling/examples/test_controller_example.py</span>: two reads to
+      different rows of one bank must emit exactly <span class="mono">ACT, RD, PREpb, ACT, RD</span> — Lessons 4 and 5 in
+      five commands.</div>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li>One controller = one channel = 4 queues + scheduler + device; one command per tick (two for HBM's dual bus).</li>
+          <li>Write mode (0.8 / 0.2 watermarks) batches write drains; reads wait during drains — deadlock source and dominant interference mechanism.</li>
+          <li>Forwarding/coalescing key on <span class="mono">req.addr</span>. Read completion happens in a later tick's prologue.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q8 — Saturating read stream + a 5% trickle of writes: when do the writes actually reach DRAM?</summary>
+        <div class="ans">Only when the read queue momentarily empties (a trickle never reaches the 80% watermark). Under a
+        truly gapless read stream they can starve for a long time — which is exactly the risk the high watermark bounds:
+        once writes pile past it, a drain is forced regardless.</div>
+      </details>
+      <details class="quiz"><summary>Q9 — Why does the active buffer outrank even the priority buffer?</summary>
+        <div class="ans">An active request already spent an ACT — its row is open. Not finishing it risks the row being
+        closed by other activity, wasting the activation and paying it twice. Finish what you started.</div>
+      </details>
+      <details class="quiz"><summary>Q10 — avg_read_latency = 74 (LPDDR5) vs 196 (HBM4) in the same simulation. Real-time comparison?</summary>
+        <div class="ans">74 × 1.25 = 92.5 ns vs 196 × 0.25 = 49 ns — the HBM controller is ~1.9× faster in real time.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 5 ══════════════════════ -->
+    <section class="card" id="l5">
+      <h2><span class="num">5</span>The DRAM device model</h2>
+      <p class="lead">The device answers two questions every tick: "what command does this request need next?" and "may it issue this cycle?"</p>
+
+      <p><strong>The model is authored in Python, not C++.</strong> Each standard
+      (<span class="mono">python/ramulator/dram/hbm4.py</span>, <span class="mono">lpddr5.py</span>, …) declares, as data:
+      the <em>hierarchy</em> (levels), the <em>command set</em>, the <em>timing rules</em>
+      (e.g. <span class="mono">TimingConstraint(level="Bank", preceding=[ACT], following=[RD], latency=nRCD)</span> — "a
+      RD must wait nRCD after an ACT, at bank scope"), and <em>presets</em>: org presets fix capacity, timing presets fix
+      speed. You configure by picking presets and overriding —
+      <code class="k">LPDDR5(org_preset="LPDDR5_16Gb_x16", timing_preset="LPDDR5_6400", rank=2)</code>: that one
+      <code class="k">rank=2</code> doubled v1's far-pool capacity per channel. (<code class="k">channel=</code> is
+      deliberately forbidden: channel count = how many controllers you instantiate — the convention that made v1's
+      "LPDDR channels = list length" natural.) At build time the code generator resolves everything to integer ticks and
+      bakes it into C++; at runtime there are no JEDEC lookups, just integer comparisons.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 330" role="img" aria-label="DRAM node tree and preq decision flowchart">
+        <defs>
+          <marker id="a5arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <!-- node tree -->
+        <text x="30" y="30" font-size="12.5" font-weight="800" fill="#172033">the timing tree (HBM4) — each rule lives at its natural scope</text>
+        <rect x="60" y="44" width="150" height="30" rx="6" fill="#e8f0fe" stroke="#1f6feb"/><text x="135" y="63" text-anchor="middle" font-size="10.5" fill="#1f6feb">Channel — bus rules</text>
+        <rect x="60" y="88" width="150" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="135" y="107" text-anchor="middle" font-size="10.5" fill="#43506a">PseudoChannel</text>
+        <rect x="60" y="132" width="150" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="135" y="151" text-anchor="middle" font-size="10.5" fill="#43506a">Sid — tFAW-style windows</text>
+        <rect x="60" y="176" width="150" height="30" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="135" y="195" text-anchor="middle" font-size="10.5" fill="#43506a">BankGroup</text>
+        <rect x="60" y="220" width="150" height="30" rx="6" fill="#e8f0fe" stroke="#1f6feb"/><text x="135" y="239" text-anchor="middle" font-size="10.5" fill="#1f6feb">Bank — tRCD, tRP, state</text>
+        <line x1="135" y1="76"  x2="135" y2="86"  stroke="#43506a" stroke-width="1.5" marker-end="url(#a5arr)"/>
+        <line x1="135" y1="120" x2="135" y2="130" stroke="#43506a" stroke-width="1.5" marker-end="url(#a5arr)"/>
+        <line x1="135" y1="164" x2="135" y2="174" stroke="#43506a" stroke-width="1.5" marker-end="url(#a5arr)"/>
+        <line x1="135" y1="208" x2="135" y2="218" stroke="#43506a" stroke-width="1.5" marker-end="url(#a5arr)"/>
+        <rect x="240" y="214" width="180" height="42" rx="6" fill="#fbfcff" stroke="#d8dee8" stroke-dasharray="4 3"/>
+        <text x="330" y="232" text-anchor="middle" font-size="10" fill="#43506a">per-bank state is LAZY:</text>
+        <text x="330" y="247" text-anchor="middle" font-size="10" fill="#43506a">open-row map {row 17} — closed bank = empty map</text>
+        <line x1="212" y1="235" x2="238" y2="235" stroke="#43506a" stroke-width="1.5" marker-end="url(#a5arr)"/>
+        <text x="30" y="288" font-size="10.5" fill="#647083">check_timing walks root → target checking earliest_allowed[cmd] at each node;</text>
+        <text x="30" y="304" font-size="10.5" fill="#647083">update_timing pushes those times forward on issue — including at sibling nodes when a rule spans peers.</text>
+        <!-- preq flowchart -->
+        <text x="490" y="30" font-size="12.5" font-weight="800" fill="#172033">"what next?" — the preq chain for a read (final cmd = RD)</text>
+        <rect x="540" y="44" width="220" height="34" rx="8" fill="#f3f8ff" stroke="#1f6feb"/>
+        <text x="650" y="66" text-anchor="middle" font-size="11" font-weight="700" fill="#1f6feb">what state is my bank in?</text>
+        <line x1="570" y1="78" x2="510" y2="118" stroke="#43506a" stroke-width="1.6" marker-end="url(#a5arr)"/>
+        <line x1="650" y1="78" x2="650" y2="118" stroke="#43506a" stroke-width="1.6" marker-end="url(#a5arr)"/>
+        <line x1="730" y1="78" x2="790" y2="118" stroke="#43506a" stroke-width="1.6" marker-end="url(#a5arr)"/>
+        <rect x="440" y="120" width="140" height="52" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="510" y="140" text-anchor="middle" font-size="10.5" font-weight="700" fill="#43506a">bank closed</text>
+        <text x="510" y="158" text-anchor="middle" font-size="11" fill="#1f6feb" font-weight="800">preq = ACT</text>
+        <rect x="590" y="120" width="140" height="52" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+        <text x="660" y="140" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1a7f37">MY row open — HIT</text>
+        <text x="660" y="158" text-anchor="middle" font-size="11" fill="#1a7f37" font-weight="800">preq = RD  (go!)</text>
+        <rect x="740" y="120" width="150" height="52" rx="8" fill="#fdf0e6" stroke="#b54708"/>
+        <text x="815" y="140" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b54708">other row — CONFLICT</text>
+        <text x="815" y="158" text-anchor="middle" font-size="11" fill="#b54708" font-weight="800">preq = PREpb</text>
+        <text x="490" y="204" font-size="10.5" fill="#647083">The controller just issues whatever preq says, tick after tick. The request naturally walks</text>
+        <text x="490" y="220" font-size="10.5" fill="#647083">PREpb → ACT → RD, or ACT → RD, or straight to RD — nothing is scheduled in advance.</text>
+        <text x="490" y="248" font-size="10.5" font-weight="700" fill="#172033">This is why hits are fast (1 command) and conflicts slow (3 + full close/open timing) —</text>
+        <text x="490" y="264" font-size="10.5" font-weight="700" fill="#172033">and why address mapping (Lesson 6) has dramatic performance effects.</text>
+      </svg>
+      </div>
+
+      <p class="src">talking to the spec from C++ — the pattern every extension uses</p>
+      <pre class="code">init():
+  m_cmd_rd  = spec.get_command_id("RD")      <span class="c">// throws if the standard lacks it</span>
+  m_nCL     = spec.get_timing_value("nCL")   <span class="c">// resolved integer, in ticks</span>
+  m_has_rda = spec.has_command("RDA")        <span class="c">// optional features: check with has_* first</span>
+<span class="c">// rule: string lookups ONCE in init(), cached as integers — never on the hot path.</span></pre>
+
+      <div class="tryit"><span class="tt">TRY IT</span> —
+      <div class="mono">PYTHONPATH=python pytest tests/device_timings -q</div>
+      then read <span class="mono">tests/device_timings/example.py</span>: "RD on a closed bank? preq says ACT." "RD at
+      nRCD−1 after ACT? timing says no." "At nRCD? yes." Lesson 5 in executable form.</div>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li>Standards are Python <em>data</em>; capacity = org preset (+ overrides like <code class="k">rank=2</code>), speed = timing preset; codegen bakes it into integer ticks.</li>
+          <li>Timing lives in a node tree at each rule's natural scope; bank state is lazy (only opened rows exist).</li>
+          <li>No command scripts — per-command <code class="k">preq</code> handlers answer "what next" from live state every tick.</li>
+          <li>Cache spec lookups in <code class="k">init()</code>; getters throw; <code class="k">has_*</code> for optional features.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q11 — Two back-to-back reads, same row of same bank: what commands issue? Same bank, different rows?</summary>
+        <div class="ans">Same row: ACT, RD, RD (second read is a hit — one command). Different rows: ACT, RD, PREpb, ACT, RD
+        (conflict — close, reopen).</div>
+      </details>
+      <details class="quiz"><summary>Q12 — Why is the row map lazy instead of an array over all 2^14 rows?</summary>
+        <div class="ans">Only a handful of rows are ever open at once; an array would waste memory and time. The map holds
+        only opened rows — a closed bank is an empty map.</div>
+      </details>
+      <details class="quiz"><summary>Q13 — Where would "at most N activates per window per rank" live, and what extra state does it need?</summary>
+        <div class="ans">At the Rank level of the node tree (it spans all banks of the rank), with a rolling window of the
+        last N ACT issue times — exactly how nFAW (N=4) is implemented.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 6 ══════════════════════ -->
+    <section class="card" id="l6">
+      <h2><span class="num">6</span>Address mapping: one integer becomes coordinates</h2>
+      <p class="lead">Two mappers slice the address bits in sequence — and the bit layout is a first-order performance decision.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 340" role="img" aria-label="Address bit layouts: channel interleave, RoBaRaCoCh, ChRaBaRoCo">
+        <!-- stage 1 -->
+        <text x="30" y="30" font-size="12.5" font-weight="800" fill="#172033">stage 1 — channel selection (memory-system level), at 32 B transaction granularity</text>
+        <g font-size="11" text-anchor="middle">
+          <rect x="30"  y="44" width="470" height="34" rx="4" fill="#fbfcff" stroke="#d8dee8"/><text x="265" y="66" fill="#43506a">high bits → intra_channel_addr (passed to the controller)</text>
+          <rect x="500" y="44" width="120" height="34" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="560" y="66" fill="#1f6feb" font-weight="800">ch bits</text>
+          <rect x="620" y="44" width="150" height="34" rx="4" fill="#eef2f7" stroke="#d8dee8"/><text x="695" y="66" fill="#43506a">tx offset (5 b = 32 B)</text>
+        </g>
+        <text x="30" y="100" font-size="10.5" fill="#647083">consecutive 32 B transactions round-robin across channels → a sequential stream uses every channel's bandwidth.</text>
+        <text x="30" y="116" font-size="10.5" fill="#647083">v1 does this math inline, twice — once per pool — after steering by the near/far boundary.</text>
+        <!-- stage 2 -->
+        <text x="30" y="152" font-size="12.5" font-weight="800" fill="#172033">stage 2 — the controller's addr mapper slices the rest (two stock layouts)</text>
+        <text x="30" y="178" font-size="11" font-weight="700" fill="#1f6feb">RoBaRaCoCh (default) — row bits on top</text>
+        <g font-size="10.5" text-anchor="middle">
+          <rect x="30"  y="188" width="230" height="30" rx="4" fill="#fdf0e6" stroke="#b54708"/><text x="145" y="207" fill="#b54708" font-weight="700">Row</text>
+          <rect x="260" y="188" width="200" height="30" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="360" y="207" fill="#1f6feb" font-weight="700">Bank / BankGroup / PC</text>
+          <rect x="460" y="188" width="160" height="30" rx="4" fill="#fbfcff" stroke="#d8dee8"/><text x="540" y="207" fill="#43506a">Column</text>
+        </g>
+        <text x="640" y="200" font-size="10" fill="#1a7f37" font-weight="700">✓ sequential stream rotates ALL banks</text>
+        <text x="640" y="215" font-size="10" fill="#b54708" font-weight="700">✗ distant regions share banks (conflicts)</text>
+        <text x="30" y="252" font-size="11" font-weight="700" fill="#7c3aed">ChRaBaRoCo — bank bits on top</text>
+        <g font-size="10.5" text-anchor="middle">
+          <rect x="30"  y="262" width="200" height="30" rx="4" fill="#f1eafe" stroke="#7c3aed"/><text x="130" y="281" fill="#7c3aed" font-weight="700">PC / BankGroup / Bank</text>
+          <rect x="230" y="262" width="230" height="30" rx="4" fill="#fdf0e6" stroke="#b54708"/><text x="345" y="281" fill="#b54708" font-weight="700">Row</text>
+          <rect x="460" y="262" width="160" height="30" rx="4" fill="#fbfcff" stroke="#d8dee8"/><text x="540" y="281" fill="#43506a">Column</text>
+        </g>
+        <text x="640" y="274" font-size="10" fill="#1a7f37" font-weight="700">✓ distant regions get disjoint banks</text>
+        <text x="640" y="289" font-size="10" fill="#b54708" font-weight="700">✗ sequential stream collapses into ONE bank</text>
+        <text x="30" y="326" font-size="10.5" font-weight="700" fill="#172033">Measured (ping-pong study): ChRaBaRoCo's "bank isolation" cut the GPU's own streaming from 32 → 19.6 GB/s and made total degradation WORSE (2.57×). Reason about bits, not vibes.</text>
+      </svg>
+      </div>
+
+      <p class="src">v1's steering + per-pool interleave — src/ramulator/memory_system/impl/hbm_lpddr_basedie_system.cpp, send()</p>
+      <pre class="code">send(req):
+  if req.addr &lt; near_size:                 pool = HBM;   pool_addr = req.addr
+  else if req.addr &lt; near_size + far_size: pool = LPDDR; pool_addr = req.addr - near_size
+  else: throw "address outside the unified address space"
+
+  <span class="c">// interleave within the pool (same math as CacheLineInterleave)</span>
+  ch    = (pool_addr &gt;&gt; log2(tx)) &amp; (pool_channels - 1)
+  intra = pool_addr with the channel bits spliced out
+  req.intra_channel_addr = intra
+  return pool[ch].<span class="hl">send(req)</span>      <span class="c">// controller's addr_mapper decodes intra → bank/row/col</span></pre>
+
+      <div class="callout warn"><strong>The v1 subtlety worth internalizing:</strong> because both pools interleave at
+      32 B granularity, <em>address-range separation is not resource separation</em> — any large region spans ALL channels
+      of its pool, and under RoBaRaCoCh two distant regions share the same banks. That is physically faithful, and it is
+      why GPU-vs-DMA isolation had to come from the write-path levers (Lesson 4), not from address placement.</div>
+
+      <div class="tryit"><span class="tt">TRY IT</span> — predict, then verify: with 2 HBM channels and 32 B tx, which
+      channel do addresses 0, 32, 64, 96 hit? Check against <span class="mono">test_steering_boundary</span> in
+      <span class="mono">tests/test_basedie.py</span>.</div>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li>Stage 1: channel bits just above the tx offset (interleave). Stage 2: the controller's mapper slices bank/row/column.</li>
+          <li>RoBaRaCoCh: streams rotate banks (good), distant regions share banks. ChRaBaRoCo: the reverse trade.</li>
+          <li>v1 steers near/far by boundary, then interleaves per pool. Address separation ≠ channel/bank separation.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q14 — Under RoBaRaCoCh, a 64 B-strided read stream on a 2-channel 32 B-tx system hits how many channels?</summary>
+        <div class="ans">One. The channel bit is address bit 5; a 64 B stride holds bit 5 constant. (Our first mini-test hit
+        exactly this: "HBM Channel 1 reads = 0".)</div>
+      </details>
+      <details class="quiz"><summary>Q15 — You want the GPU to stream fast AND the DMA in disjoint banks. Why does neither stock mapper deliver both with contiguous regions?</summary>
+        <div class="ans">Fast streaming needs bank bits low (rotate banks within a small span — RoBaRaCoCh); disjoint-bank
+        regions need bank bits high (ChRaBaRoCo). One bit position can't be both. You'd need a custom/hashed mapper or
+        channel-level partitioning — a v2 topic.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 7 ══════════════════════ -->
+    <section class="card" id="l7">
+      <h2><span class="num">7</span>Clocks: ticks, gears, and nanoseconds</h2>
+      <p class="lead">Where tick periods come from, how the gear ratio doubles as the offered-load knob, and v1's second gear.</p>
+
+      <table>
+        <thead><tr><th>Quantity</th><th>HBM4-8000</th><th>LPDDR5-6400</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">tCK (clock period)</td><td>500 ps</td><td>1250 ps</td></tr>
+          <tr><td class="rowlabel">tick_multiplier (ticks per clock)</td><td>2 (half-cycle command slots)</td><td>1</td></tr>
+          <tr><td class="rowlabel"><strong>tick period = tCK / multiplier</strong></td><td><strong>0.25 ns</strong> (4 G ticks/s)</td><td><strong>1.25 ns</strong> (0.8 G ticks/s)</td></tr>
+        </tbody>
+      </table>
+      <p>All timing parameters are pre-converted into ticks at config time — runtime is pure integer arithmetic.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 250" role="img" aria-label="Gear ratio tick trains and v1's LPDDR divider">
+        <text x="30" y="28" font-size="12.5" font-weight="800" fill="#172033">the fe : mem gear as an offered-load knob (LoadStoreTrace sends ≤ 1 request per F tick)</text>
+        <g font-size="10" text-anchor="middle">
+          <text x="30" y="56" font-size="11" text-anchor="start" font-weight="700" fill="#43506a">fe:mem = 1:4  →  1 req / 4 HBM ticks = 32 GB/s (the ping-pong study's fixed GPU load)</text>
+          <rect x="30"  y="66" width="26" height="24" rx="4" fill="#eef2f7" stroke="#43506a"/><text x="43"  y="82" font-weight="800" fill="#172033">F</text>
+          <rect x="60"  y="66" width="26" height="24" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="73"  y="82" fill="#1f6feb">M</text>
+          <rect x="90"  y="66" width="26" height="24" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="103" y="82" fill="#1f6feb">M</text>
+          <rect x="120" y="66" width="26" height="24" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="133" y="82" fill="#1f6feb">M</text>
+          <rect x="150" y="66" width="26" height="24" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="163" y="82" fill="#1f6feb">M</text>
+          <rect x="180" y="66" width="26" height="24" rx="4" fill="#eef2f7" stroke="#43506a"/><text x="193" y="82" font-weight="800" fill="#172033">F</text>
+          <rect x="210" y="66" width="26" height="24" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="223" y="82" fill="#1f6feb">M</text>
+          <text x="260" y="82" text-anchor="start" font-size="10.5" fill="#647083">… (2:1 saturates at 256 GB/s; 1:16 probes unloaded latency at 8 GB/s)</text>
+        </g>
+        <text x="30" y="132" font-size="12.5" font-weight="800" fill="#172033">v1's second gear: two tiers inside ONE memory system tick</text>
+        <g font-size="10" text-anchor="middle">
+          <text x="30" y="158" font-size="10.5" text-anchor="start" fill="#1f6feb" font-weight="700">HBM controllers (0.25 ns): every composite tick</text>
+          <rect x="30"  y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="43"  y="181" fill="#1f6feb">H</text>
+          <rect x="60"  y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="73"  y="181" fill="#1f6feb">H</text>
+          <rect x="90"  y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="103" y="181" fill="#1f6feb">H</text>
+          <rect x="120" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="133" y="181" fill="#1f6feb">H</text>
+          <rect x="150" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="163" y="181" fill="#1f6feb">H</text>
+          <rect x="180" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="193" y="181" fill="#1f6feb">H</text>
+          <rect x="210" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="223" y="181" fill="#1f6feb">H</text>
+          <rect x="240" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="253" y="181" fill="#1f6feb">H</text>
+          <rect x="270" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="283" y="181" fill="#1f6feb">H</text>
+          <rect x="300" y="166" width="26" height="22" rx="4" fill="#e8f0fe" stroke="#1f6feb"/><text x="313" y="181" fill="#1f6feb">H</text>
+          <text x="30" y="216" font-size="10.5" text-anchor="start" fill="#7c3aed" font-weight="700">LPDDR controllers (1.25 ns): every 5th tick (divider auto-derived from 1.25/0.25)</text>
+          <rect x="150" y="224" width="26" height="22" rx="4" fill="#f1eafe" stroke="#7c3aed"/><text x="163" y="239" fill="#7c3aed">L</text>
+          <rect x="300" y="224" width="26" height="22" rx="4" fill="#f1eafe" stroke="#7c3aed"/><text x="313" y="239" fill="#7c3aed">L</text>
+          <text x="360" y="239" text-anchor="start" font-size="10.5" fill="#647083">verified: HBM controllers accumulate ≈5× the cycles of LPDDR ones (test_tier_clocking)</text>
+        </g>
+      </svg>
+      </div>
+
+      <p class="src">v1's per-tier ticking — src/ramulator/memory_system/impl/hbm_lpddr_basedie_system.cpp, tick()</p>
+      <pre class="code">tick():
+  tick_count += 1
+  if dma: dma.tick()                          <span class="c">// DMA decides at the HBM rate</span>
+  for c in hbm_controllers:   c.tick()        <span class="c">// every tick        (0.25 ns domain)</span>
+  if tick_count % <span class="hl">lpddr_tick_divider</span> == 0:    <span class="c">// auto-derived: round(1.25 / 0.25) = 5</span>
+    for c in lpddr_controllers: c.tick()      <span class="c">// every 5th tick    (1.25 ns domain)</span></pre>
+
+      <p>Because every controller counts time in its own ticks, per-controller stats stay internally consistent — but
+      <em>you</em> must convert to nanoseconds before comparing across tiers (Lesson 1's 196-vs-74 trap).</p>
+
+      <div class="recap"><span class="rt">RECAP</span>
+        <ul>
+          <li>tick period = tCK / tick_multiplier: 0.25 ns (HBM4-8000) vs 1.25 ns (LPDDR5-6400).</li>
+          <li>The fe:mem ratio is both "CPU speed vs memory speed" and the experimenter's offered-load knob.</li>
+          <li>v1 nests a second gear inside the memory system: LPDDR ticks every 5th composite tick, auto-derived and overridable.</li>
+        </ul>
+      </div>
+
+      <details class="quiz"><summary>Q16 — What offered bandwidth does fe:mem = 1:8 produce on a 4 GHz-tick, 32 B-tx system?</summary>
+        <div class="ans">One 32 B request per 8 memory ticks = 0.5 G req/s × 32 B = 16 GB/s.</div>
+      </details>
+      <details class="quiz"><summary>Q17 — HBM4-16000 has tCK 250 ps (tick 0.125 ns). What LPDDR5-6400 divider would v1 auto-derive?</summary>
+        <div class="ans">1.25 / 0.125 = 10.</div>
+      </details>
+    </section>
+
+    <!-- ══════════════════════ LESSON 8 ══════════════════════ -->
+    <section class="card" id="l8">
+      <h2><span class="num">8</span>The v1 design, guided — everything composed</h2>
+      <p class="lead">Open <span class="mono">hbm_lpddr_basedie_system.cpp</span> and <span class="mono">migration_engine.cpp</span> and read along: nothing left is mysterious.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 900 300" role="img" aria-label="Compact v1 base die block diagram">
+        <defs>
+          <marker id="a8arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+          <marker id="a8arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#b54708"/>
+          </marker>
+        </defs>
+        <rect x="30" y="110" width="140" height="70" rx="8" fill="#eef2f7" stroke="#43506a"/>
+        <text x="100" y="140" text-anchor="middle" font-size="13" font-weight="800" fill="#172033">GPU frontend</text>
+        <text x="100" y="158" text-anchor="middle" font-size="10" fill="#647083">one flat address space</text>
+        <line x1="172" y1="145" x2="222" y2="145" stroke="#43506a" stroke-width="2.2" marker-end="url(#a8arr)"/>
+        <rect x="226" y="30" width="520" height="250" rx="10" fill="#ffffff" stroke="#172033" stroke-width="1.8"/>
+        <text x="242" y="54" font-size="12" font-weight="800" fill="#172033">HBMLPDDRBaseDie : IMemorySystem, IDMAHost</text>
+        <rect x="246" y="66" width="480" height="40" rx="7" fill="#f3f8ff" stroke="#1f6feb"/>
+        <text x="486" y="91" text-anchor="middle" font-size="11" font-weight="700" fill="#1f6feb">send(): steer by near/far boundary → per-pool interleave (L6) — backpressure bool out (L2)</text>
+        <rect x="246" y="126" width="230" height="70" rx="7" fill="#e8f0fe" stroke="#1f6feb"/>
+        <text x="361" y="150" text-anchor="middle" font-size="11" font-weight="700" fill="#1f6feb">hbm_controllers = [HBM34 × N]</text>
+        <text x="361" y="167" text-anchor="middle" font-size="10" fill="#43506a">near pool [0, near) · every tick (L7)</text>
+        <text x="361" y="184" text-anchor="middle" font-size="10" fill="#43506a">upstream controllers, unchanged (L3/L4)</text>
+        <rect x="496" y="126" width="230" height="70" rx="7" fill="#f1eafe" stroke="#7c3aed"/>
+        <text x="611" y="150" text-anchor="middle" font-size="11" font-weight="700" fill="#7c3aed">lpddr_controllers = [LPDDR5 × M]</text>
+        <text x="611" y="167" text-anchor="middle" font-size="10" fill="#43506a">far pool [near, near+far) · every 5th tick</text>
+        <text x="611" y="184" text-anchor="middle" font-size="10" fill="#43506a">capacity via rank=2 override (L5)</text>
+        <line x1="400" y1="106" x2="361" y2="124" stroke="#1f6feb" stroke-width="1.8" marker-end="url(#a8arr)"/>
+        <line x1="570" y1="106" x2="611" y2="124" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#a8arr)"/>
+        <rect x="336" y="216" width="300" height="52" rx="7" fill="#fdf0e6" stroke="#b54708"/>
+        <text x="486" y="238" text-anchor="middle" font-size="11" font-weight="700" fill="#b54708">MigrationEngine — dma_send() via IDMAHost</text>
+        <text x="486" y="256" text-anchor="middle" font-size="10" fill="#43506a">reads far tier → callbacks post writes to near tier (L2③)</text>
+        <line x1="600" y1="214" x2="630" y2="198" stroke="#b54708" stroke-width="1.8" marker-end="url(#a8arrO)"/>
+        <line x1="372" y1="214" x2="342" y2="198" stroke="#b54708" stroke-width="1.8" marker-end="url(#a8arrO)"/>
+        <text x="790" y="140" font-size="10.5" fill="#647083">zero GPU-link</text>
+        <text x="790" y="156" font-size="10.5" fill="#647083">bandwidth; contends</text>
+        <text x="790" y="172" font-size="10.5" fill="#647083">only inside the</text>
+        <text x="790" y="188" font-size="10.5" fill="#647083">controllers (L4)</text>
+      </svg>
+      </div>
+
+      <p class="src">the MigrationEngine, whole logic — src/ramulator/memory_system/dma_engine/impl/migration_engine.cpp</p>
+      <pre class="code">tick():                                       <span class="c">// called by the composite, HBM rate</span>
+  retry stalled writes                        <span class="c">// send()==false queue — L2① backpressure</span>
+  if idle and gap elapsed and blocks remain:  open_next_block()   <span class="c">// cursor or seeded random</span>
+  while inflight_reads &lt; cap and block not fully read:
+    req = Request(src_pool_addr, Read, <span class="hl">source_id = -1</span>, callback = on_read_complete)
+    host.dma_send(src_tier, req)              <span class="c">// false → read_stall, try next tick</span>
+
+on_read_complete(req):                        <span class="c">// L2③ — fired by the src controller</span>
+  write = Request(dst_pool_addr, Write, source_id = -1)
+  host.dma_send(dst_tier, write)              <span class="c">// accepted = DONE (posted, L2.3/L4)</span>
+  if all writes of the block accepted: block complete → stats, arm gap</pre>
+
+      <p>The three design decisions, each traceable to a lesson:</p>
+      <ul>
+        <li><strong>Posted writes</strong> (block done at write-<em>accept</em>): forced by Lesson 4's watermarks — waiting
+        for retirement deadlocks under foreground reads. Matches real DMA hardware, and the accepted writes still exert
+        genuine write-buffer pressure (the real interference).</li>
+        <li><strong><code class="k">source_id = −1</code></strong>: controllers keep per-core stat arrays sized by the
+        <em>frontend's</em> core count and index them by <span class="mono">source_id</span> — a DMA "fake core id" would
+        corrupt them. −1 marks internal traffic; <code class="k">dma_send()</code> enforces it.</li>
+        <li><strong>DMA bypasses <code class="k">send()</code></strong>: migration must consume zero GPU-link bandwidth
+        (the patent's requirement). Entering through <code class="k">dma_send()</code>, DMA traffic shares only the DRAM
+        controllers with the GPU — the physically real contention point, and exactly what the ping-pong study measured.</li>
+      </ul>
+
+      <h3>The measured results, re-read through the lessons</h3>
+      <table>
+        <thead><tr><th>Result</th><th>The lesson that explains it</th></tr></thead>
+        <tbody>
+          <tr><td>HBM 45.7 vs LPDDR 20.5 GB/s; 49 vs 93 ns</td><td>L7 (tick periods, offered load), L4 (stats)</td></tr>
+          <tr><td>1:1 R/W streaming reaches only 71% / 80% of peak</td><td>L2/L4: read↔write bus turnarounds cost dead cycles</td></tr>
+          <tr><td>Unthrottled 9 GB/s migration costs the GPU 1.50× latency</td><td>L4: DMA writes force write-drain episodes; reads wait</td></tr>
+          <tr><td>write_buffer_size=128 → 1.18× at full migration rate</td><td>L4: fewer, longer, row-local drains</td></tr>
+          <tr><td>ChRaBaRoCo "bank isolation" made things worse (2.57×)</td><td>L6: bank-on-top serializes the GPU's own stream into one bank</td></tr>
+          <tr><td>Row-conflict counters barely moved throughout</td><td>L5+L6: conflicts weren't the mechanism; turnaround was</td></tr>
+        </tbody>
+      </table>
+      <p>If every row of that table feels <em>predictable in hindsight</em>, the course did its job.</p>
+
+      <div class="tryit"><span class="tt">TRY IT (capstone)</span> — run all three, and for each printed number, name the lesson that explains it:
+      <div class="mono">PYTHONPATH=python pytest tests/test_basedie.py -v</div>
+      <div class="mono">PYTHONPATH=python python3 examples/hbm_vs_lpddr_access_patterns.py</div>
+      <div class="mono">PYTHONPATH=python python3 examples/ping_pong_isolation_study.py</div></div>
+
+      <div class="callout win"><strong>Where to go next.</strong> (1)&nbsp;Change <code class="k">rank=2</code> in the
+      example config and watch <span class="mono">lpddr_pool_bytes</span> move (L5 → L8). (2)&nbsp;Read
+      <span class="mono">generic_ddr_controller.cpp</span>'s tick() end to end — ~60 lines, and you now know every line's
+      purpose. (3)&nbsp;The v2 roadmap becomes approachable: QoS arbitration is "a smarter set_write_mode()" (L4); the
+      interleaved near pool is "a second steering rule" (L6); access-driven migration is "a new IDMAEngine impl" (L3).</div>
+    </section>
+
+    <!-- ══════════════════════ APPENDIX ══════════════════════ -->
+    <section class="card" id="appx">
+      <h2><span class="num">A</span>Appendix: quick reference &amp; glossary</h2>
+
+      <h3>Repo layout (what you touch)</h3>
+      <table>
+        <thead><tr><th>Path</th><th>What lives there</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">python/ramulator/dram/*.py</td><td>DRAM standards — authored here; Python is the source of truth</td></tr>
+          <tr><td class="mono">src/ramulator/dram/impl/</td><td>generated C++ from the above — never hand-edit</td></tr>
+          <tr><td class="mono">python/ramulator/&lt;ifce&gt;/*.py</td><td>generated Python wrappers — never hand-edit</td></tr>
+          <tr><td class="mono">src/ramulator/controller/</td><td>controllers, schedulers, row policies, addr mappers, refresh</td></tr>
+          <tr><td class="mono">src/ramulator/memory_system/</td><td>memory systems incl. the v1 composite + dma_engine/</td></tr>
+          <tr><td class="mono">src/ramulator/frontend/</td><td>traffic generators</td></tr>
+          <tr><td class="mono">examples/ · tests/</td><td>runnable configs and pytest suites</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Key numbers (default v1 presets)</h3>
+      <table>
+        <thead><tr><th>Quantity</th><th>HBM4-8000</th><th>LPDDR5-6400</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">tick period</td><td>0.25 ns</td><td>1.25 ns</td></tr>
+          <tr><td class="rowlabel">transaction</td><td>32 B</td><td>32 B</td></tr>
+          <tr><td class="rowlabel">per-channel capacity</td><td>1 GiB (HBM4_32Gb_8Hi)</td><td>2 GiB (LPDDR5_16Gb_x16); 4 GiB with rank=2</td></tr>
+          <tr><td class="rowlabel">per-channel peak BW</td><td>32 GB/s</td><td>12.8 GB/s</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Command vocabulary</h3>
+      <p><code class="k">ACT</code> open a row · <code class="k">RD</code>/<code class="k">WR</code> access the open row ·
+      <code class="k">PREpb</code> close one bank's row · <code class="k">PREab</code> close all ·
+      <code class="k">RDA</code>/<code class="k">WRA</code> access then auto-close · <code class="k">REFab</code> refresh ·
+      LPDDR5: <code class="k">ACT1</code>+<code class="k">ACT2</code> two-part activate.</p>
+
+      <h3>Glossary</h3>
+      <table>
+        <tbody>
+          <tr><td class="rowlabel">tick</td><td>one simulator step of one component; × tick period = ns</td></tr>
+          <tr><td class="rowlabel">backpressure</td><td>send() returning false; sender retries later</td></tr>
+          <tr><td class="rowlabel">posted write</td><td>complete at buffer accept, drained later</td></tr>
+          <tr><td class="rowlabel">write mode / watermarks</td><td>batch write-drain state (enter &gt; 0.8 full or reads empty; exit &lt; 0.2 and reads waiting)</td></tr>
+          <tr><td class="rowlabel">row hit / miss / conflict</td><td>row open / bank closed / another row open (worst: close + open + access)</td></tr>
+          <tr><td class="rowlabel">preq</td><td>the prerequisite command a request needs next, from live bank state</td></tr>
+          <tr><td class="rowlabel">near / far pool</td><td>v1's HBM [0, near) and LPDDR [near, near+far) halves of the unified space</td></tr>
+          <tr><td class="rowlabel">tx</td><td>smallest accepted request; 32 B here</td></tr>
+          <tr><td class="rowlabel">offered vs achieved</td><td>rate the frontend attempts (fe:mem knob) vs what the memory sustains</td></tr>
+        </tbody>
+      </table>
+
+      <p class="lead" style="margin-top:16px;">Companion material: the markdown edition of this course and the full v1
+      design document live in the model repository —
+      <a href="https://github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie">github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie</a>
+      (<span class="mono">00_doc/00_study/</span>, <span class="mono">00_doc/01_design/v1/</span>). The v1 design itself is
+      summarized on this site: <a href="../02_HBM_MC/02_basedie/report.html">Custom HBM Base Die + LPDDR Extension — Ramulator v1 Design</a>.</p>
+      <p class="lead">Written 2026-07-05 · Yang-gon Kim · Ramulator 2.1 (CMU-SAFARI)</p>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>
