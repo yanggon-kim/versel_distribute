@@ -92,7 +92,7 @@
         <span class="tag">DeepSeek-V4-Flash (256 experts / 6 active)</span>
         <span class="tag live">measured on CPU via ds4 (IQ2 quant)</span>
         <span class="tag">RULER niah_single_2, n=1 / length</span>
-        <span class="tag">context 4K · 8K · 16K</span>
+        <span class="tag">context 4K · 8K · 16K · 32K</span>
       </div>
     </header>
 
@@ -103,7 +103,7 @@
         <div class="kpi"><div class="v">6 / 256</div><div class="l">experts activated per token, per layer (+1 shared)</div></div>
         <div class="kpi"><div class="v">~2.2 / 6</div><div class="l">experts carried over from the previous token (learned layers)</div></div>
         <div class="kpi"><div class="v">16&times;</div><div class="l">more self-similar than random expert choice (6/256)</div></div>
-        <div class="kpi"><div class="v">flat</div><div class="l">routing locality is the same at 4K, 8K, 16K</div></div>
+        <div class="kpi"><div class="v">flat</div><div class="l">routing locality barely moves across 4K&ndash;32K</div></div>
       </div>
       <div class="callout"><b>Plain-language thesis.</b> A token's chosen experts are substantially the same as the previous token's — about <b>2 of 6</b> persist step to step, 16&times; above chance. Unlike KV selection, this holds <i>independent of context length</i>, because the expert pool is fixed at 256. The three deterministic hash-routed layers are the exception: they are <i>not</i> temporally local, by construction.</div>
     </section>
@@ -124,7 +124,7 @@
       <ul class="notes">
         <li><b>Same run, second trace.</b> We instrumented the <code class="k">ds4</code> CPU decode path so that, right after the router selects its 6 experts, it logs <code class="k">(layer, decode&nbsp;step, token, the 6 expert ids, their weights)</code> — one record per (layer, token), decode phase only. This runs alongside the KV-indexer trace of <a href="../02_part3_cpu_kv_locality/report.html">Part&nbsp;III</a>, from the <i>same</i> forward pass.</li>
         <li><b>Coverage.</b> MoE routing happens in <b>every</b> layer's FFN (43 layers) — denser than the CSA indexer's 21 layers. Of those, 3 are hash-routed and 40 are learned-routed.</li>
-        <li><b>Workload.</b> RULER <code class="k">niah_single_2</code> at 4K, 8K, 16K; greedy decode; DeepSeek-V4-Flash at IQ2. 117–163 decode steps per run &times; 43 layers &times; 6 experts.</li>
+        <li><b>Workload.</b> RULER <code class="k">niah_single_2</code> at 4K, 8K, 16K, 32K; greedy decode; DeepSeek-V4-Flash at IQ2. 117–163 decode steps per run &times; 43 layers &times; 6 experts.</li>
         <li><b>Analysis.</b> The same id-set locality metrics used for KV selection, applied to the 6-expert sets, with hash and learned layers reported separately.</li>
       </ul>
     </section>
@@ -150,9 +150,10 @@
           <tr><td class="rowlabel">4K</td><td class="num">0.376</td><td class="num">2.26</td><td class="num">0.257</td><td class="num">0.624</td><td class="num">16.0&times;</td></tr>
           <tr><td class="rowlabel">8K</td><td class="num">0.373</td><td class="num">2.24</td><td class="num">0.256</td><td class="num">0.627</td><td class="num">15.9&times;</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">0.374</td><td class="num">2.24</td><td class="num">0.256</td><td class="num">0.626</td><td class="num">16.0&times;</td></tr>
+          <tr><td class="rowlabel">32K</td><td class="num">0.348</td><td class="num">2.09</td><td class="num">0.235</td><td class="num">0.652</td><td class="num">14.9&times;</td></tr>
         </tbody>
       </table>
-      <p class="cap">Learned layers only (hash layers excluded). "Experts carried / 6" = adjacent overlap &times; 6.</p>
+      <p class="cap">Learned layers only (hash layers excluded). "Experts carried / 6" = adjacent overlap &times; 6. The 32K point dips slightly (0.348 vs ~0.374) — within n=1 content variation, and still ~15&times; random with no KV-like context trend.</p>
       <figure>
         <img src="assets/moe_01_adjacent_overlap_by_layer.png" alt="MoE adjacent-step expert overlap by layer">
         <figcaption class="cap">Adjacent-step expert overlap per layer. Learned layers (circles) sit near 0.37 — 16&times; the dashed random line at 0.023 — while the three hash-routed layers (×, near the floor) route almost independently step to step.</figcaption>
@@ -162,10 +163,10 @@
     <section class="card" id="context">
       <h2><span class="num">§5</span>It is context-independent — unlike KV selection</h2>
       <p class="lead">The single most striking contrast with the attention side.</p>
-      <p>KV-selection locality <i>changes</i> with context: as the candidate pool grows, the lift rises (Part&nbsp;III: 1.7&times;&rarr;5.7&times; over 4K&rarr;16K). MoE routing does <b>not</b> — its pool is <b>fixed at 256 experts</b> regardless of context, so the routing-locality regime is the same at every length. The adjacent overlap is <b>0.376 / 0.373 / 0.374</b> at 4K / 8K / 16K — identical within 0.002.</p>
+      <p>KV-selection locality <i>changes</i> strongly with context: as the candidate pool grows, the lift rises (Part&nbsp;III: 1.7&times;&rarr;10.5&times; over 4K&rarr;32K). MoE routing does <b>not</b> — its pool is <b>fixed at 256 experts</b> regardless of context, so the routing-locality regime barely moves. The adjacent overlap is <b>0.376 / 0.373 / 0.374 / 0.348</b> at 4K / 8K / 16K / 32K — flat within ~0.03 with no systematic trend (the 32K dip is within n=1 content variation), versus KV's 0.87&rarr;0.67 over the same span.</p>
       <figure>
         <img src="assets/moe_05_context_scaling.png" alt="MoE locality versus context length, essentially flat">
-        <figcaption class="cap">MoE adjacent overlap and lift are flat across context length. The 4K/8K/16K expert-selection behavior is interchangeable — a clean consequence of the fixed 256-expert pool.</figcaption>
+        <figcaption class="cap">MoE adjacent overlap and lift are flat across context length (note the lift axis is 0-based — the tiny 32K dip is 16.0&rarr;14.9&times;, not a crash). Expert-selection behavior is near-interchangeable across 4K&ndash;32K — a clean consequence of the fixed 256-expert pool.</figcaption>
       </figure>
       <div class="callout"><b>Why it matters.</b> Sweeping context length is the right axis for studying <i>KV</i> locality (it changes the sparsity regime) but not for <i>MoE</i> locality (it does not). For expert caching, the informative axis is decode <i>length</i> — how long a hot-expert set stays warm — not prompt length.</div>
     </section>
@@ -196,7 +197,7 @@
       <p>Over a decode, each of the 40 learned layers routes with a clear favored set: its single most-used expert fires for <b>22%–85%</b> of tokens (uniform would be 2.3%), just <b>7–32 experts cover 50%</b> of the layer's routing, and normalized entropy is 0.63–0.85 (below the uniform 1.0). The 3 hash layers are near-uniform (top-expert rate 0.12–0.16, ~50 experts for 50%, entropy 0.92) — the control. Yet every learned layer still <i>touches ~half</i> the 256-pool (88–171 distinct experts), so the shape is a <b>concentrated core plus a long exploring tail</b>, never a fixed 6. The peakiest layers (L14, L15: one expert on the committee for 85% of tokens; 7 experts do half the work) cluster mid-stack; the flattest learned layer is L39 (0.22).</p>
 
       <h3>Static preference vs dynamic correlation</h3>
-      <p>Split each layer's overlap into <b>static preference</b> — the overlap you'd get if consecutive tokens were <i>independent</i> draws from that layer's own usage distribution — and <b>dynamic correlation</b> — the excess on top. For the learned layers (consistent across 4K/8K/16K):</p>
+      <p>Split each layer's overlap into <b>static preference</b> — the overlap you'd get if consecutive tokens were <i>independent</i> draws from that layer's own usage distribution — and <b>dynamic correlation</b> — the excess on top. For the learned layers (consistent across all four lengths: static ~0.17, dynamic ~2.3&times;, corr(static,observed) ≈ +0.85, corr(dynamic,concentration) ≈ &minus;0.82):</p>
       <table>
         <thead><tr><th>component</th><th class="num">adjacent overlap</th><th class="num">× over uniform</th><th class="num">what it is</th></tr></thead>
         <tbody>
@@ -234,6 +235,7 @@
           <tr><td class="rowlabel">4K</td><td class="num">0.376</td><td class="num">0.264</td><td class="num">0.203</td><td class="num">0.174</td><td class="num">0.166</td><td class="num">0.143</td><td class="num">0.162</td></tr>
           <tr><td class="rowlabel">8K</td><td class="num">0.373</td><td class="num">0.270</td><td class="num">0.207</td><td class="num">0.173</td><td class="num">0.176</td><td class="num">0.150</td><td class="num">0.127</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">0.374</td><td class="num">0.270</td><td class="num">0.214</td><td class="num">0.167</td><td class="num">0.134</td><td class="num">0.153</td><td class="num">0.144</td></tr>
+          <tr><td class="rowlabel">32K</td><td class="num">0.348</td><td class="num">0.258</td><td class="num">0.205</td><td class="num">0.180</td><td class="num">0.180</td><td class="num">0.143</td><td class="num">0.136</td></tr>
         </tbody>
       </table>
       <figure>
@@ -246,6 +248,7 @@
         <tbody>
           <tr><td class="rowlabel">4K</td><td class="num">1.000</td><td class="num">0.810</td><td class="num">0.666</td><td class="num">0.546</td><td class="num">0.429</td><td class="num">0.311</td><td class="num">0.200</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">1.000</td><td class="num">0.810</td><td class="num">0.664</td><td class="num">0.537</td><td class="num">0.420</td><td class="num">0.307</td><td class="num">0.195</td></tr>
+          <tr><td class="rowlabel">32K</td><td class="num">1.000</td><td class="num">0.823</td><td class="num">0.677</td><td class="num">0.551</td><td class="num">0.427</td><td class="num">0.302</td><td class="num">0.194</td></tr>
         </tbody>
       </table>
       <figure>
@@ -270,7 +273,7 @@
       <ul class="notes">
         <li><b>Per-layer structure:</b> every learned layer keeps a preferred committee (7–32 experts do half its routing, one expert often used in the majority of tokens); the ~16× lift ≈ <b>7.4× static preference × 2.3× temporal correlation</b>. Early layers = fixed specialists, deep layers = context trackers; hash layers are near-uniform.</li>
         <li>Learned MoE routing is <b>strongly temporally local</b>: ~0.374 adjacent overlap (~2.2 of 6 experts persist), <b>16&times;</b> the 6/256 random baseline.</li>
-        <li>It is <b>context-independent</b> (0.374 ± 0.002 across 4K/8K/16K) — the fixed 256-expert pool means prompt length does not change the regime. This contrasts sharply with KV-selection locality, which strengthens with context.</li>
+        <li>It is <b>context-independent</b> (0.35–0.38 across 4K/8K/16K/32K, no systematic trend) — the fixed 256-expert pool means prompt length does not change the regime. This contrasts sharply with KV-selection locality, which strengthens with context (lift 1.7&times;&rarr;10.5&times;).</li>
         <li>The <b>3 hash-routed layers are not local</b> (≈ random) — a property of deterministic token-id routing, reported separately.</li>
         <li>Retention has a <b>durable core</b> (still 6&times; random at lag 64) but the <b>working set is broad</b> (~47% of experts over a full decode).</li>
         <li>Collected from the <b>same decode pass</b> as the KV trace in <a href="../02_part3_cpu_kv_locality/report.html"><b>Part&nbsp;III</b></a>, so attention- and FFN-sparsity are aligned per (layer, step).</li>
@@ -281,7 +284,7 @@
       <h2><span class="num">§11</span>Honest limitations</h2>
       <ul class="notes">
         <li><b>n = 1 per length</b>, IQ2 quantization, CPU reference path — quantization can shift the router's top-6 versus full precision; no cross-sample confidence intervals.</li>
-        <li><b>Context sweep is the wrong axis for MoE.</b> Because the expert pool is fixed, 4K/8K/16K mostly vary token content, not the sparsity regime; a <b>decode-length</b> sweep would probe how long the hot-expert set stays warm (future work).</li>
+        <li><b>Context sweep is the wrong axis for MoE.</b> Because the expert pool is fixed, 4K/8K/16K/32K mostly vary token content, not the sparsity regime; a <b>decode-length</b> sweep would probe how long the hot-expert set stays warm (future work).</li>
         <li><b>Logical expert ids, not a physical cache</b> — overlaps are an upper bound that ignores expert-load timing and bandwidth.</li>
         <li><b>Greedy decode on a single retrieval task</b> (RULER needle); other tasks and samplers may route differently.</li>
       </ul>
