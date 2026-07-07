@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DeepSeek-V4 Sparse Attention — Part III: ds4 CPU KV-Selection Locality (4K–16K)</title>
+<title>DeepSeek-V4 Sparse Attention — Part III: ds4 CPU KV-Selection Locality (4K–64K)</title>
 <style>
   :root{
     color-scheme:light;
@@ -90,7 +90,7 @@
         <span class="tag">DeepSeek-V4-Flash (284B/13B MoE)</span>
         <span class="tag live">measured on CPU via ds4 (IQ2 quant)</span>
         <span class="tag">RULER niah_single_2, n=1 / length</span>
-        <span class="tag">context 4K · 8K · 16K · 32K</span>
+        <span class="tag">context 4K · 8K · 16K · 32K · 64K</span>
       </div>
     </header>
 
@@ -99,9 +99,9 @@
       <p class="lead">Part&nbsp;I measured how <b>predictable</b> DeepSeek-V4's per-token KV selection is on a GPU (vLLM/B200). Here we reproduce the core result on a completely different stack — a CPU-only C reference engine (<code class="k">ds4</code>) running the IQ2-quantized model — as a cross-check, and to instrument the exact same decode path that also emits the MoE routing trace in <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>. The temporal-locality picture holds.</p>
       <div class="headline">
         <div class="kpi"><div class="v">512</div><div class="l">KV entries selected per token, per CSA layer (top-k)</div></div>
-        <div class="kpi"><div class="v">0.87 &rarr; 0.67</div><div class="l">adjacent-step overlap, 4K &rarr; 32K</div></div>
-        <div class="kpi"><div class="v">1.7&times; &rarr; 10.5&times;</div><div class="l">locality lift over a random selection, rising with context</div></div>
-        <div class="kpi"><div class="v">4 / 4</div><div class="l">needle retrievals correct (4K, 8K, 16K, 32K)</div></div>
+        <div class="kpi"><div class="v">0.87 &rarr; 0.67</div><div class="l">adjacent-step overlap, 4K &rarr; 64K</div></div>
+        <div class="kpi"><div class="v">1.7&times; &rarr; 21.4&times;</div><div class="l">locality lift over a random selection, rising with context</div></div>
+        <div class="kpi"><div class="v">5 / 5</div><div class="l">needle retrievals correct (4K, 8K, 16K, 32K, 64K)</div></div>
       </div>
       <div class="callout"><b>Plain-language thesis.</b> The set of compressed-KV entries a token attends to is largely the same as the previous token's — and the further from random that gets (higher <i>lift</i>) as context grows, the more a small "hot set" in fast memory would pay off. This CPU run reproduces the GPU finding on an independent code path.</div>
     </section>
@@ -120,7 +120,7 @@
       <h2><span class="num">§2</span>Setup &amp; instrumentation</h2>
       <ul class="notes">
         <li><b>Engine.</b> <code class="k">ds4</code> — a single-file C CPU inference engine for DeepSeek-V4 — running <b>DeepSeek-V4-Flash</b> at IQ2 quantization (≈81&nbsp;GB), 64 threads, greedy decode (<code class="k">temp&nbsp;0</code>).</li>
-        <li><b>Task.</b> RULER <code class="k">niah_single_2</code> (single needle-in-a-haystack retrieval) at 4K, 8K, 16K, 32K tokens; one sample per length. The model retrieves the buried fact correctly at all four lengths.</li>
+        <li><b>Task.</b> RULER <code class="k">niah_single_2</code> (single needle-in-a-haystack retrieval) at 4K, 8K, 16K, 32K, 64K tokens; one sample per length. The model retrieves the buried fact correctly at all five lengths.</li>
         <li><b>Trace.</b> Every time a CSA layer's indexer selects its top-512, the selected compressed indices (and scores) are written to a JSONL trace — decode phase only — one record per (layer, token). 21 CSA layers of the 43 total.</li>
         <li><b>Analysis.</b> The trace is ingested to Parquet and reduced to the locality metrics below with the same code used for the GPU study, so the two are directly comparable.</li>
       </ul>
@@ -131,9 +131,10 @@
           <tr><td class="rowlabel">8K</td><td class="num">7,485</td><td class="num">163</td><td class="num">1,891</td><td class="num">27.1%</td><td class="num">~1h53m</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">16,264</td><td class="num">117</td><td class="num">4,080</td><td class="num">12.5%</td><td class="num">~4h22m</td></tr>
           <tr><td class="rowlabel">32K</td><td class="num">32,041</td><td class="num">117</td><td class="num">8,025</td><td class="num">6.4%</td><td class="num">~10h11m</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">65,416</td><td class="num">158</td><td class="num">16,374</td><td class="num">3.1%</td><td class="num">~25h54m</td></tr>
         </tbody>
       </table>
-      <p class="cap">"Kept fraction" = 512 / candidate entries. As context grows the same 512-budget is drawn from a larger pool, so sparsity rises from ~2&times; (4K) to ~16&times; (32K).</p>
+      <p class="cap">"Kept fraction" = 512 / candidate entries. As context grows the same 512-budget is drawn from a larger pool, so sparsity rises from ~2&times; (4K) to ~32&times; (64K).</p>
     </section>
 
     <section class="card" id="metrics">
@@ -160,11 +161,12 @@
           <tr><td class="rowlabel">8K</td><td class="num">1,891</td><td class="num">3.7&times;</td><td class="num">0.790</td><td class="num">0.662</td><td class="num">0.210</td><td class="num">2.92&times;</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">4,080</td><td class="num">8.0&times;</td><td class="num">0.718</td><td class="num">0.573</td><td class="num">0.282</td><td class="num">5.72&times;</td></tr>
           <tr><td class="rowlabel">32K</td><td class="num">8,025</td><td class="num">15.7&times;</td><td class="num">0.672</td><td class="num">0.520</td><td class="num">0.328</td><td class="num">10.53&times;</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">16,374</td><td class="num">32.0&times;</td><td class="num">0.668</td><td class="num">0.516</td><td class="num">0.332</td><td class="num">21.37&times;</td></tr>
         </tbody>
       </table>
       <figure>
         <img src="assets/kv_01_context_scaling.png" alt="KV adjacent overlap and locality lift versus context length">
-        <figcaption class="cap">Adjacent overlap (left axis) declines gently while locality lift (right axis) climbs 1.7&times;&rarr;10.5&times; from 4K to 32K. These CPU/IQ2 numbers match the GPU/vLLM values in Part&nbsp;I to within a few thousandths (e.g. 16K: 0.718 here vs 0.746 there).</figcaption>
+        <figcaption class="cap">Adjacent overlap (left axis) declines gently while locality lift (right axis) climbs 1.7&times;&rarr;21.4&times; from 4K to 64K &mdash; note overlap plateaus (0.672&rarr;0.668) while lift doubles, because the candidate pool doubles. These CPU/IQ2 numbers match the GPU/vLLM values in Part&nbsp;I to within a few thousandths (e.g. 16K: 0.718 here vs 0.746 there).</figcaption>
       </figure>
       <div class="callout win"><b>Cross-stack agreement.</b> A completely separate CPU reference engine, at a different quantization, reproduces Part&nbsp;I's context-scaling curve. Temporal locality of KV selection is a property of the model, not the runtime.</div>
     </section>
@@ -179,19 +181,21 @@
           <tr><td class="rowlabel">8K</td><td class="num">0.790</td><td class="num">0.750</td><td class="num">0.712</td><td class="num">0.681</td><td class="num">0.669</td><td class="num">0.630</td><td class="num">0.606</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">0.718</td><td class="num">0.667</td><td class="num">0.619</td><td class="num">0.573</td><td class="num">0.532</td><td class="num">0.511</td><td class="num">0.498</td></tr>
           <tr><td class="rowlabel">32K</td><td class="num">0.672</td><td class="num">0.622</td><td class="num">0.572</td><td class="num">0.541</td><td class="num">0.518</td><td class="num">0.467</td><td class="num">0.457</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">0.668</td><td class="num">0.610</td><td class="num">0.554</td><td class="num">0.508</td><td class="num">0.489</td><td class="num">0.489</td><td class="num">0.469</td></tr>
         </tbody>
       </table>
       <figure>
         <img src="assets/kv_02_retention.png" alt="KV retention versus decode lag for each context length">
-        <figcaption class="cap">Retention vs lag. Even 64 steps back, 4K keeps ~75% and 32K ~46% of the current selection.</figcaption>
+        <figcaption class="cap">Retention vs lag. Even 64 steps back, 4K keeps ~75% and 64K ~47% of the current selection.</figcaption>
       </figure>
-      <p>The <b>working-set ratio</b> shrinks fast with the window — the same entries keep recurring, so a compact hot set covers many steps. Over a 64-step window a CSA layer's union of selections is only 2.6% (4K) to 6.7% (32K) of <code class="k">64&times;512</code>:</p>
+      <p>The <b>working-set ratio</b> shrinks fast with the window — the same entries keep recurring, so a compact hot set covers many steps. Over a 64-step window a CSA layer's union of selections is only 2.6% (4K) to 7.9% (64K) of <code class="k">64&times;512</code>:</p>
       <table>
         <thead><tr><th>working-set ratio, window w &rarr;</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">4K</td><td class="num">1.000</td><td class="num">0.565</td><td class="num">0.317</td><td class="num">0.176</td><td class="num">0.096</td><td class="num">0.051</td><td class="num">0.026</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">1.000</td><td class="num">0.640</td><td class="num">0.409</td><td class="num">0.259</td><td class="num">0.163</td><td class="num">0.099</td><td class="num">0.056</td></tr>
           <tr><td class="rowlabel">32K</td><td class="num">1.000</td><td class="num">0.663</td><td class="num">0.437</td><td class="num">0.287</td><td class="num">0.185</td><td class="num">0.115</td><td class="num">0.067</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">1.000</td><td class="num">0.665</td><td class="num">0.445</td><td class="num">0.301</td><td class="num">0.202</td><td class="num">0.130</td><td class="num">0.079</td></tr>
         </tbody>
       </table>
     </section>
@@ -199,7 +203,7 @@
     <section class="card" id="semantic">
       <h2><span class="num">§6</span>Semantic reuse, not just recency</h2>
       <p class="lead">Is the model just re-picking the most-recent entries, or genuinely returning to old, relevant ones?</p>
-      <p>Compare the actual adjacent overlap to a <b>recency baseline</b> — the overlap with the most-recent 512 entries. If selection were pure recency, the two would match. Instead the gap widens with context: at 32K the model's selection is <b>6.7&times;</b> more self-similar than a recency policy would explain.</p>
+      <p>Compare the actual adjacent overlap to a <b>recency baseline</b> — the overlap with the most-recent 512 entries. If selection were pure recency, the two would match. Instead the gap widens with context: even at 64K the model's selection is <b>~6&times;</b> more self-similar than a recency policy would explain.</p>
       <table>
         <thead><tr><th>Context</th><th class="num">adjacent overlap</th><th class="num">recency baseline</th><th class="num">ratio</th></tr></thead>
         <tbody>
@@ -207,6 +211,7 @@
           <tr><td class="rowlabel">8K</td><td class="num">0.790</td><td class="num">0.308</td><td class="num">2.6&times;</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">0.718</td><td class="num">0.157</td><td class="num">4.6&times;</td></tr>
           <tr><td class="rowlabel">32K</td><td class="num">0.672</td><td class="num">0.100</td><td class="num">6.7&times;</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">0.668</td><td class="num">0.116</td><td class="num">5.8&times;</td></tr>
         </tbody>
       </table>
       <div class="callout win"><b>Interpretation.</b> The selected set is <b>semantically</b> sticky — it keeps returning to the same old, relevant entries (here, the needle block), far beyond what a "keep the latest" policy captures. A prefetcher must track content, not just recency.</div>
@@ -222,6 +227,7 @@
           <tr><td class="rowlabel">8K</td><td class="num">0.779</td><td class="num">0.778</td><td class="num">0.812</td></tr>
           <tr><td class="rowlabel">16K</td><td class="num">0.713</td><td class="num">0.691</td><td class="num">0.750</td></tr>
           <tr><td class="rowlabel">32K</td><td class="num">0.659</td><td class="num">0.644</td><td class="num">0.711</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">0.651</td><td class="num">0.655</td><td class="num">0.698</td></tr>
         </tbody>
       </table>
       <figure>
@@ -233,10 +239,10 @@
     <section class="card" id="takeaways">
       <h2><span class="num">§8</span>Takeaways</h2>
       <ul class="notes">
-        <li>An <b>independent CPU reference engine (ds4, IQ2)</b> reproduces the GPU/vLLM temporal-locality result: adjacent overlap 0.87&rarr;0.67 over 4K&rarr;32K, locality lift 1.7&times;&rarr;10.5&times;.</li>
+        <li>An <b>independent CPU reference engine (ds4, IQ2)</b> reproduces the GPU/vLLM temporal-locality result: adjacent overlap 0.87&rarr;0.67 over 4K&rarr;64K, locality lift 1.7&times;&rarr;21.4&times;.</li>
         <li>Locality <b>lift rises with context</b> — the selection gets more non-random exactly as the KV cache gets expensive.</li>
-        <li>Reuse is <b>semantic, not merely recent</b> — up to 6.7&times; beyond a recency baseline at 32K.</li>
-        <li>A compact hot set works: a 64-step working set is ≤6.7% of <code class="k">64&times;512</code>.</li>
+        <li>Reuse is <b>semantic, not merely recent</b> — ~6&times; beyond a recency baseline even at 64K.</li>
+        <li>A compact hot set works: a 64-step working set is ≤7.9% of <code class="k">64&times;512</code>.</li>
         <li>Deep layers are the most stable → per-layer budgets make sense.</li>
         <li>This CPU decode path is the same one that emits the MoE routing trace in <a href="../03_part4_moe_locality/report.html"><b>Part&nbsp;IV</b></a>.</li>
       </ul>
@@ -245,7 +251,7 @@
     <section class="card" id="limits">
       <h2><span class="num">§9</span>Honest limitations</h2>
       <ul class="notes">
-        <li><b>n = 1 per length.</b> One RULER sample each at 4K/8K/16K/32K — no cross-sample confidence intervals (Part&nbsp;I's 60+ prompts supply that; the point here is cross-stack agreement).</li>
+        <li><b>n = 1 per length.</b> One RULER sample each at 4K/8K/16K/32K/64K — no cross-sample confidence intervals (Part&nbsp;I's 60+ prompts supply that; the point here is cross-stack agreement).</li>
         <li><b>IQ2 quantization + CPU reference path.</b> Selections come from a heavily quantized model on a reference (non-GPU) kernel path; quantization may shift selections slightly versus full precision.</li>
         <li><b>Logical compressed-KV indices.</b> Overlaps are over logical entry ids, not a physical cache — an upper bound that ignores prefetch timing and bandwidth.</li>
         <li><b>Greedy decode, RULER needle task.</b> A single retrieval workload; broader tasks would strengthen external validity.</li>
