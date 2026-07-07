@@ -311,15 +311,105 @@ print(<span class="hl">pet-&gt;sound()</span>);  <span class="c">// → "meow"</
       (<code class="k">ISpeaker</code>); the behavior came from whatever object the note pointed at. This is the
       mechanism that lets one line of code work with things invented years later.</p>
 
-      <p class="rhythm">Where it appears in Ramulator — verbatim</p>
+      <h3>Step 4d — "Isn't it just a function call?" (the honest question, answered)</h3>
+      <p>Yes — <code class="k">pet-&gt;sound()</code> <em>is</em> just a function call. The magic is not the call. It is
+      hidden in two questions you haven't asked yet: <strong>which</strong> function body actually runs, and
+      <strong>when</strong> — and by <strong>whom</strong> — is that decided? The pain of living without the idea makes
+      the answer obvious, so let's build the same program twice.</p>
+
+      <p class="rhythm">Version A — the world without interfaces</p>
+      <p>No <code class="k">ISpeaker</code>. Just an unrelated <code class="k">Dog</code> and <code class="k">Cat</code>.
+      Write a function that makes "whatever animal we have" speak:</p>
+      <pre class="code">void make_it_speak(string type, Dog* d, Cat* c) {
+  if      (type == "dog") print(d-&gt;sound());
+  else if (type == "cat") print(c-&gt;sound());
+}</pre>
+      <p>It works — until requirements change (they always do): <strong>add a Cow.</strong> Watch what you must touch:</p>
+      <pre class="code">void make_it_speak(string type, Dog* d, Cat* c, <span class="hl">Cow* w</span>) {   <span class="c">// ← edited</span>
+  if      (type == "dog") print(d-&gt;sound());
+  else if (type == "cat") print(c-&gt;sound());
+  <span class="hl">else if (type == "cow") print(w-&gt;sound());</span>                 <span class="c">// ← edited</span>
+}</pre>
+      <p>And the real horror: this <span class="mono">if/else</span> ladder is not in one place. "Make the animal speak"
+      appears in <em>dozens</em> of routines — feeding, vet visit, bedtime. Adding Cow means finding and editing
+      <em>every one</em>. Miss one and cows are silent at bedtime — a bug. Note <em>who</em> decides which function runs:
+      the <strong>caller</strong>, by checking the type. Every caller must know the complete list of animals. Forever.</p>
+
+      <p class="rhythm">Version B — the same program with the contract + sticky note</p>
+      <pre class="code">void make_it_speak(ISpeaker* pet) {    <span class="c">// written ONCE, against the contract</span>
+  print(pet-&gt;sound());                 <span class="c">// no if/else. no list of types. nothing to maintain.</span>
+}</pre>
+      <p>Now add the Cow:</p>
+      <pre class="code">class Cow : public ISpeaker { string sound() { return "moo"; } };   <span class="c">// ← a NEW file, and that is ALL</span>
+
+make_it_speak(new Cow());   <span class="c">// → "moo" — from a function that never heard of cows</span></pre>
+      <p><code class="k">make_it_speak</code> is not touched. No caller anywhere is touched.</p>
+
+      <table>
+        <thead><tr><th>On the operation that actually happens in real projects — <em>adding a type</em></th><th>Version A (if/else)</th><th>Version B (interface)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Add Cow</td><td>edit <strong>every caller</strong> in the program</td><td>add <strong>one new file</strong></td></tr>
+          <tr><td class="rowlabel">Callers must know</td><td>the full list of animal types</td><td>only the contract</td></tr>
+          <tr><td class="rowlabel">Risk</td><td>miss one caller → silent bug</td><td>none — callers never mention types</td></tr>
+        </tbody>
+      </table>
+
+      <p class="rhythm">So how is it different from a plain call? Compile time vs run time.</p>
+      <pre class="code">Dog rex;
+rex.sound();     <span class="c">// PLAIN call: the compiler knows NOW, at COMPILE TIME, that this is</span>
+                 <span class="c">// Dog's body. Baked into the machine code. It can never change.</span>
+
+ISpeaker* pet = /* something */;
+pet-&gt;sound();    <span class="c">// VIRTUAL call: the compiler CANNOT know the body — it depends on what</span>
+                 <span class="c">// pet points at, known only while the program RUNS. So it compiles to:</span>
+                 <span class="c">// "look at the object, read its hidden type tag, jump to THAT type's sound()."</span></pre>
+      <p>Every object built from a class with <code class="k">virtual</code> functions secretly carries a tiny hidden tag
+      ("I am a Cow — my <code class="k">sound</code> is over there"). <code class="k">pet-&gt;sound()</code> reads that tag
+      <em>at that instant</em> and jumps accordingly. So the decision "which code runs" is made:</p>
+      <ul>
+        <li><strong>Plain call:</strong> once, at compile time, by the compiler. Frozen.</li>
+        <li><strong>Virtual call through an interface pointer:</strong> fresh at every call, at run time, by the object itself.</li>
+      </ul>
+      <div class="callout win"><strong>The whole trick in one line:</strong> the decision "which code runs" moves from the
+      <em>caller</em> to the <em>object</em>. The caller stops needing to know the list of types — which is exactly what
+      deleted the if/else ladder, and what lets a function work with classes that <em>did not exist when it was
+      written</em>.</div>
+
+      <p class="rhythm">The everyday analogy — the wall outlet</p>
+      <p>The outlet spec (two holes, 220&nbsp;V) is a contract, designed decades ago. Your phone charger — a device its
+      designers could not have imagined — plugs in and works, and <em>nobody rewired the house</em>. Every appliance
+      "fills the contract's slots" in its own way; the wall never contains an if/else over appliance brands. An interface
+      is a wall outlet for code.</p>
+
+      <p class="rhythm">Where it appears in Ramulator — and you have personally lived this, twice</p>
       <p>The controller holds <code class="k">IScheduler* m_scheduler;</code> — a sticky note typed "some scheduler." Its
       tick does <code class="k">m_scheduler-&gt;get_best_request(buffer)</code>, written purely against the contract in
-      <span class="mono">i_scheduler.h</span>. Whether the note points at an FRFCFS object or at a scheduler you write
-      next month, the controller's code is untouched. Every <span class="mono">i_*.h</span> file in the repo —
-      <code class="k">IController</code>, <code class="k">IMemorySystem</code>, v1's <code class="k">IDMAEngine</code> —
-      is one of these contracts. Even the whole v1 composite works this way: the simulation loop holds an
-      <code class="k">IMemorySystem*</code> note; pointing it at <code class="k">GenericDRAM</code> or at
-      <code class="k">HBMLPDDRBaseDie</code> requires zero changes to the loop.</p>
+      <span class="mono">i_scheduler.h</span>. Every <span class="mono">i_*.h</span> file in the repo —
+      <code class="k">IController</code>, <code class="k">IMemorySystem</code>, v1's <code class="k">IDMAEngine</code> — is
+      one of these outlets. Two concrete payoffs from this very project:</p>
+      <ul>
+        <li><strong>The simulation loop ran our base die without being edited.</strong> The loop in
+        <span class="mono">bindings.cpp</span> — written by the original authors long before v1 — holds
+        <code class="k">IMemorySystem* m_memory_system</code> and calls <code class="k">m_memory_system-&gt;tick()</code>,
+        <code class="k">-&gt;send(req)</code>. We invented a brand-new memory system (<code class="k">HBMLPDDRBaseDie</code>:
+        two tiers, steering, a DMA engine) the authors never imagined, and changed <strong>zero lines</strong> of their
+        loop. We just pointed the note at our object instead of <code class="k">GenericDRAM</code>. That is
+        <code class="k">make_it_speak(new Cow())</code> at full scale.</li>
+        <li><strong>Swapping was one config word, not a code edit.</strong> In the ping-pong study we compared address
+        mappers. The controller holds <code class="k">IAddrMapper* m_addr_mapper</code> and calls
+        <code class="k">-&gt;apply(req)</code>; switching <code class="k">RoBaRaCoCh</code> → <code class="k">ChRaBaRoCo</code>
+        was one word in the Python config — the factory pointed the note at a different object, every line of controller
+        code ran unmodified. Without interfaces that comparison would have meant editing and recompiling the controller
+        twice, hoping we edited it consistently.</li>
+      </ul>
+      <p>The v2 roadmap item "write an access-driven migration engine as a new <code class="k">IDMAEngine</code> impl" is
+      literally: build a new appliance, plug it into the existing socket, rewire nothing.</p>
+
+      <details class="quiz"><summary>Q — You add <span class="mono">class Robot : public ISpeaker { string sound() { return "beep"; } };</span>. List every file that must be edited for <span class="mono">make_it_speak(new Robot())</span> to print "beep".</summary>
+        <div class="ans">None besides the new Robot file itself. <code class="k">make_it_speak</code> named only the contract, so
+        it already handles any ISpeaker — including ones invented after it was compiled. If that answer now feels
+        <em>obvious</em>, you've got the idea.</div>
+      </details>
     </section>
 
     <!-- ═══════════════ 5 ═══════════════ -->
