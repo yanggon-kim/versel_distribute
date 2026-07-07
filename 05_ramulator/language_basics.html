@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Python &amp; C++ Basics for Ramulator — the Language Concepts Behind the Component Framework</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6;
+    --py:#7c3aed; --py-bg:#f1eafe; --cpp:#1f6feb; --cpp-bg:#e8f0fe;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:Arial,Helvetica,sans-serif; color:var(--text); background:var(--bg); line-height:1.6; }
+  a { color:var(--accent); }
+  .wrap { display:grid; grid-template-columns:250px minmax(0,1fr); gap:28px; width:min(100%,1180px); margin:0 auto; padding:36px 24px 64px; }
+  nav.toc { position:sticky; top:24px; align-self:start; font-size:.9rem; }
+  nav.toc .crumb { color:var(--muted); font-size:.8rem; margin-bottom:14px; }
+  nav.toc .crumb a { color:var(--muted); }
+  nav.toc a.item { display:block; padding:5px 10px; border-radius:6px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+  nav.toc a.item:hover { background:#eef5ff; color:var(--accent); }
+  main { min-width:0; }
+  header.page h1 { font-size:clamp(1.6rem,3.4vw,2.3rem); line-height:1.12; margin:0; }
+  header.page .sub { color:var(--muted); margin-top:10px; font-size:1.02rem; }
+  .tags { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+  .tag { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:999px; background:#eef2f7; color:#43506a; border:1px solid var(--border); }
+  .tag.py { background:var(--py-bg); color:var(--py); }
+  .tag.cpp { background:var(--cpp-bg); color:var(--cpp); }
+  section.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 28px rgba(23,32,51,.06); padding:26px; margin-bottom:22px; scroll-margin-top:20px; }
+  section.card > h2 { margin:0 0 6px; font-size:1.32rem; }
+  section.card > h2 .num { color:var(--accent); font-weight:800; margin-right:8px; }
+  .lead { color:var(--muted); margin:0 0 18px; }
+  h3 { font-size:1.05rem; margin:22px 0 8px; }
+  p { margin:10px 0; }
+  code.k { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em; background:#eef2f7; border:1px solid var(--border); border-radius:4px; padding:1px 5px; color:#33415c; }
+  pre.code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55; background:#0b1020; color:#dbe4f5; border-radius:8px; padding:14px 18px; overflow:auto; }
+  pre.code .c { color:#7f93b8; }
+  pre.code .hl { color:#8ec2ff; font-weight:700; }
+  .rhythm { font-size:.8rem; font-weight:700; color:var(--muted); letter-spacing:.04em; text-transform:uppercase; margin:18px 0 4px; }
+  .callout { border-left:4px solid var(--accent); background:#f3f8ff; padding:12px 18px; border-radius:0 8px 8px 0; margin:16px 0; }
+  .callout.win { border-left-color:var(--good); background:var(--good-bg); }
+  .callout.warn { border-left-color:var(--warn); background:var(--warn-bg); }
+  details.quiz { border:1px solid var(--border); border-radius:8px; padding:10px 16px; margin:8px 0; background:#fbfcff; }
+  details.quiz summary { cursor:pointer; font-weight:700; color:#33415c; }
+  details.quiz[open] { background:#f3f8ff; }
+  details.quiz .ans { margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; margin:8px 0 4px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f1f4f9; font-size:.82rem; }
+  tbody tr:hover { background:#f7faff; }
+  td.rowlabel { font-weight:700; white-space:nowrap; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.82em; }
+  .diagrambox { width:100%; overflow:auto; margin:14px 0; }
+  svg.diagram { width:100%; height:auto; display:block; min-width:640px; }
+  @media (max-width: 880px) { .wrap { grid-template-columns:minmax(0,1fr); } nav.toc { position:static; display:flex; flex-wrap:wrap; gap:4px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc" aria-label="Table of contents">
+    <div class="crumb"><a href="../index.html">Report Archive</a> / Ramulator</div>
+    <a class="item" href="#s0">0. Why two languages?</a>
+    <a class="item" href="#s1">1. The Python you need (3 ideas)</a>
+    <a class="item" href="#s2">2. C++ idea 1 — class, object, constructor</a>
+    <a class="item" href="#s3">3. C++ idea 2 — inheritance</a>
+    <a class="item" href="#s4">4. C++ idea 3 — interface + pointer</a>
+    <a class="item" href="#s5">5. C++ idea 4 — the macro</a>
+    <a class="item" href="#s6">6. The journey of one config</a>
+    <a class="item" href="#s7">7. One picture + check yourself</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Python &amp; C++ Basics for Ramulator — the Language Concepts Behind the Component Framework</h1>
+      <p class="sub">A prerequisite lesson for the <a href="report.html">Ramulator 2.1 Core Course</a>, Lesson 3.
+      It teaches <em>only</em> the seven language concepts needed to understand how a Python configuration becomes a
+      tree of C++ objects — three Python ideas, four C++ ideas — each with the same rhythm:
+      <strong>the problem → a tiny example → a line-by-line walk → where it appears in Ramulator.</strong>
+      <code class="k">print(...)</code> in examples means "show this on screen" (real C++ printing looks noisier, but
+      that noise teaches nothing).</p>
+      <div class="tags">
+        <span class="tag">zero programming background assumed</span>
+        <span class="tag py">Python: 3 ideas</span>
+        <span class="tag cpp">C++: 4 ideas</span>
+        <span class="tag">unlocks Core Course Lesson 3</span>
+      </div>
+    </header>
+
+    <!-- ═══════════════ 0 ═══════════════ -->
+    <section class="card" id="s0">
+      <h2><span class="num">0</span>Why are there even two languages?</h2>
+      <p class="lead">The engine is C++ (fast), the control panel is Python (convenient).</p>
+      <ul>
+        <li><strong>C++</strong> programs must be <em>compiled</em>: a tool translates the whole source code into machine
+        code before anything runs. The result is very fast — and that matters, because Ramulator executes its tick loop
+        hundreds of millions of times per simulation.</li>
+        <li><strong>Python</strong> is <em>interpreted</em>: you write a text file and run it immediately, no compile
+        step. It is slow but effortless to change — perfect for describing <em>what you want to simulate today</em>
+        (8 channels? <code class="k">rank=2</code>? which scheduler?).</li>
+      </ul>
+      <p>So Ramulator splits the work. Everything time-critical (controllers, DRAM timing, the tick loop) is C++.
+      Everything you touch daily (choosing components, setting parameters) is Python. This page is about the
+      <strong>wiring between the panel and the engine</strong>.</p>
+    </section>
+
+    <!-- ═══════════════ 1 ═══════════════ -->
+    <section class="card" id="s1">
+      <h2><span class="num">1</span>The Python you need — 3 ideas</h2>
+      <p class="lead">Everything you will ever write in Ramulator-Python is "make me one of these, with these ingredients."</p>
+
+      <h3>Idea 1 — calling with named ingredients</h3>
+      <p><code class="k">FRFCFS()</code> means "make me a FRFCFS thing." You can pass ingredients <em>by name</em>:</p>
+      <pre class="code">ctrl = ramulator.controller.HBM34(scheduler=FRFCFS(), read_buffer_size=32)</pre>
+      <p>Read it aloud: "make an HBM34, whose <em>scheduler</em> ingredient is a fresh FRFCFS, and whose
+      <em>read_buffer_size</em> ingredient is 32." Notice ingredients can themselves be freshly-made things — the calls
+      nest.</p>
+
+      <h3>Idea 2 — the dictionary: a labeled box of values</h3>
+      <pre class="code">{"impl": "HBM34", "read_buffer_size": 32, "scheduler": {"impl": "FRFCFS"}}</pre>
+      <p>Curly braces, <span class="mono">label: value</span> pairs — and a value can itself be another dictionary
+      (boxes inside boxes). Keep this picture in mind: <strong>this is the hand-off format</strong> between the two
+      languages.</p>
+
+      <h3>Idea 3 — every Ramulator thing can describe itself as a dictionary</h3>
+      <p>Each Python object carries a function <code class="k">to_config()</code> that flattens the pretty nested calls
+      of Idea 1 into the nested dictionary of Idea 2. That is <em>all</em> Python contributes:
+      <strong>building a description.</strong> No simulation ever happens in Python.</p>
+    </section>
+
+    <!-- ═══════════════ 2 ═══════════════ -->
+    <section class="card" id="s2">
+      <h2><span class="num">2</span>C++ idea 1 — class, object, constructor</h2>
+      <p class="rhythm">The problem</p>
+      <p>You want to describe a <em>kind of thing</em> once, then make many of them.</p>
+
+      <p class="rhythm">The tiny example — a click counter</p>
+      <pre class="code">class Counter {            <span class="c">// "class" = a BLUEPRINT for a kind of thing</span>
+  int count;               <span class="c">// every Counter will have its own number called count</span>
+
+public:
+  <span class="hl">Counter(int start)</span> {     <span class="c">// the CONSTRUCTOR: assembly instructions,</span>
+    count = start;         <span class="c">// runs automatically when a Counter is built</span>
+  }
+
+  void increment() {       <span class="c">// a function every Counter carries with it</span>
+    count = count + 1;
+  }
+};</pre>
+
+      <p class="rhythm">Line-by-line walk</p>
+      <ol>
+        <li><code class="k">class Counter { ... };</code> — <strong>nothing is built yet!</strong> This is only the
+        blueprint: "<em>if</em> someone makes a Counter, it will contain an <code class="k">int count</code> and know
+        how to <code class="k">increment()</code>."</li>
+        <li><code class="k">Counter(int start)</code> — the constructor. Its name always matches the class. It runs
+        exactly once, at the moment of creation, to set the newborn object up.</li>
+        <li>Now build <strong>objects</strong> — real things stamped from the blueprint:</li>
+      </ol>
+      <pre class="code">Counter a(0);      <span class="c">// build one Counter; constructor runs with start=0 → a.count is 0</span>
+Counter b(100);    <span class="c">// build ANOTHER, totally separate one → b.count is 100</span>
+a.increment();     <span class="c">// a.count becomes 1.  b.count is still 100 — they don't share!</span></pre>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 880 190" role="img" aria-label="One blueprint stamps many independent objects">
+        <defs>
+          <marker id="b2arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <rect x="40" y="40" width="230" height="110" rx="10" fill="#e8f0fe" stroke="#1f6feb" stroke-width="1.6" stroke-dasharray="7 5"/>
+        <text x="155" y="70" text-anchor="middle" font-size="13" font-weight="800" fill="#1f6feb">class Counter</text>
+        <text x="155" y="92" text-anchor="middle" font-size="11" fill="#43506a">int count</text>
+        <text x="155" y="110" text-anchor="middle" font-size="11" fill="#43506a">Counter(start)  ·  increment()</text>
+        <text x="155" y="136" text-anchor="middle" font-size="10.5" fill="#647083">a BLUEPRINT — nothing exists yet</text>
+        <line x1="274" y1="76" x2="356" y2="66" stroke="#43506a" stroke-width="1.8" marker-end="url(#b2arr)"/>
+        <line x1="274" y1="114" x2="356" y2="128" stroke="#43506a" stroke-width="1.8" marker-end="url(#b2arr)"/>
+        <rect x="360" y="36" width="180" height="58" rx="8" fill="#ffffff" stroke="#1f6feb" stroke-width="1.6"/>
+        <text x="450" y="60" text-anchor="middle" font-size="12" font-weight="700" fill="#172033">object a</text>
+        <text x="450" y="80" text-anchor="middle" font-size="11" fill="#43506a">count = 1  (own copy)</text>
+        <rect x="360" y="106" width="180" height="58" rx="8" fill="#ffffff" stroke="#1f6feb" stroke-width="1.6"/>
+        <text x="450" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#172033">object b</text>
+        <text x="450" y="150" text-anchor="middle" font-size="11" fill="#43506a">count = 100  (own copy)</text>
+        <text x="590" y="66" font-size="11" fill="#647083">In Ramulator: one HBM34Controller class,</text>
+        <text x="590" y="84" font-size="11" fill="#647083">eight channel objects — each with its OWN</text>
+        <text x="590" y="102" font-size="11" fill="#647083">queues, clock, and stats. That is why</text>
+        <text x="590" y="120" font-size="11" fill="#647083">sim.stats shows 8 independent</text>
+        <text x="590" y="138" font-size="11" fill="#647083">"HBM Channel i" entries.</text>
+      </svg>
+      </div>
+
+      <p class="rhythm">Where it appears in Ramulator</p>
+      <p><code class="k">HBM34Controller</code> is a class. Configuring 8 HBM channels builds <strong>8 separate
+      objects</strong> from that one blueprint. And Ramulator's constructors end by calling <code class="k">init()</code>
+      — the setup ritual where parameters are read and children are built (§6).</p>
+    </section>
+
+    <!-- ═══════════════ 3 ═══════════════ -->
+    <section class="card" id="s3">
+      <h2><span class="num">3</span>C++ idea 2 — inheritance ("is a kind of")</h2>
+      <p class="rhythm">The problem</p>
+      <p>Two blueprints share 90% of their content. Copy-pasting the shared 90% would be a maintenance nightmare.</p>
+
+      <p class="rhythm">The tiny example</p>
+      <pre class="code">class Animal {
+public:
+  void breathe() { print("inhale, exhale"); }
+};
+
+class Dog : <span class="hl">public Animal</span> {      <span class="c">// read ":" as "is a kind of"</span>
+public:
+  void bark() { print("woof!"); }
+};</pre>
+
+      <p class="rhythm">Line-by-line walk</p>
+      <ol>
+        <li><code class="k">class Dog : public Animal</code> — Dog <strong>inherits</strong> Animal. That one line
+        copies, invisibly, everything Animal has into Dog.</li>
+        <li>So a Dog object has <strong>two</strong> abilities — its own and the inherited one:</li>
+      </ol>
+      <pre class="code">Dog rex;
+rex.bark();      <span class="c">// works — Dog's own</span>
+rex.breathe();   <span class="c">// ALSO works — came free from Animal (we never wrote it in Dog)</span></pre>
+      <ol start="3">
+        <li>Rule of thumb: write the shared stuff once in the parent; each child adds only its differences.</li>
+      </ol>
+
+      <p class="rhythm">Where it appears in Ramulator — and it is load-bearing</p>
+      <p>The class <code class="k">ControllerBase</code> contains the ~90% every memory controller shares: the four
+      queues, <code class="k">send()</code> with forwarding/coalescing, the write-mode watermarks, the pending-reads
+      deque, all the stats. Then each standard adds only its delta:</p>
+      <pre class="code">class HBM34Controller  : public HBMControllerBase   { <span class="c">/* adds: dual command bus + edge pairing */</span> }
+class LPDDR5Controller : public LPDDRControllerBase { <span class="c">/* adds: two-part ACT, WCK sync */</span> }</pre>
+      <div class="callout win">When the Core Course studied <code class="k">set_write_mode()</code> (Lesson 4), it
+      studied it <strong>once</strong>, in <code class="k">ControllerBase</code> — and the conclusion applied to both the
+      HBM tier and the LPDDR tier of the v1 model automatically. That is inheritance paying rent.</div>
+    </section>
+
+    <!-- ═══════════════ 4 ═══════════════ -->
+    <section class="card" id="s4">
+      <h2><span class="num">4</span>C++ idea 3 — the interface (a contract with empty slots) + the pointer that makes it useful</h2>
+      <p class="lead">The big one — built in three small steps.</p>
+
+      <h3>Step 4a — the problem</h3>
+      <p>The controller needs to ask <em>some</em> scheduler "pick the best request." We want to freely swap which
+      scheduler (FRFCFS today, your custom one tomorrow) <strong>without editing the controller's code</strong>. How can
+      the controller call a function on a thing whose exact type it doesn't know?</p>
+
+      <h3>Step 4b — the contract</h3>
+      <p>Declare a class that is deliberately hollow:</p>
+      <pre class="code">class ISpeaker {
+public:
+  <span class="hl">virtual</span> string sound() <span class="hl">= 0</span>;   <span class="c">// "every kind of ISpeaker MUST have sound() —</span>
+};                              <span class="c">//  but I'm not telling you how it works"</span></pre>
+      <p>Two new marks, both doing exactly what they look like:</p>
+      <ul>
+        <li><code class="k">virtual</code> = "children are allowed to replace this function with their own version, and
+        the replacement wins."</li>
+        <li><code class="k">= 0</code> = "this slot is EMPTY here. You cannot build a plain ISpeaker (it's incomplete!) —
+        only children who fill the slot can be built."</li>
+      </ul>
+      <p>Two children fill the slot differently:</p>
+      <pre class="code">class Dog : public ISpeaker {
+public:
+  string sound() { return "woof"; }    <span class="c">// Dog's way of fulfilling the contract</span>
+};
+
+class Cat : public ISpeaker {
+public:
+  string sound() { return "meow"; }    <span class="c">// Cat's way</span>
+};</pre>
+
+      <h3>Step 4c — the pointer (a sticky note with an address)</h3>
+      <p>A pointer is a variable that holds <em>the location of</em> an object rather than the object itself — a sticky
+      note with an address written on it. Written with a <code class="k">*</code>:</p>
+      <pre class="code">ISpeaker* pet;        <span class="c">// a sticky note that can point at ANY kind-of-ISpeaker</span>
+pet = new Dog();      <span class="c">// today it points at a Dog...</span>
+print(<span class="hl">pet-&gt;sound()</span>);  <span class="c">// → "woof"    (-&gt; means: follow the note, call the function)</span>
+pet = new Cat();      <span class="c">// ...tomorrow, at a Cat. Same variable!</span>
+print(<span class="hl">pet-&gt;sound()</span>);  <span class="c">// → "meow"</span></pre>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 880 200" role="img" aria-label="One pointer variable pointing at interchangeable implementations of a contract">
+        <defs>
+          <marker id="b4arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#b54708"/>
+          </marker>
+        </defs>
+        <rect x="40" y="70" width="220" height="60" rx="8" fill="#fdf0e6" stroke="#b54708" stroke-width="1.6"/>
+        <text x="150" y="96" text-anchor="middle" font-size="12.5" font-weight="800" fill="#b54708">ISpeaker* pet</text>
+        <text x="150" y="116" text-anchor="middle" font-size="10.5" fill="#43506a">the sticky note (holds an address)</text>
+        <rect x="470" y="26" width="180" height="56" rx="8" fill="#ffffff" stroke="#1f6feb" stroke-width="1.6"/>
+        <text x="560" y="50" text-anchor="middle" font-size="12" font-weight="700" fill="#172033">a Dog object</text>
+        <text x="560" y="70" text-anchor="middle" font-size="11" fill="#43506a">sound() → "woof"</text>
+        <rect x="470" y="118" width="180" height="56" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.6"/>
+        <text x="560" y="142" text-anchor="middle" font-size="12" font-weight="700" fill="#172033">a Cat object</text>
+        <text x="560" y="162" text-anchor="middle" font-size="11" fill="#43506a">sound() → "meow"</text>
+        <line x1="262" y1="88" x2="466" y2="56" stroke="#b54708" stroke-width="2.2" marker-end="url(#b4arr)"/>
+        <line x1="262" y1="112" x2="466" y2="144" stroke="#b54708" stroke-width="2.2" stroke-dasharray="6 5" marker-end="url(#b4arr)"/>
+        <text x="360" y="46" font-size="10.5" fill="#b54708" font-weight="700">today</text>
+        <text x="352" y="150" font-size="10.5" fill="#b54708">tomorrow — same variable!</text>
+        <text x="680" y="92" font-size="11" fill="#647083">pet-&gt;sound() never changes,</text>
+        <text x="680" y="110" font-size="11" fill="#647083">yet the behavior comes from</text>
+        <text x="680" y="128" font-size="11" fill="#647083">whatever the note points at.</text>
+      </svg>
+      </div>
+
+      <p>Stare at the magic line: <code class="k">print(pet-&gt;sound())</code> — <strong>that line never changes</strong>,
+      yet it produced "woof" and then "meow." The code was written against the <em>contract</em>
+      (<code class="k">ISpeaker</code>); the behavior came from whatever object the note pointed at. This is the
+      mechanism that lets one line of code work with things invented years later.</p>
+
+      <p class="rhythm">Where it appears in Ramulator — verbatim</p>
+      <p>The controller holds <code class="k">IScheduler* m_scheduler;</code> — a sticky note typed "some scheduler." Its
+      tick does <code class="k">m_scheduler-&gt;get_best_request(buffer)</code>, written purely against the contract in
+      <span class="mono">i_scheduler.h</span>. Whether the note points at an FRFCFS object or at a scheduler you write
+      next month, the controller's code is untouched. Every <span class="mono">i_*.h</span> file in the repo —
+      <code class="k">IController</code>, <code class="k">IMemorySystem</code>, v1's <code class="k">IDMAEngine</code> —
+      is one of these contracts. Even the whole v1 composite works this way: the simulation loop holds an
+      <code class="k">IMemorySystem*</code> note; pointing it at <code class="k">GenericDRAM</code> or at
+      <code class="k">HBMLPDDRBaseDie</code> requires zero changes to the loop.</p>
+    </section>
+
+    <!-- ═══════════════ 5 ═══════════════ -->
+    <section class="card" id="s5">
+      <h2><span class="num">5</span>C++ idea 4 — the macro (a rubber stamp on text)</h2>
+      <p class="rhythm">The problem</p>
+      <p>Some code patterns are pure boilerplate — 10 identical-shaped lines that every class needs, with only names
+      changed. Typing them repeatedly invites errors.</p>
+
+      <p class="rhythm">The tiny example — start with the smallest possible macro</p>
+      <pre class="code">#define SQUARE(x) ((x) * (x))
+
+int y = SQUARE(7);</pre>
+      <p class="rhythm">Walk through what the compiler actually sees</p>
+      <ol>
+        <li><code class="k">#define SQUARE(x) ...</code> teaches a pre-processing tool a
+        <strong>find-and-replace rule</strong>. This happens <em>before</em> compilation, on raw text.</li>
+        <li>Everywhere <code class="k">SQUARE(7)</code> appears, the text is literally rewritten to
+        <code class="k">((7) * (7))</code>.</li>
+        <li>The compiler never sees the word SQUARE at all — only the expanded text, as if you had typed it yourself.</li>
+      </ol>
+      <p>A macro is not a function — it is a <strong>stamp</strong>. And a stamp can expand to <em>many</em> lines:</p>
+      <pre class="code">#define REGISTER(name)                       \
+  static bool registered_##name =            \
+      factory_table.add(#name, build_##name);
+<span class="c">// (don't worry about the ##/# glue syntax — it just pastes the name into the generated text)</span>
+<span class="c">// one short line, REGISTER(FRFCFS), expands into the whole</span>
+<span class="c">// "add me to the factory table at program start" ritual of §6.</span></pre>
+
+      <p class="rhythm">Where it appears in Ramulator</p>
+      <pre class="code"><span class="hl">RAMULATOR_REGISTER_IMPLEMENTATION</span>(IScheduler, FRFCFS, "FRFCFS")  <span class="c">// expands to: factory self-registration</span>
+<span class="hl">RAMULATOR_PARSE_PARAM</span>(m_size, int, "read_buffer_size")           <span class="c">// expands to: read this label from my config dict</span>
+<span class="hl">RAMULATOR_CREATE_CHILD</span>(m_scheduler, IScheduler)                  <span class="c">// expands to: build my child via the factory</span></pre>
+      <p>Each stamped line hides 5–15 lines of ritual.</p>
+      <div class="callout win"><strong>The beautiful side effect:</strong> because macros are plain text with a fixed
+      shape, the Python code generator can find every one of them with simple text search — that is literally how the
+      Python "menu" gets generated from the C++ source. The stamps serve two masters at once: the compiler (expanded
+      code) and the codegen (searchable markers).</div>
+    </section>
+
+    <!-- ═══════════════ 6 ═══════════════ -->
+    <section class="card" id="s6">
+      <h2><span class="num">6</span>The journey of one config — all seven ideas composed</h2>
+      <p class="lead">The factory is a recipe book indexed by name; each class pins its own recipe in; codegen prints the menu.</p>
+
+      <p>The central question: the C++ engine receives the dictionary <span class="mono">{"impl": "HBM34", ...}</span> —
+      a <em>string</em>! How do you go from the text <span class="mono">"HBM34"</span> to <em>constructing an HBM34
+      object</em>? Answer: a <strong>factory</strong> — a lookup table inside the C++ program:</p>
+      <pre class="code">"FRFCFS"      →  how to build an FRFCFS
+"HBM34"       →  how to build an HBM34Controller
+"RoBaRaCoCh"  →  how to build a RoBaRaCoCh
+...</pre>
+      <p>…and <strong>each class adds itself to the table</strong> (that's what the REGISTER stamp expands into). No
+      central list anyone maintains: write a new class with the stamp → the table gains a row at program start; delete
+      the file → the row disappears.</p>
+
+      <div class="diagrambox">
+      <svg class="diagram" viewBox="0 0 880 240" role="img" aria-label="Pipeline: Python call to dictionary to factory to object tree, with codegen closing the loop">
+        <defs>
+          <marker id="b6arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#43506a"/>
+          </marker>
+        </defs>
+        <rect x="20" y="30" width="185" height="80" rx="8" fill="#f1eafe" stroke="#7c3aed"/>
+        <text x="112" y="56" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">① Python call</text>
+        <text x="112" y="76" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">HBM34(scheduler=</text>
+        <text x="112" y="92" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">FRFCFS(), ...)</text>
+        <line x1="207" y1="70" x2="242" y2="70" stroke="#43506a" stroke-width="2" marker-end="url(#b6arr)"/>
+        <rect x="246" y="30" width="185" height="80" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="338" y="56" text-anchor="middle" font-size="11.5" font-weight="800" fill="#172033">② dictionary</text>
+        <text x="338" y="76" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">{"impl":"HBM34",</text>
+        <text x="338" y="92" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#33415c">"scheduler":{...}}</text>
+        <line x1="433" y1="70" x2="468" y2="70" stroke="#43506a" stroke-width="2" marker-end="url(#b6arr)"/>
+        <rect x="472" y="30" width="185" height="80" rx="8" fill="#e8f0fe" stroke="#1f6feb"/>
+        <text x="564" y="56" text-anchor="middle" font-size="11.5" font-weight="800" fill="#1f6feb">③ factory lookup</text>
+        <text x="564" y="76" text-anchor="middle" font-size="10" fill="#43506a">"HBM34" → run that</text>
+        <text x="564" y="92" text-anchor="middle" font-size="10" fill="#43506a">class's constructor</text>
+        <line x1="659" y1="70" x2="694" y2="70" stroke="#43506a" stroke-width="2" marker-end="url(#b6arr)"/>
+        <rect x="698" y="20" width="165" height="130" rx="8" fill="#ffffff" stroke="#1f6feb"/>
+        <text x="780" y="44" text-anchor="middle" font-size="11.5" font-weight="800" fill="#172033">④ object tree</text>
+        <rect x="722" y="56" width="120" height="24" rx="5" fill="#e8f0fe" stroke="#1f6feb"/>
+        <text x="782" y="72" text-anchor="middle" font-size="9.5" fill="#1f6feb">HBM34 controller</text>
+        <rect x="710" y="92" width="70" height="22" rx="5" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="745" y="107" text-anchor="middle" font-size="9" fill="#43506a">FRFCFS</text>
+        <rect x="788" y="92" width="70" height="22" rx="5" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="823" y="107" text-anchor="middle" font-size="9" fill="#43506a">mapper…</text>
+        <line x1="762" y1="82" x2="745" y2="90" stroke="#43506a" stroke-width="1.4" marker-end="url(#b6arr)"/>
+        <line x1="802" y1="82" x2="823" y2="90" stroke="#43506a" stroke-width="1.4" marker-end="url(#b6arr)"/>
+        <text x="780" y="136" text-anchor="middle" font-size="9" fill="#647083">init() builds children recursively</text>
+        <rect x="246" y="160" width="411" height="60" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+        <text x="452" y="184" text-anchor="middle" font-size="11.5" font-weight="800" fill="#1a7f37">⑤ codegen closes the loop (build time)</text>
+        <text x="452" y="203" text-anchor="middle" font-size="10" fill="#43506a">a Python script text-searches the C++ for the stamps → writes the Python classes of ① automatically</text>
+        <line x1="564" y1="158" x2="564" y2="114" stroke="#1a7f37" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#b6arr)"/>
+        <line x1="240" y1="190" x2="112" y2="190" stroke="#1a7f37" stroke-width="1.8" stroke-dasharray="5 4"/>
+        <line x1="112" y1="190" x2="112" y2="114" stroke="#1a7f37" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#b6arr)"/>
+      </svg>
+      </div>
+
+      <p class="rhythm">The journey, step by step</p>
+      <ol>
+        <li><strong>You write Python</strong> (§1 idea 1): <span class="mono">HBM34(read_buffer_size=32, scheduler=FRFCFS(), ...)</span></li>
+        <li><strong>Python flattens it</strong> into the dictionary via <code class="k">to_config()</code> (§1 ideas 2–3).</li>
+        <li><strong>The dictionary crosses the border</strong> into C++ (as a tree structure called
+        <code class="k">ConfigNode</code> — same shape, C++ flavored).</li>
+        <li><strong>C++ asks the factory</strong>: "build me the thing named HBM34." The factory finds the row and runs
+        HBM34's constructor (§2).</li>
+        <li><strong>The constructor ends by running <code class="k">init()</code></strong> — where the stamps live:
+        <pre class="code">void init() {
+  RAMULATOR_PARSE_PARAM(m_read_buffer_size, int, "read_buffer_size");  <span class="c">// reads 32 from the dict</span>
+  RAMULATOR_CREATE_CHILD(m_scheduler, IScheduler);    <span class="c">// sees {"impl":"FRFCFS"} → factory builds FRFCFS</span>
+  RAMULATOR_CREATE_CHILD(m_addr_mapper, IAddrMapper); <span class="c">// sees {"impl":"RoBaRaCoCh"} → factory builds it</span>
+}</pre>
+        Notice the <strong>recursion</strong>: building the controller triggers building its children, and if a child had
+        children, the same happens inside <em>its</em> init(). One factory call at the top unfolds the entire dictionary
+        into a full tree of live C++ objects — mirroring the nesting of your Python calls.</li>
+        <li><strong>One last pass:</strong> after the whole tree exists, every object gets a <code class="k">setup()</code>
+        call — the moment for wiring that needs <em>other</em> objects to already exist. (v1's MigrationEngine finds its
+        host memory-system here — during its own init() the parent was still half-built, like asking for your manager's
+        signature while HR is still typing the manager's contract.)</li>
+      </ol>
+
+      <div class="callout"><strong>The restaurant, in one paragraph.</strong> Each chef (C++ class) pins their own recipe
+      card into the kitchen's book (the factory, via the stamp). A clerk (codegen) walks the kitchen reading recipe cards
+      and prints the customer menu (the Python classes). You tick boxes on the menu; your order ticket (the dictionary)
+      goes to the kitchen; the kitchen builds the dish by following recipes, ordering sub-dishes recursively.
+      <strong>Add a new chef → the menu updates itself.</strong></div>
+
+      <p class="rhythm">And v1's extension, in one sentence</p>
+      <p>The stock <code class="k">CREATE_CHILD_LIST</code> stamp hard-codes its dictionary label from the interface name
+      (<code class="k">IController</code> → <span class="mono">"controllers"</span>), so a parent could own only
+      <em>one</em> list of controllers; the base die needs <em>two</em> (HBM pool, LPDDR pool) — so v1 added a stamp
+      variant where you choose the label, and taught the menu-printing clerk to recognize it:</p>
+      <pre class="code">RAMULATOR_CREATE_NAMED_CHILD_LIST(m_hbm_controllers,   IController, <span class="hl">"hbm_controllers"</span>);
+RAMULATOR_CREATE_NAMED_CHILD_LIST(m_lpddr_controllers, IController, <span class="hl">"lpddr_controllers"</span>);</pre>
+      <p>…which is precisely why your Python config has <span class="mono">hbm_controllers=[...]</span> and
+      <span class="mono">lpddr_controllers=[...]</span> as ingredients.</p>
+    </section>
+
+    <!-- ═══════════════ 7 ═══════════════ -->
+    <section class="card" id="s7">
+      <h2><span class="num">7</span>The seven ideas in one picture — then check yourself</h2>
+      <table>
+        <thead><tr><th>Idea</th><th>One line to remember</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Py 1 — named ingredients</td><td><span class="mono">HBM34(scheduler=FRFCFS())</span> = "make one, with these parts"</td></tr>
+          <tr><td class="rowlabel">Py 2 — dictionary</td><td><span class="mono">{label: value}</span>, nestable — the hand-off format</td></tr>
+          <tr><td class="rowlabel">Py 3 — to_config()</td><td>every Python object can describe itself as a dictionary; Python only <em>describes</em></td></tr>
+          <tr><td class="rowlabel">C++ 1 — class/object/constructor</td><td>blueprint → many independent objects; constructor = birth ritual</td></tr>
+          <tr><td class="rowlabel">C++ 2 — inheritance</td><td>child owns everything the parent has, adds only its delta</td></tr>
+          <tr><td class="rowlabel">C++ 3 — interface + pointer</td><td>contract with empty slots + sticky note = swap parts without editing callers</td></tr>
+          <tr><td class="rowlabel">C++ 4 — macro</td><td>find-and-replace stamp before compiling — boilerplate generated, and text-searchable</td></tr>
+        </tbody>
+      </table>
+      <p>Composed: <strong>classes</strong> share machinery via <strong>inheritance</strong>, plug into each other through
+      <strong>interface pointers</strong>, and self-register/self-describe via <strong>macros</strong> — which the
+      factory uses to build them from your Python <strong>dictionary</strong>, and codegen uses to write the Python menu.</p>
+
+      <details class="quiz"><summary>Q1 — <span class="mono">Counter a(0); Counter b(100); a.increment();</span> — what are a.count and b.count now, and why doesn't b change?</summary>
+        <div class="ans">a.count = 1, b.count = 100. Each object stamped from the blueprint carries its <em>own</em> copy
+        of the data — incrementing one object touches nothing in the other.</div>
+      </details>
+      <details class="quiz"><summary>Q2 — In <span class="mono">IScheduler* m_scheduler;</span> — is m_scheduler a scheduler?</summary>
+        <div class="ans">No — it is a <em>pointer</em>: a sticky note holding the address of some scheduler object that
+        lives elsewhere. The note's type (<span class="mono">IScheduler*</span>) only promises that whatever it points at
+        fulfills the IScheduler contract, so <span class="mono">m_scheduler-&gt;get_best_request(...)</span> is always a
+        legal call.</div>
+      </details>
+      <details class="quiz"><summary>Q3 — Why can't you build a plain ISpeaker object directly?</summary>
+        <div class="ans">It has an unfilled slot (<span class="mono">virtual ... = 0</span>) — the blueprint is
+        deliberately incomplete. Only children that fill every empty slot are buildable. That is what makes it a pure
+        contract rather than a thing.</div>
+      </details>
+      <details class="quiz"><summary>Q4 — A developer reads a config value by hand instead of using RAMULATOR_PARSE_PARAM. The code compiles and runs. What still breaks?</summary>
+        <div class="ans">The Python side. Codegen discovers parameters by text-searching for the macro; hand-written
+        parsing is invisible to it, so the parameter never appears as a keyword argument in the generated Python class —
+        users cannot set it from the menu. The stamps serve two masters: skipping one (the codegen) breaks the wiring
+        even when the other (the compiler) is satisfied.</div>
+      </details>
+
+      <p class="lead" style="margin-top:16px;">Next step: re-read
+      <a href="report.html#l3">Lesson 3 of the Core Course</a> — it should now read as a summary of things you already
+      know. Companion material lives in the model repository:
+      <a href="https://github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie">github.com/yanggon-kim/ramulator2-hbm-lpddr-basedie</a>.</p>
+      <p class="lead">Written 2026-07-07 · Yang-gon Kim · companion to the Ramulator 2.1 Core Course</p>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>
