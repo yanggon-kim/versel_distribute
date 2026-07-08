@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V4 Sparse Attention — Part V: The Decoder Layer, Operation by Operation (Measured GPU Time)</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+    --csa:#1f6feb; --csa-bg:#eaf2ff; --hca:#8250df; --hca-bg:#f3eefe; --local:#647083; --local-bg:#eef1f5;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  h4{font-size:.96rem;margin:16px 0 6px;color:#33415c;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  tr.hi td{background:#e7f5ec;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:880px){.two{grid-template-columns:1fr;} .wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .gloss{border:1px dashed var(--border);border-radius:8px;background:#fbfcff;padding:10px 14px;margin:10px 0;font-size:.92rem;}
+  .gloss b{color:var(--accent);}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;margin:6px 2px 2px;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .sw{width:13px;height:13px;border-radius:3px;display:inline-block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#order">1 · The layer at a glance</a>
+    <a href="#mhc">2 · mHC hyper-connections</a>
+    <a href="#attn">3 · Sparse attention, op by op</a>
+    <a href="#moe">4 · MoE, op by op</a>
+    <a href="#table">5 · Full per-op GPU-time table</a>
+    <a href="#scale">6 · How it scales</a>
+    <a href="#method">7 · Method &amp; caveats</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V4 Sparse Attention — Part&nbsp;V</h1>
+      <p class="sub">Parts&nbsp;I&ndash;IV asked <b>which</b> KV entries and experts a decoder layer selects.
+        This part asks a different question: <b>what actually runs inside one decoder layer, in order, and
+        how many microseconds of GPU does each operation cost?</b> Measured by vLLM layerwise profiling of
+        <code class="k">DeepSeek-V4-Pro</code> on a single NVIDIA&nbsp;B200 (SM100) &mdash; the same run that
+        produced the <a href="../../index.html">LLMServingSim</a> profile bundle.</p>
+      <div class="tags">
+        <span class="tag">DeepSeek-V4-Pro (384 experts / 6 active, 61 layers)</span>
+        <span class="tag live">measured on NVIDIA B200 (SM100) via vLLM 0.24 layerwise profile</span>
+        <span class="tag">1 CSA decoder layer &middot; batch = prefill 8 + 2 decode (kv 64)</span>
+        <span class="tag">fp8 KV &middot; fp4 experts &middot; enforce_eager</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">§</span>Overview in one minute</h2>
+      <p class="lead">A DeepSeek-V4 decoder layer is <b>two heavy blocks wrapped in cheap glue</b>: a
+        sparse-attention block and a Mixture-of-Experts block, stitched together by <i>multi-rate
+        hyper-connections</i> (mHC) instead of a plain residual add. We profiled every CUDA kernel in one
+        layer and attributed the time.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">~481&nbsp;&micro;s</div><div class="l">GPU-kernel time in one CSA decoder layer (device-active, this batch)</div></div>
+        <div class="kpi"><div class="v">218 / 235</div><div class="l">&micro;s split: sparse attention vs MoE &mdash; the two blocks that dominate</div></div>
+        <div class="kpi"><div class="v">188&nbsp;&micro;s</div><div class="l">biggest single op: the fused fp4 expert GEMM (<code class="k">sm100_fp8_fp4_mega_moe</code>)</div></div>
+        <div class="kpi"><div class="v">~31&nbsp;&micro;s</div><div class="l">all the mHC hyper-connection kernels combined (&lt;7% of the layer)</div></div>
+        <div class="kpi"><div class="v">&times;61</div><div class="l">layers stacked per forward, plus a one-time 268&nbsp;&micro;s LM head</div></div>
+        <div class="kpi"><div class="v">near-flat</div><div class="l">attention cost vs context length &mdash; the point of the sparse indexer</div></div>
+      </div>
+      <div class="callout"><b>Plain-language thesis.</b> Per layer, almost all the GPU time is in two GEMM-bound
+        blocks: the <b>MoE experts</b> (a single fused fp4 kernel) and the <b>attention projections</b>
+        (<code class="k">wq_b</code>&nbsp;up-projection and <code class="k">wo_b</code>&nbsp;output projection).
+        The parts that make V4 <i>sparse</i> &mdash; the lightning indexer, the KV compressor, the FlashMLA
+        core &mdash; are individually small (a few &micro;s each), and their payoff shows up not in the
+        per-op table but in <a href="#scale">§6</a>: attention barely grows as context length goes from 0
+        to 128K. The hyper-connections that replace the residual stream are cheap glue (&lt;7%).</div>
+      <div class="callout warn"><b>Read the &micro;s the right way.</b> These are <b>device-active CUDA times
+        per operation</b>. V4's attention runs its input GEMMs across <b>four CUDA streams at once</b>
+        (<a href="#attn">§3</a>), so the per-op numbers <i>overlap</i> and sum to <i>more</i> than the block's
+        wall-clock. Use them for <b>attribution</b> (where the work is), not as an addition you can trust to
+        equal the stopwatch. Where a block's own total is meaningful we quote the profiler's roll-up
+        (Attention&nbsp;217.6, MoE&nbsp;235.1).</div>
+    </section>
+
+    <section class="card" id="order">
+      <h2><span class="num">§1</span>The layer at a glance: what runs, in what order</h2>
+      <p class="lead">One <code class="k">DeepseekV4DecoderLayer.forward</code> executes four stages in strict
+        sequence. First a hyper-connection mix feeds the attention block; attention writes back; a second
+        hyper-connection mix feeds the MoE block; the MoE writes back. There is no separate "add residual"
+        &mdash; the mHC kernels <i>are</i> the residual path.</p>
+
+      <div class="fig">
+        <svg viewBox="0 0 900 168" role="img" aria-label="DeepSeek-V4 decoder layer execution order with per-stage GPU time">
+          <defs><marker id="arh" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 z" fill="#9aa6b8"/></marker></defs>
+          <g font-size="12.5" fill="#172033" font-family="Arial,Helvetica,sans-serif">
+            <rect x="8" y="60" width="86" height="48" rx="7" fill="#eef1f5" stroke="#cfd6e0"/>
+            <text x="51" y="80" text-anchor="middle">input x</text>
+            <text x="51" y="97" text-anchor="middle" fill="#647083" font-size="11">+ residual</text>
+
+            <rect x="132" y="52" width="126" height="64" rx="8" fill="#f3eefe" stroke="#8250df"/>
+            <text x="195" y="76" text-anchor="middle" font-weight="700" fill="#6b2fc0">mHC&nbsp;pre</text>
+            <text x="195" y="93" text-anchor="middle" font-size="11">mix + attn_norm</text>
+            <text x="195" y="108" text-anchor="middle" font-size="11" fill="#647083">14.3&nbsp;&micro;s</text>
+
+            <rect x="296" y="40" width="150" height="88" rx="8" fill="#eaf2ff" stroke="#1f6feb"/>
+            <text x="371" y="64" text-anchor="middle" font-weight="700" fill="#155cc9">Sparse attention</text>
+            <text x="371" y="82" text-anchor="middle" font-size="11">indexer &middot; compressor</text>
+            <text x="371" y="97" text-anchor="middle" font-size="11">FlashMLA &middot; wq_b/wo</text>
+            <text x="371" y="116" text-anchor="middle" font-size="12" fill="#155cc9" font-weight="700">217.6&nbsp;&micro;s</text>
+
+            <rect x="484" y="52" width="126" height="64" rx="8" fill="#f3eefe" stroke="#8250df"/>
+            <text x="547" y="76" text-anchor="middle" font-weight="700" fill="#6b2fc0">mHC</text>
+            <text x="547" y="93" text-anchor="middle" font-size="11">mix + ffn_norm</text>
+            <text x="547" y="108" text-anchor="middle" font-size="11" fill="#647083">9.5&nbsp;&micro;s</text>
+
+            <rect x="648" y="40" width="150" height="88" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+            <text x="723" y="64" text-anchor="middle" font-weight="700" fill="#136c2e">MoE (MegaMoE)</text>
+            <text x="723" y="82" text-anchor="middle" font-size="11">gate &middot; top-6 route</text>
+            <text x="723" y="97" text-anchor="middle" font-size="11">fp4 experts &middot; shared</text>
+            <text x="723" y="116" text-anchor="middle" font-size="12" fill="#136c2e" font-weight="700">235.1&nbsp;&micro;s</text>
+
+            <rect x="836" y="60" width="56" height="48" rx="7" fill="#eef1f5" stroke="#cfd6e0"/>
+            <text x="864" y="88" text-anchor="middle" font-size="11">out x'</text>
+
+            <line x1="94" y1="84" x2="130" y2="84" stroke="#9aa6b8" stroke-width="1.6" marker-end="url(#arh)"/>
+            <line x1="258" y1="84" x2="294" y2="84" stroke="#9aa6b8" stroke-width="1.6" marker-end="url(#arh)"/>
+            <line x1="446" y1="84" x2="482" y2="84" stroke="#9aa6b8" stroke-width="1.6" marker-end="url(#arh)"/>
+            <line x1="610" y1="84" x2="646" y2="84" stroke="#9aa6b8" stroke-width="1.6" marker-end="url(#arh)"/>
+            <line x1="798" y1="84" x2="834" y2="84" stroke="#9aa6b8" stroke-width="1.6" marker-end="url(#arh)"/>
+          </g>
+        </svg>
+        <p class="cap">Execution order inside one decoder layer, annotated with device-active GPU time for this
+          batch. Purple = hyper-connection glue (cheap); blue = sparse attention; green = MoE. The two
+          coloured blocks are ~94% of the layer.</p>
+      </div>
+
+      <p><b>First&hellip; then&hellip;</b> (from <code class="k">DeepseekV4DecoderLayer.forward</code>):</p>
+      <ul class="notes">
+        <li><b>1. mHC&nbsp;pre (query side).</b> One fused kernel folds the <i>previous</i> layer's output
+          mix, this layer's <i>input</i> mix, and the attention RMSNorm together, and emits the vector the
+          attention block reads.</li>
+        <li><b>2. Sparse attention.</b> Project to the compressed query/KV latent, let the lightning indexer
+          pick the top-1024 relevant KV entries, run FlashMLA over just those, project back.</li>
+        <li><b>3. mHC (ffn side).</b> Same fused hyper-connection kernel again, now folding attention's output
+          back into the stream and applying the FFN RMSNorm.</li>
+        <li><b>4. MoE.</b> Score 384 experts, route each token to 6 (plus 1 shared expert), run one fused fp4
+          grouped-GEMM, write back.</li>
+      </ul>
+      <div class="gloss"><b>CSA vs HCA.</b> V4 layers come in two flavours. A <b>CSA</b> (Compressed Sparse
+        Attention) layer compresses KV 4&times; and runs the lightning indexer to <i>select</i> a top-k set
+        &mdash; this is the layer we profiled. An <b>HCA</b> (Heavily Compressed Attention) layer compresses
+        128&times; instead, leaving so few entries that it just attends to all of them and <i>skips the
+        indexer entirely</i> (&minus;36&nbsp;&micro;s of attention). V4-Pro alternates them across its 61
+        layers. Everything else in this report &mdash; mHC, MoE, the projections &mdash; is identical for
+        both.</div>
+    </section>
+
+    <section class="card" id="mhc">
+      <h2><span class="num">§2</span>mHC &mdash; multi-rate hyper-connections (the residual replacement)</h2>
+      <p class="lead">Where a normal transformer does <code class="k">x = x + block(norm(x))</code>, V4
+        replaces the residual with a small learned <b>mixing map</b> over a widened stream. We call it
+        <b>mHC</b> (multi-rate hyper-connections); in the model it is the family of
+        <code class="k">*_tilelang</code> kernels.</p>
+      <p>The stream is widened by <code class="k">hc_mult&nbsp;=&nbsp;4</code>: instead of a single residual
+        vector, the layer carries four "rates" and mixes them with a doubly-stochastic (Sinkhorn-normalised,
+        20 iters) map before and after each block. Two fused kernels do all of it:</p>
+      <ul class="notes">
+        <li><b>mHC&nbsp;pre / query side</b> (<code class="k">mhc_pre_big_fuse_with_norm</code>, and the fused
+          post+pre variant on interior layers): folds the previous block's output back into the stream,
+          computes this block's input mix, and applies the block's RMSNorm &mdash; producing the vector the
+          attention (or MoE) block consumes. "Query side" here just means the mix that feeds the attention
+          query path.</li>
+        <li><b>mHC&nbsp;ffn side</b> (<code class="k">mhc_fused</code>): the same fused mix again between
+          attention and MoE.</li>
+        <li><b>Model-level heads</b> (<code class="k">mhc_post</code>, <code class="k">hc_head_fuse</code>, and a
+          small <code class="k">hc_prenorm</code> GEMM): run once at the top/bottom of the stack, not per
+          block.</li>
+      </ul>
+      <table>
+        <thead><tr><th>Operation</th><th>Kernel</th><th class="num">GPU &micro;s</th><th>Scope</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">mHC pre (query side)</td><td><code class="k">mhc_pre_big_fuse_with_norm_tilelang</code></td><td class="num">14.27</td><td>per block (attn side)</td></tr>
+          <tr><td class="rowlabel">mHC (ffn side)</td><td><code class="k">mhc_fused_tilelang</code></td><td class="num">9.54</td><td>per block (MoE side)</td></tr>
+          <tr><td class="rowlabel">hc pre-norm GEMM</td><td><code class="k">sm100_tf32_hc_prenorm_gemm</code></td><td class="num">4.16</td><td>per layer</td></tr>
+          <tr><td class="rowlabel">mHC post</td><td><code class="k">mhc_post_tilelang</code></td><td class="num">7.14</td><td>model-level / iter</td></tr>
+          <tr><td class="rowlabel">hc head fuse</td><td><code class="k">hc_head_fuse_tilelang</code></td><td class="num">9.60</td><td>model-level / iter</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">The per-block hyper-connection glue is ~28&nbsp;&micro;s (14.3 + 9.5 + 4.2) &mdash; under
+        7% of a decoder layer. Cheap, given it replaces the entire residual path.</p>
+    </section>
+
+    <section class="card" id="attn">
+      <h2><span class="num">§3</span>Sparse attention (CSA), operation by operation</h2>
+      <p class="lead">The attention block (<code class="k">DeepseekV4FlashMLAAttention</code>, 217.6&nbsp;&micro;s
+        rolled up) is a pipeline of a dozen kernels. It projects the token into a compressed query/KV latent,
+        uses a cheap "lightning indexer" to pick which past tokens matter, runs FlashMLA over only those, and
+        projects back. Read the sub-ops as <i>attribution</i>: several of the input GEMMs run concurrently on
+        separate CUDA streams (see the note below), so they overlap in wall-clock.</p>
+
+      <h3>The pipeline, in order</h3>
+      <ol class="notes">
+        <li><b>Input GEMMs (parallel).</b> <code class="k">fused_wqa_wkv</code> projects the hidden state down
+          to the query latent (rank&nbsp;1536) and the shared KV latent (512) in one GEMM; concurrently, on
+          three auxiliary streams, the compressor and the indexer's <code class="k">weights_proj</code> run.</li>
+        <li><b>q/kv RMSNorm.</b> One fused kernel normalises both latents.</li>
+        <li><b>wq_b up-projection.</b> Expands the query latent back to the 128 heads &times; head_dim.</li>
+        <li><b>Lightning indexer &rarr; top-1024.</b> Scores every compressed KV entry with a small fp4 network
+          (64 heads) and keeps the <code class="k">index_topk&nbsp;=&nbsp;1024</code> most relevant &mdash; this
+          is the "selection" Parts&nbsp;I&ndash;III analysed.</li>
+        <li><b>Compressor.</b> Summarises the new token's KV into a compressed entry and inserts it into the
+          indexer's cache.</li>
+        <li><b>FlashMLA sparse core.</b> Builds decode metadata, runs the sparse attention over just the
+          selected entries, and combines split-KV partials.</li>
+        <li><b>Inverse-RoPE + output projection.</b> <code class="k">wo_a</code> (grouped low-rank,
+          <code class="k">o_groups&nbsp;=&nbsp;16</code>, rank&nbsp;1024) then <code class="k">wo_b</code> back to
+          the 7168-wide hidden.</li>
+      </ol>
+
+      <table>
+        <thead><tr><th>#</th><th>Operation</th><th>What it does</th><th class="num">GPU &micro;s</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="rowlabel">fused_wqa_wkv</td><td>hidden &rarr; query latent (1536) + KV latent (512), one fp8&rarr;fp4 GEMM</td><td class="num">14.05</td></tr>
+          <tr><td class="num">1</td><td class="rowlabel">input aux GEMMs</td><td>cublas/nvjet projections on aux streams (indexer <code class="k">wq_b</code>, kv-score)</td><td class="num">~25</td></tr>
+          <tr><td class="num">2</td><td class="rowlabel">fused_q_kv_rmsnorm</td><td>normalise query &amp; KV latents together</td><td class="num">2.56</td></tr>
+          <tr><td class="num">3</td><td class="rowlabel">wq_b</td><td>query latent &rarr; 128 heads (fp8&rarr;fp4 GEMM, the biggest input GEMM)</td><td class="num">23.39</td></tr>
+          <tr class="hi"><td class="num">4</td><td class="rowlabel">indexer (total)</td><td><b>lightning indexer</b>: score all entries, keep top-1024 &mdash; CSA-only</td><td class="num">36.26</td></tr>
+          <tr><td class="num">4a</td><td class="rowlabel">&nbsp;&nbsp;weights_proj</td><td>indexer scoring projection (fp4)</td><td class="num">9.60</td></tr>
+          <tr><td class="num">4b</td><td class="rowlabel">&nbsp;&nbsp;indexer compressor</td><td>compress KV for the indexer's own cache</td><td class="num">7.84</td></tr>
+          <tr><td class="num">4c</td><td class="rowlabel">&nbsp;&nbsp;SparseAttnIndexer</td><td>fp8 MQA-logits + paged logits + top-k selection kernels</td><td class="num">16.35</td></tr>
+          <tr><td class="num">5</td><td class="rowlabel">main compressor</td><td>summarise + insert this token's compressed KV entry</td><td class="num">11.10</td></tr>
+          <tr><td class="num">6</td><td class="rowlabel">FlashMLA core</td><td>get_mla_metadata 15.6 + splitkv_mla_fp8_sparse 13.8 + combine 3.7 + small-topk 7.7</td><td class="num">~40.8</td></tr>
+          <tr><td class="num">6</td><td class="rowlabel">gather / norm / rope glue</td><td>QNormRope, dequant-gather-K, inv-RoPE, topk-combine (many small kernels)</td><td class="num">~15</td></tr>
+          <tr><td class="num">7</td><td class="rowlabel">wo_a</td><td>grouped low-rank output projection (o_groups 16, rank 1024)</td><td class="num">14.98</td></tr>
+          <tr class="hi"><td class="num">7</td><td class="rowlabel">wo_b</td><td>output latent &rarr; hidden 7168 (fp8&rarr;fp4 GEMM, biggest single attn op)</td><td class="num">28.96</td></tr>
+          <tr><td colspan="3" class="rowlabel">Attention block roll-up (profiler)</td><td class="num">217.63</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">"~" values fold together several tiny kernels reported individually in the tree
+        (<a href="#method">§7</a>). The two fp4 projection GEMMs (<code class="k">wq_b</code>&nbsp;23.4 +
+        <code class="k">wo_b</code>&nbsp;29.0) are the largest sub-ops; the sparse machinery
+        (indexer&nbsp;36.3 + compressor&nbsp;11.1 + FlashMLA&nbsp;~41) is what buys the flat context scaling in
+        <a href="#scale">§6</a>.</p>
+
+      <div class="callout warn"><b>Four streams at once.</b> V4 launches the metadata-independent input GEMMs on
+        four CUDA streams &mdash; <code class="k">fused_wqa_wkv</code> on the default stream, plus the
+        compressor <code class="k">kv_score</code>, the indexer <code class="k">weights_proj</code>, and the
+        indexer's own compressor on three aux streams. That is why the sub-op &micro;s above overlap and their
+        naive sum exceeds the 217.6&nbsp;&micro;s block roll-up.</div>
+
+      <div class="gloss"><b>Why sparse attention barely grows with context.</b> Everything above except the
+        indexer's scoring and FlashMLA is <i>per new token</i>, independent of history length. The indexer
+        scores all entries cheaply in fp4, and FlashMLA only ever attends the fixed top-1024. So doubling the
+        context roughly doubles a small scoring term and leaves the rest flat &mdash; measured directly in
+        <a href="#scale">§6</a>.</div>
+    </section>
+
+    <section class="card" id="moe">
+      <h2><span class="num">§4</span>MoE, operation by operation</h2>
+      <p class="lead">The FFN is a Mixture-of-Experts (<code class="k">DeepseekV4MoE</code>, 235.1&nbsp;&micro;s
+        rolled up): a router scores 384 experts, each token is sent to 6 of them plus 1 always-on shared
+        expert, and a single fused fp4 grouped-GEMM does all the expert math. Where <a
+        href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a> studied <i>which</i> experts get picked and
+        how stable that is, this is the <i>cost</i> side of the same block.</p>
+      <table>
+        <thead><tr><th>Operation</th><th>What it does</th><th class="num">GPU &micro;s</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">GateLinear</td><td>score all 384 experts (hidden 7168 &rarr; 384 logits)</td><td class="num">7.17</td></tr>
+          <tr><td class="rowlabel">topkGatingSoftplusSqrt</td><td>route: <code class="k">sqrt(softplus(logit))</code> affinity, noaux_tc top-6</td><td class="num">6.66</td></tr>
+          <tr class="hi"><td class="rowlabel">MegaMoE experts</td><td><b>one</b> fused fp4 grouped-GEMM over the routed experts (<code class="k">sm100_fp8_fp4_mega_moe</code>)</td><td class="num">189.89</td></tr>
+          <tr><td class="rowlabel">shared expert</td><td>a normal SwiGLU MLP run for every token (gate_up + act + down)</td><td class="num">29.54</td></tr>
+          <tr><td class="rowlabel">combine add</td><td>sum routed + shared outputs</td><td class="num">1.82</td></tr>
+          <tr><td colspan="2" class="rowlabel">MoE block roll-up (profiler)</td><td class="num">235.07</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Routing (gate + top-6 selection) is only ~14&nbsp;&micro;s; the expert GEMM is ~81% of the
+        block. The shared expert &mdash; run for <i>every</i> token, not routed &mdash; costs about as much as
+        a full attention output projection. The first 3 layers of V4 route by a fixed token-id hash instead of
+        this learned gate (see <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>).</p>
+    </section>
+
+    <section class="card" id="table">
+      <h2><span class="num">§5</span>The full per-operation GPU-time table</h2>
+      <p class="lead">Every operation in one CSA decoder layer, flattened and ranked. "% of layer" is against the
+        480.7&nbsp;&micro;s device-active roll-up. Blue = attention, green = MoE, purple = hyper-connection.</p>
+
+      <div class="fig">
+        <svg viewBox="0 0 900 372" role="img" aria-label="Top operations by GPU time in one decoder layer">
+          <g font-size="12" fill="#172033" font-family="Arial,Helvetica,sans-serif">
+            <!-- axis: 0..200us mapped to x 250..880 (630px = 200us -> 3.15 px/us) -->
+            <line x1="250" y1="16" x2="250" y2="352" stroke="#d8dee8"/>
+            <text x="250" y="366" text-anchor="middle" fill="#647083" font-size="10">0</text>
+            <text x="407" y="366" text-anchor="middle" fill="#647083" font-size="10">50</text>
+            <text x="565" y="366" text-anchor="middle" fill="#647083" font-size="10">100</text>
+            <text x="722" y="366" text-anchor="middle" fill="#647083" font-size="10">150</text>
+            <text x="865" y="366" text-anchor="middle" fill="#647083" font-size="10">&micro;s</text>
+            <line x1="407" y1="16" x2="407" y2="352" stroke="#eef1f5"/>
+            <line x1="565" y1="16" x2="565" y2="352" stroke="#eef1f5"/>
+            <line x1="722" y1="16" x2="722" y2="352" stroke="#eef1f5"/>
+
+            <!-- bars: y from 22 step 27; width = us*3.15 -->
+            <!-- MegaMoE 189.89 -->
+            <rect x="250" y="22" width="598" height="17" fill="#1a7f37"/><text x="242" y="35" text-anchor="end">MoE experts (fp4)</text><text x="854" y="35">189.9</text>
+            <!-- wo_b 28.96 -->
+            <rect x="250" y="49" width="91" height="17" fill="#1f6feb"/><text x="242" y="62" text-anchor="end">attn wo_b</text><text x="347" y="62">29.0</text>
+            <!-- shared expert 29.54 -->
+            <rect x="250" y="76" width="93" height="17" fill="#1a7f37"/><text x="242" y="89" text-anchor="end">MoE shared expert</text><text x="349" y="89">29.5</text>
+            <!-- indexer 36.26 -->
+            <rect x="250" y="103" width="114" height="17" fill="#1f6feb"/><text x="242" y="116" text-anchor="end">attn indexer</text><text x="370" y="116">36.3</text>
+            <!-- wq_b 23.39 -->
+            <rect x="250" y="130" width="74" height="17" fill="#1f6feb"/><text x="242" y="143" text-anchor="end">attn wq_b</text><text x="330" y="143">23.4</text>
+            <!-- flashmla ~40.8 -->
+            <rect x="250" y="157" width="129" height="17" fill="#1f6feb"/><text x="242" y="170" text-anchor="end">FlashMLA core</text><text x="385" y="170">40.8</text>
+            <!-- wo_a 14.98 -->
+            <rect x="250" y="184" width="47" height="17" fill="#1f6feb"/><text x="242" y="197" text-anchor="end">attn wo_a</text><text x="303" y="197">15.0</text>
+            <!-- fused_wqa_wkv 14.05 -->
+            <rect x="250" y="211" width="44" height="17" fill="#1f6feb"/><text x="242" y="224" text-anchor="end">attn fused_wqa_wkv</text><text x="300" y="224">14.0</text>
+            <!-- mHC pre 14.27 -->
+            <rect x="250" y="238" width="45" height="17" fill="#8250df"/><text x="242" y="251" text-anchor="end">mHC pre</text><text x="301" y="251">14.3</text>
+            <!-- main compressor 11.10 -->
+            <rect x="250" y="265" width="35" height="17" fill="#1f6feb"/><text x="242" y="278" text-anchor="end">attn compressor</text><text x="291" y="278">11.1</text>
+            <!-- mHC ffn 9.54 -->
+            <rect x="250" y="292" width="30" height="17" fill="#8250df"/><text x="242" y="305" text-anchor="end">mHC ffn</text><text x="286" y="305">9.5</text>
+            <!-- gate+route 13.8 -->
+            <rect x="250" y="319" width="43" height="17" fill="#1a7f37"/><text x="242" y="332" text-anchor="end">MoE gate + route</text><text x="299" y="332">13.8</text>
+          </g>
+        </svg>
+        <p class="cap">Top operations by device-active GPU time in one CSA decoder layer. One block &mdash; the
+          fused fp4 expert GEMM &mdash; dwarfs everything; the rest is a long tail of ~10&ndash;40&nbsp;&micro;s
+          projection and sparse-selection kernels.</p>
+      </div>
+
+      <table>
+        <thead><tr><th>Operation</th><th>Stage</th><th class="num">GPU &micro;s</th><th class="num">% of layer</th></tr></thead>
+        <tbody>
+          <tr class="hi"><td class="rowlabel">MoE experts (fp4 fused GEMM)</td><td>MoE</td><td class="num">189.89</td><td class="num">39.5%</td></tr>
+          <tr><td class="rowlabel">FlashMLA sparse core</td><td>attention</td><td class="num">40.80</td><td class="num">8.5%</td></tr>
+          <tr><td class="rowlabel">lightning indexer</td><td>attention</td><td class="num">36.26</td><td class="num">7.5%</td></tr>
+          <tr><td class="rowlabel">shared expert (SwiGLU MLP)</td><td>MoE</td><td class="num">29.54</td><td class="num">6.1%</td></tr>
+          <tr><td class="rowlabel">wo_b output projection</td><td>attention</td><td class="num">28.96</td><td class="num">6.0%</td></tr>
+          <tr><td class="rowlabel">input aux GEMMs (overlapped)</td><td>attention</td><td class="num">~25</td><td class="num">~5.2%</td></tr>
+          <tr><td class="rowlabel">wq_b up-projection</td><td>attention</td><td class="num">23.39</td><td class="num">4.9%</td></tr>
+          <tr><td class="rowlabel">wo_a output low-rank</td><td>attention</td><td class="num">14.98</td><td class="num">3.1%</td></tr>
+          <tr><td class="rowlabel">mHC pre (query side)</td><td>hyper-conn</td><td class="num">14.27</td><td class="num">3.0%</td></tr>
+          <tr><td class="rowlabel">fused_wqa_wkv input GEMM</td><td>attention</td><td class="num">14.05</td><td class="num">2.9%</td></tr>
+          <tr><td class="rowlabel">attn glue (gather/rope/etc.)</td><td>attention</td><td class="num">~15</td><td class="num">~3.1%</td></tr>
+          <tr><td class="rowlabel">main compressor</td><td>attention</td><td class="num">11.10</td><td class="num">2.3%</td></tr>
+          <tr><td class="rowlabel">mHC ffn side</td><td>hyper-conn</td><td class="num">9.54</td><td class="num">2.0%</td></tr>
+          <tr><td class="rowlabel">GateLinear + top-6 route</td><td>MoE</td><td class="num">13.82</td><td class="num">2.9%</td></tr>
+          <tr><td class="rowlabel">hc pre-norm GEMM</td><td>hyper-conn</td><td class="num">4.16</td><td class="num">0.9%</td></tr>
+          <tr><td class="rowlabel">q/kv RMSNorm</td><td>attention</td><td class="num">2.56</td><td class="num">0.5%</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Sums exceed 100% column-wise where sub-ops overlap on separate streams (<a href="#method">§7</a>);
+        the table ranks attribution, not a strict partition. Per-block roll-ups: attention 217.6, MoE 235.1,
+        hyper-connections ~28, layer 480.7&nbsp;&micro;s.</p>
+    </section>
+
+    <section class="card" id="scale">
+      <h2><span class="num">§6</span>How each block scales &mdash; the payoff of sparsity</h2>
+      <p class="lead">The per-op table is one batch (10 tokens). The profiler also swept the two heavy blocks
+        across shapes &mdash; the same data <a href="../../index.html">LLMServingSim</a> replays. Two curves
+        matter: attention vs context length, and MoE vs load.</p>
+
+      <h3>Attention barely grows with context length</h3>
+      <table>
+        <thead><tr><th>KV length in cache</th><th class="num">0</th><th class="num">1K</th><th class="num">8K</th><th class="num">32K</th><th class="num">128K</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">prefill chunk 256 (&micro;s)</td><td class="num">252.8</td><td class="num">263.2</td><td class="num">352.7</td><td class="num">334.8</td><td class="num">382.6</td></tr>
+          <tr><td class="rowlabel">64 decodes (&micro;s)</td><td class="num">186.0</td><td class="num">190.8</td><td class="num">203.9</td><td class="num">211.3</td><td class="num">240.8</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Attention kernel time (from <code class="k">attention.csv</code>). Growing the KV history from
+        empty to <b>128K tokens</b> raises decode attention by only <b>~30%</b> and prefill by ~50% &mdash; not
+        the quadratic/linear blow-up of dense attention. That flatness <i>is</i> the lightning indexer +
+        top-1024 FlashMLA doing their job; it is why V4 serves million-token contexts affordably.</p>
+
+      <h3>Attention still grows with the prefill chunk (compute-bound)</h3>
+      <table>
+        <thead><tr><th>prefill chunk (tokens)</th><th class="num">16</th><th class="num">64</th><th class="num">256</th><th class="num">1024</th><th class="num">2048</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">attention (&micro;s)</td><td class="num">149.8</td><td class="num">169.1</td><td class="num">252.8</td><td class="num">612.0</td><td class="num">1137.9</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">More <i>new</i> tokens per step = more projection GEMM work, so this scales ~linearly &mdash;
+        context length is cheap, batch size is not.</p>
+
+      <h3>MoE scales with tokens and with how many experts light up</h3>
+      <table>
+        <thead><tr><th>tokens \ active experts</th><th class="num">8</th><th class="num">32</th><th class="num">64</th><th class="num">128</th><th class="num">256</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">16</td><td class="num">233</td><td class="num">384</td><td class="num">580</td><td class="num">&mdash;</td><td class="num">&mdash;</td></tr>
+          <tr><td class="rowlabel">256</td><td class="num">831</td><td class="num">830</td><td class="num">1023</td><td class="num">1023</td><td class="num">1828</td></tr>
+          <tr><td class="rowlabel">2048</td><td class="num">1639</td><td class="num">1640</td><td class="num">1644</td><td class="num">2065</td><td class="num">2102</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">MoE kernel time in &micro;s (from <code class="k">moe.csv</code>). Cost rises with the token
+        count and, more slowly, with the number of <i>distinct</i> experts activated across the batch &mdash;
+        a small batch that happens to spread across many experts pays a surcharge, which is exactly why
+        expert-selection <b>locality</b> (<a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>)
+        translates into real GPU savings.</p>
+
+      <h3>The one-time tax: LM head</h3>
+      <p>Outside the layer stack, the LM head (hidden 7168 &rarr; 129,280-vocab logits) costs
+        <b>~268&nbsp;&micro;s per iteration</b> and the sampler ~37&nbsp;&micro;s. Per layer that is nothing, but
+        against a single decode step it is comparable to a whole decoder layer &mdash; a fixed tax paid once
+        per generated token, not once per layer.</p>
+    </section>
+
+    <section class="card" id="method">
+      <h2><span class="num">§7</span>Method &amp; caveats</h2>
+      <ul class="notes">
+        <li><b>Hardware / stack.</b> One NVIDIA B200 (SM100), CUDA 13, vLLM 0.24 with the DeepGEMM MegaMoE
+          backend, fp8 <code class="k">fp8_ds_mla</code> KV, fp4 experts, <code class="k">enforce_eager</code>
+          (no CUDA graphs, so every kernel is an independently timeable launch).</li>
+        <li><b>How measured.</b> vLLM's <code class="k">layerwise_profile()</code> over a one-decoder-layer model
+          (<code class="k">num_hidden_layers=1</code>) built with random ("dummy") weights &mdash; kernel time
+          depends on tensor <i>shapes</i>, not values, so timings are representative while nothing is
+          downloaded. The batch was prefill 8 + 2 decodes at kv&nbsp;64. Scaling tables in
+          <a href="#scale">§6</a> come from the full profiler grid sweep.</li>
+        <li><b>Device-active, overlapping time.</b> Reported &micro;s are per-op CUDA device time. V4's attention
+          overlaps input GEMMs across four streams, so per-op numbers sum <i>above</i> the block wall-clock
+          &mdash; treat them as attribution. Block roll-ups (attention 217.6, MoE 235.1) are the profiler's own
+          per-module aggregates. A few "~" rows fold together many sub-&micro;s kernels the tree lists
+          individually.</li>
+        <li><b>CSA layer.</b> We profiled a Compressed-Sparse-Attention layer (compress-ratio 4, indexer
+          present). Heavily-Compressed-Attention layers skip the ~36&nbsp;&micro;s indexer; V4-Pro alternates the
+          two across its 61 layers.</li>
+        <li><b>Model variant.</b> These GPU numbers are <b>DeepSeek-V4-Pro</b> (hidden 7168, 61 layers, 384
+          experts / 6 active). Parts&nbsp;I&ndash;IV instrument <b>DeepSeek-V4-Flash</b> (256 experts, 43 layers);
+          the operation <i>structure</i> is identical, the dimensions differ.</li>
+        <li><b>Not the full picture.</b> Single-GPU numbers exclude the tensor-/expert-parallel collectives
+          (all-reduce, all-to-all) that a multi-GPU deployment adds around these kernels &mdash; those are
+          modelled analytically by LLMServingSim, not measured here.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      <p>Yang-gon Kim &middot; profiled via the <a href="../../index.html">LLMServingSim</a> DeepSeek-V4 profiling pipeline &middot; <a href="../../index.html">Report Archive</a></p>
+      <p>Related: <a href="../00_part1_characterization/report.html">Part&nbsp;I</a> &middot; <a href="../01_part2_prediction/report.html">Part&nbsp;II</a> &middot; <a href="../02_part3_cpu_kv_locality/report.html">Part&nbsp;III</a> &middot; <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV (MoE selection locality)</a>. Mechanism: DeepSeek-V4 / vLLM <code class="k">deepseek_v4</code> source. Measurements: this project (B200, vLLM layerwise profile).</p>
+    </div>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>
