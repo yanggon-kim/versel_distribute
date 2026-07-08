@@ -623,6 +623,33 @@ else:
       </svg>
       </div>
 
+      <div class="callout"><strong>What does "preq" mean, and does it return only ACT/PRE?</strong>
+      <code class="k">preq</code> = <strong>prerequisite</strong>, better read as <em>"the next required command on the
+      path to my goal."</em> Crucially, <strong>it can and often does return <code class="k">RD</code>/<code class="k">WR</code>
+      themselves</strong> — when nothing stands in the way, the next required command <em>is</em> the goal. So the return
+      is always an issuable command, never "nothing to do":
+      <span class="mono">hit → RD</span>, <span class="mono">closed → ACT</span>, <span class="mono">wrong row → PREpb</span>.
+      That makes the controller's tick uniform: it issues whatever preq returns, then checks
+      <code class="k">preq == final_command</code> — <em>that equality is the signal the request can retire.</em>
+      <br><br>
+      <em>Naming trap:</em> <code class="k">preq</code> (prere<strong>q</strong>uisite — a question/answer) is not a command.
+      <code class="k">PRE</code> (as in <code class="k">PREpb</code>/<code class="k">PREab</code>) is pre<strong>charge</strong> — a real
+      command that closes a row. A precharge can <em>be</em> the answer to the preq question, which is exactly where they're
+      easiest to confuse.</div>
+
+      <div class="callout"><strong>Reading the hierarchy — what is "Sid"?</strong> <code class="k">Sid</code> = <strong>Stack
+      IDentifier</strong>: HBM's version of DDR's "rank." An HBM device is a vertical tower of DRAM dies (4-Hi, 8-Hi…), and
+      the channel wires are <em>fixed by the standard</em> no matter how tall the tower gets. So stacking higher forces
+      more dies to <em>share</em> each channel's wires — and SID is the bit that selects which shared die responds.
+      <br><br>
+      That's why <code class="k">sid</code> grows with height: 4-Hi → <code class="k">sid=1</code>, 8-Hi →
+      <code class="k">sid=2</code>, 16-Hi → <code class="k">sid=4</code>. <strong><code class="k">sid=1</code> does NOT mean
+      "one die" — it means "one <em>choice</em>, i.e. no choice"</strong>: each channel reaches exactly one die, so no
+      selector bit is needed. Doubling the dies (8-Hi) makes two dies share each channel → a real 2-way choice → 1 SID bit
+      → capacity doubles with zero added wires. (A level with count 1 is Ramulator's way of saying "this dimension is
+      trivial here" — same as <code class="k">rank=1</code> in the LPDDR preset. And note: SID counts <em>dies-per-channel</em>,
+      not floors — don't let the word "Stack" mislead you.)</div>
+
       <p class="src">talking to the spec from C++ — the pattern every extension uses</p>
       <pre class="code">init():
   m_cmd_rd  = spec.get_command_id("RD")      <span class="c">// throws if the standard lacks it</span>
@@ -655,6 +682,11 @@ else:
       <details class="quiz"><summary>Q13 — Where would "at most N activates per window per rank" live, and what extra state does it need?</summary>
         <div class="ans">At the Rank level of the node tree (it spans all banks of the rank), with a rolling window of the
         last N ACT issue times — exactly how nFAW (N=4) is implemented.</div>
+      </details>
+      <details class="quiz"><summary>Q14 — goal = WR, and the correct row is already open. What does get_preq_command() return, and what does the controller do right after issuing it?</summary>
+        <div class="ans"><code class="k">WR</code> itself (a hit — no prerequisite remains). Since the issued command equals
+        <code class="k">final_command</code>, the controller retires the request; for a write that means firing its callback
+        immediately, because writes are posted.</div>
       </details>
     </section>
 
@@ -695,6 +727,42 @@ else:
         <text x="30" y="326" font-size="10.5" font-weight="700" fill="#172033">Measured (ping-pong study): ChRaBaRoCo's "bank isolation" cut the GPU's own streaming from 32 → 19.6 GB/s and made total degradation WORSE (2.57×). Reason about bits, not vibes.</text>
       </svg>
       </div>
+
+      <h3>Reading the alphabetical name — and its trap</h3>
+      <p>The name is a <strong>recipe spelled MSB→LSB</strong>: <strong>Ro</strong>w-<strong>Ba</strong>nk-<strong>Ra</strong>nk-<strong>Co</strong>lumn-<strong>Ch</strong>annel.
+      But here is the catch that confuses everyone: <strong>the name has only 5 syllables, while HBM4 has 7 levels</strong>
+      (Channel, PseudoChannel, Sid, BankGroup, Bank, Row, Column). So the name <em>cannot</em> list them all — it is a
+      legacy DDR3-era mnemonic. <strong>The code ignores the name</strong> and instead places <em>every</em> sub-channel level
+      in the standard's declared <em>hierarchy order</em>. So "BaRa" is not two specific fields — it is shorthand for "all
+      the bank-ish/rank-ish middle levels, whatever they are." For HBM that middle zone expands to
+      <strong>{PseudoChannel, Sid, BankGroup, Bank}</strong>.</p>
+
+      <div class="callout warn"><strong>Never trust the name for bit positions.</strong> No DDR-era name mentions BankGroup
+      (postdates DDR3) or Sid/PseudoChannel (HBM-only). The authoritative source is <code class="k">m_addr_bits</code> — the
+      spec's <code class="k">levels</code> list — not the syllables. The name reliably tells you only the two endpoints:
+      <strong>Row on top, Column+Channel at the bottom</strong>; everything bank-ish lives in the middle in hierarchy order.</div>
+
+      <p class="src">exact bit layout, HBM4_32Gb_8Hi, 30-bit intra-channel address (verified against the real mappers)</p>
+      <div class="diagrambox">
+      <table>
+        <thead><tr><th>Field</th><th>RoBaRaCoCh — bits (default)</th><th>ChRaBaRoCo — bits</th><th>width</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Row</td><td class="mono">[16:30)  ← top (slow)</td><td class="mono">[10:24)  ← low (fast!)</td><td>14</td></tr>
+          <tr><td class="rowlabel">Bank</td><td class="mono">[13:16)</td><td class="mono">[24:27)  ← top</td><td>3</td></tr>
+          <tr><td class="rowlabel">BankGroup</td><td class="mono">[12]</td><td class="mono">[27]</td><td>1</td></tr>
+          <tr><td class="rowlabel">Sid</td><td class="mono">[11]</td><td class="mono">[28]</td><td>1</td></tr>
+          <tr><td class="rowlabel">PseudoChannel</td><td class="mono">[10]</td><td class="mono">[29]</td><td>1</td></tr>
+          <tr><td class="rowlabel">Column</td><td class="mono">[5:10)</td><td class="mono">[5:10)</td><td>5</td></tr>
+          <tr><td class="rowlabel">byte-in-tx</td><td class="mono">[0:5)</td><td class="mono">[0:5)</td><td>5</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Same 30 bits, two lenses. The <em>only</em> field both schemes agree on is Column (both park it at
+      <span class="mono">[5:10)</span>). Everything above it is reinterpreted — which is why the identical address
+      <span class="mono">357,664</span> decodes to <span class="mono">PC1/BG1/Bank3/Row5</span> under RoBaRaCoCh but
+      <span class="mono">PC0/BG0/Bank0/Row349</span> under ChRaBaRoCo. Read each column of the table with the odometer rule
+      (low bits change fastest): RoBaRaCoCh keeps the bank-ish levels <em>low</em> (fast interleave, Row rarely ticks →
+      row hits); ChRaBaRoCo shoves them to the <em>top</em> and drops Row low (a stream crawls through rows of one bank).</p>
 
       <p class="src">v1's steering + per-pool interleave — src/ramulator/memory_system/impl/hbm_lpddr_basedie_system.cpp, send()</p>
       <pre class="code">send(req):
@@ -870,6 +938,54 @@ on_read_complete(req):                        <span class="c">// L2③ — fired
   write = Request(dst_pool_addr, Write, source_id = -1)
   host.dma_send(dst_tier, write)              <span class="c">// accepted = DONE (posted, L2.3/L4)</span>
   if all writes of the block accepted: block complete → stats, arm gap</pre>
+
+      <h3>That pseudo-code, step by step — the moving-company picture</h3>
+      <p>Picture a <strong>moving company</strong> relocating books from an old apartment (LPDDR) to a new one (HBM) —
+      but, per Lesson 1, no real books exist; we simulate only the <em>timing</em>. Three rules force the whole design:</p>
+      <ul>
+        <li><strong>The truck is tiny</strong> — one 32 B box per trip. So a 512 B block = <strong>16 boxes</strong> =
+        16 reads + 16 writes. Never "move the block at once."</li>
+        <li><strong>Pick up before you deliver</strong> — you cannot write box <em>i</em> to HBM until its read from LPDDR
+        has completed. That is why the <em>write is issued inside the read's callback</em> (<code class="k">on_read_complete</code>),
+        not in a loop.</li>
+        <li><strong>Doors lock</strong> — a loading dock may be full → <code class="k">dma_send()</code> returns false →
+        try that trip again later. (Backpressure, Lesson 2.)</li>
+      </ul>
+      <p>So the two functions are the two halves of one trip: <code class="k">tick()</code> is the dispatcher that
+      <em>launches pickups</em>; <code class="k">on_read_complete()</code> is what happens <em>when a pickup finishes</em> —
+      it launches that box's delivery.</p>
+
+      <p class="src">a concrete trace: block = 128 B = 4 boxes, max_inflight_reads = 2, a read takes 3 ticks</p>
+      <div class="diagrambox">
+      <table>
+        <thead><tr><th>Tick</th><th>tick() does</th><th>callback fires</th><th>in-flight reads</th><th>writes accepted</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">1</td><td>open block; issue read 0, read 1 (hits cap 2)</td><td>—</td><td class="mono">2</td><td class="mono">0</td></tr>
+          <tr><td class="mono">2</td><td>want read 2, but in-flight = cap → <strong>wait</strong></td><td>—</td><td class="mono">2</td><td class="mono">0</td></tr>
+          <tr><td class="mono">3</td><td>still at cap → wait</td><td>—</td><td class="mono">2</td><td class="mono">0</td></tr>
+          <tr><td class="mono">4</td><td>a slot freed → issue read 2</td><td><strong>read 0 done</strong> → write 0 accepted</td><td class="mono">2</td><td class="mono">1</td></tr>
+          <tr><td class="mono">5</td><td>issue read 3 (block fully read)</td><td><strong>read 1 done</strong> → write 1 accepted</td><td class="mono">1</td><td class="mono">2</td></tr>
+          <tr><td class="mono">6</td><td>nothing left to read</td><td>—</td><td class="mono">1</td><td class="mono">2</td></tr>
+          <tr><td class="mono">7</td><td>—</td><td><strong>read 2 done</strong> → write 2 accepted</td><td class="mono">0</td><td class="mono">3</td></tr>
+          <tr><td class="mono">8</td><td>—</td><td><strong>read 3 done</strong> → write 3 → <strong>4th write = block DONE</strong></td><td class="mono">0</td><td class="mono">4</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Watch the three rules: 4 separate reads + 4 separate writes (tiny truck); write 0 only after read 0 completes
+      (pick-up-before-deliver); ticks 2–3 the dispatcher <em>wants</em> to issue more but holds at 2 — the
+      <code class="k">max_inflight_reads</code> cap, not the block size, is the brake. And <strong>block completion is decided
+      in the write path</strong> (tick 8): the instant the 4th write is <em>accepted</em>, <code class="k">writes_done ==
+      reads_per_block</code> → done. Not when reads finish — when the last write is accepted (posted-write rule).</p>
+      <p>Two details the code adds around this core: <code class="k">tick()</code> drains any <em>stalled writes first</em>
+      (a stuck delivery blocks the block from closing — finish in-flight work before starting more), and after a block
+      completes it may <em>rest</em> <code class="k">inter_block_gap</code> ticks before the next (the migration-rate throttle
+      from the ping-pong study).</p>
+
+      <details class="quiz"><summary>Q — In the trace, why is read 2 issued on tick 4 and not tick 2?</summary>
+        <div class="ans">On ticks 2–3 the in-flight count is already 2, hitting <code class="k">max_inflight_reads</code>. A slot
+        frees only when read 0 completes on tick 4 (<code class="k">on_read_complete</code> does inflight−−), so tick 4's
+        dispatcher loop can finally launch read 2. The cap, not the block size, was the limit.</div>
+      </details>
 
       <p>The three design decisions, each traceable to a lesson:</p>
       <ul>

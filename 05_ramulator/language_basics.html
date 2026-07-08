@@ -190,10 +190,57 @@ a.increment();     <span class="c">// a.count becomes 1.  b.count is still 100 �
       </svg>
       </div>
 
+      <p class="rhythm">Frame by frame — what one line actually does</p>
+      <p>Run <code class="k">Counter b(100);</code> in slow motion:</p>
+      <ol>
+        <li><strong>Memory is reserved</strong> for one Counter (space for its <code class="k">int count</code>). Right now
+        it holds random leftover bits — junk. <code class="k">b</code> is not usable yet.</li>
+        <li><strong>The language itself runs the constructor — automatically.</strong> You did not write an extra line.
+        The rule of C++ is: whenever an object is created, its constructor runs immediately, before anything can touch it.
+        Your <code class="k">100</code> is handed in as <code class="k">start</code>.</li>
+        <li><strong>The body executes</strong>: <code class="k">count = start;</code> → the junk is overwritten with 100.</li>
+        <li><strong>Done.</strong> Only now is <code class="k">b</code> a real, usable object, with <code class="k">count == 100</code>.</li>
+      </ol>
+
+      <div class="callout"><strong>"Who called the constructor?"</strong> The tricky bit. Compare:
+      <code class="k">b.increment()</code> — <em>you</em> called it, by writing its name with a dot.
+      <code class="k">Counter b(100)</code> — you never wrote <code class="k">Counter(...)</code> as a dotted call;
+      <strong>C++ itself invoked the constructor</strong>, automatically, as part of creating <code class="k">b</code>.
+      Analogy: when a baby is born, the hospital <em>automatically</em> does the newborn checkup — nobody phones to request
+      it; being born <em>is</em> what triggers it. The constructor is the newborn checkup of objects; your
+      <code class="k">(100)</code> is just info handed over ("name: b").</div>
+
+      <div class="callout warn"><strong>Three things people get wrong (worth burning in):</strong>
+      <ul>
+        <li>The constructor does <strong>only what its body says</strong> — <code class="k">count = start</code> copies the
+        value in; it does <em>not</em> add anything. After <code class="k">Counter x(7)</code>, <code class="k">x.count</code>
+        is <strong>7</strong>, not 8.</li>
+        <li>The object is usable <strong>the instant the constructor finishes</strong> — <em>before</em> any other function
+        runs on it. There is no observable moment where it holds garbage.</li>
+        <li>The constructor runs <strong>once per object <em>created</em></strong> — never per function call. Count
+        <em>births</em>, not lines: <code class="k">x.increment()</code> creates nothing, so it fires no constructor.</li>
+      </ul></div>
+
+      <p class="rhythm">Practice trace — update count after every line</p>
+      <pre class="code">Counter y(0);      <span class="c">// constructor runs (0 born) → y.count = 0</span>
+y.increment();     <span class="c">// normal function → y.count = 1</span>
+Counter z(50);     <span class="c">// constructor runs (z born) → z.count = 50 ; y untouched, still 1</span></pre>
+      <p>Building this little table one line at a time is the single most useful habit for reading code — the table never
+      lies, even when your intuition does.</p>
+
+      <details class="quiz"><summary>Q — After <span class="mono">Counter x(7); x.increment(); x.increment();</span> what is x.count, and how many times did the constructor run?</summary>
+        <div class="ans"><code class="k">x.count = 9</code> (7 → 8 → 9), and the constructor ran <strong>once</strong> — only
+        <code class="k">Counter x(7)</code> created an object; the two <code class="k">increment()</code> calls create nothing.
+        (A very common wrong answer is "8, twice" — that mistakes the object as unready until something is done to it, and
+        counts function calls instead of births.)</div>
+      </details>
+
       <p class="rhythm">Where it appears in Ramulator</p>
       <p><code class="k">HBM34Controller</code> is a class. Configuring 8 HBM channels builds <strong>8 separate
-      objects</strong> from that one blueprint. And Ramulator's constructors end by calling <code class="k">init()</code>
-      — the setup ritual where parameters are read and children are built (§6).</p>
+      objects</strong> from that one blueprint — so the constructor runs <strong>8 times</strong> (8 births), and since
+      Ramulator's constructors end by calling <code class="k">init()</code> (the setup ritual where parameters are read and
+      children are built, §6), that's 8 independent set-ups. Eight separate boxes — which is exactly why
+      <span class="mono">sim.stats</span> shows eight independent <span class="mono">"HBM Channel i"</span> entries.</p>
     </section>
 
     <!-- ═══════════════ 3 ═══════════════ -->
