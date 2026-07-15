@@ -76,10 +76,11 @@
     <a href="#metrics">3 · The metrics</a>
     <a href="#results">4 · Results — context scaling</a>
     <a href="#retention">5 · Retention &amp; working set</a>
-    <a href="#semantic">6 · Semantic, not just recent</a>
-    <a href="#layers">7 · Per-layer stability</a>
-    <a href="#takeaways">8 · Takeaways</a>
-    <a href="#limits">9 · Limitations</a>
+    <a href="#hotset">6 · Hot-set coverage</a>
+    <a href="#semantic">7 · Semantic, not just recent</a>
+    <a href="#layers">8 · Per-layer stability</a>
+    <a href="#takeaways">9 · Takeaways</a>
+    <a href="#limits">10 · Limitations</a>
   </nav>
 
   <main>
@@ -200,8 +201,38 @@
       </table>
     </section>
 
+    <section class="card" id="hotset">
+      <h2><span class="num">§6</span>Hot-set coverage &mdash; how big a cache?</h2>
+      <p class="lead">The applied payoff of the locality result: of all candidate compressed-KV positions, how many must be kept <b>hot</b> (in fast memory) to cover the top-k selection? Two ways to ask it.</p>
+      <ul class="notes">
+        <li><b>Metric A &mdash; serve 99% of accesses.</b> Rank positions by how often they're selected across the decode; the hot set = the smallest set whose selections account for <b>99% of all top-k selection events</b>. A cache of these serves 99% of accesses (1% average miss).</li>
+        <li><b>Metric B &mdash; never stall.</b> The smallest fixed hot set such that <b>&ge;99% of each step's 512 selected entries are already present, on &ge;99% of steps</b> (misses &gt;1% of a step on at most 1% of steps). Stricter; always &ge; Metric A.</li>
+      </ul>
+      <p>Both are reported as a % of the candidate pool (mean over the 21 CSA layers). The striking result: the hot-set <b>fraction shrinks sharply with context</b> — the sparser the regime, the more concentrated the selection.</p>
+      <table>
+        <thead><tr><th>Context</th><th class="num">candidate pool</th><th class="num">kept / step</th><th class="num">A: 99% of accesses</th><th class="num">A: 99.9%</th><th class="num">B: never-stall</th><th class="num">full union</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">4K</td><td class="num">~1,030</td><td class="num">50%</td><td class="num">80% (~819)</td><td class="num">88%</td><td class="num">88%</td><td class="num">93%</td></tr>
+          <tr><td class="rowlabel">8K</td><td class="num">~1,912</td><td class="num">27%</td><td class="num">66% (~1,256)</td><td class="num">77%</td><td class="num">78%</td><td class="num">81%</td></tr>
+          <tr><td class="rowlabel">16K</td><td class="num">~4,095</td><td class="num">12.5%</td><td class="num">48% (~1,945)</td><td class="num">57%</td><td class="num">57%</td><td class="num">58%</td></tr>
+          <tr><td class="rowlabel">32K</td><td class="num">~8,039</td><td class="num">6.4%</td><td class="num">31% (~2,524)</td><td class="num">37%</td><td class="num">38%</td><td class="num">38%</td></tr>
+          <tr><td class="rowlabel">64K</td><td class="num">~16,393</td><td class="num">3.1%</td><td class="num">20% (~3,344)</td><td class="num">24%</td><td class="num">25%</td><td class="num">25%</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">"A: 99%" is the headline: at 64K a hot set of just <b>~20% of candidates</b> (≈3,300 positions) serves 99% of all top-k accesses; at 4K it takes ~80%. Absolute size grows (819&rarr;3,344) even as the fraction shrinks.</p>
+      <figure>
+        <img src="assets/hotset_01_coverage_curve.png" alt="Cumulative top-k coverage vs hot-set size, per context">
+        <figcaption class="cap">Access-weighted coverage vs hot-set size (% of pool). Longer-context curves rise far more steeply — 99% coverage (dashed) is reached at a small fraction of the pool.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/hotset_02_size_by_context.png" alt="Hot-set size as percent of pool by context, three metrics">
+        <figcaption class="cap">Hot-set size (% of pool) by context. The 99%-of-accesses set (blue) shrinks 80%&rarr;20%; the never-stall set (orange) is only slightly larger and tracks the full working set.</figcaption>
+      </figure>
+      <div class="callout win"><b>What this means.</b> A recency+frequency cache holding a <i>shrinking fraction</i> of the KV pool (down to ~20% at 64K, and ~10% for the most stable layers) serves 99% of the model's actual accesses. Serving 99% of <i>accesses</i> is cheap; <i>never stalling</i> per-step costs nearly the whole working set — the gap is the cold tail of rarely-reused entries.</div>
+    </section>
+
     <section class="card" id="semantic">
-      <h2><span class="num">§6</span>Semantic reuse, not just recency</h2>
+      <h2><span class="num">§7</span>Semantic reuse, not just recency</h2>
       <p class="lead">Is the model just re-picking the most-recent entries, or genuinely returning to old, relevant ones?</p>
       <p>Compare the actual adjacent overlap to a <b>recency baseline</b> — the overlap with the most-recent 512 entries. If selection were pure recency, the two would match. Instead the gap widens with context: even at 64K the model's selection is <b>~6&times;</b> more self-similar than a recency policy would explain.</p>
       <table>
@@ -218,7 +249,7 @@
     </section>
 
     <section class="card" id="layers">
-      <h2><span class="num">§7</span>Per-layer stability</h2>
+      <h2><span class="num">§8</span>Per-layer stability</h2>
       <p>Adjacent overlap varies by layer. Grouping the 21 CSA layers into shallow / middle / deep thirds, the <b>deep layers are the most stable</b> at every context length — an argument for per-layer memory budgets rather than one-size-fits-all.</p>
       <table>
         <thead><tr><th>Context</th><th class="num">shallow</th><th class="num">middle</th><th class="num">deep</th></tr></thead>
@@ -237,19 +268,19 @@
     </section>
 
     <section class="card" id="takeaways">
-      <h2><span class="num">§8</span>Takeaways</h2>
+      <h2><span class="num">§9</span>Takeaways</h2>
       <ul class="notes">
         <li>An <b>independent CPU reference engine (ds4, IQ2)</b> reproduces the GPU/vLLM temporal-locality result: adjacent overlap 0.87&rarr;0.67 over 4K&rarr;64K, locality lift 1.7&times;&rarr;21.4&times;.</li>
         <li>Locality <b>lift rises with context</b> — the selection gets more non-random exactly as the KV cache gets expensive.</li>
         <li>Reuse is <b>semantic, not merely recent</b> — ~6&times; beyond a recency baseline even at 64K.</li>
-        <li>A compact hot set works: a 64-step working set is ≤7.9% of <code class="k">64&times;512</code>.</li>
+        <li><b>Hot-set coverage shrinks with context:</b> a hot set of ~80% of candidates covers 99% of the top-k selection at 4K, falling to <b>~20% at 64K</b> (access-weighted). The absolute set grows (~819&rarr;~3,344 positions) but the fraction of the pool drops steadily — see §6.</li>
         <li>Deep layers are the most stable → per-layer budgets make sense.</li>
         <li>This CPU decode path is the same one that emits the MoE routing trace in <a href="../03_part4_moe_locality/report.html"><b>Part&nbsp;IV</b></a>.</li>
       </ul>
     </section>
 
     <section class="card" id="limits">
-      <h2><span class="num">§9</span>Honest limitations</h2>
+      <h2><span class="num">§10</span>Honest limitations</h2>
       <ul class="notes">
         <li><b>n = 1 per length.</b> One RULER sample each at 4K/8K/16K/32K/64K — no cross-sample confidence intervals (Part&nbsp;I's 60+ prompts supply that; the point here is cross-stack agreement).</li>
         <li><b>IQ2 quantization + CPU reference path.</b> Selections come from a heavily quantized model on a reference (non-GPU) kernel path; quantization may shift selections slightly versus full precision.</li>
