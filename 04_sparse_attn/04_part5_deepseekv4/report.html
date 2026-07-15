@@ -49,6 +49,9 @@
   td.rowlabel{font-weight:700;white-space:nowrap;}
   tbody tr:hover{background:#f7faff;}
   tr.hi td{background:#e7f5ec;}
+  table.mc{font-size:.8rem;}
+  table.mc td.rowlabel{white-space:normal;}
+  table.mc td.role{color:#33415c;}
   .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
   figure{margin:18px 0;}
   figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
@@ -232,6 +235,34 @@
       </table>
       <p class="cap">The per-block hyper-connection glue is ~28&nbsp;&micro;s (14.3 + 9.5 + 4.2) &mdash; under
         7% of a decoder layer. Cheap, given it replaces the entire residual path.</p>
+
+      <h3 id="mc-assume">&sect;2a &mdash; Memory &amp; compute per operation</h3>
+      <div class="callout"><b>How to read the analysis tables (&sect;2a/3a/4a/5a).</b> Each table below mirrors the
+        rows of the timing table above it and adds <b>role / weights / KV bytes / FLOPs / arithmetic
+        intensity</b>, computed under three scenarios:
+        <b>m</b>&nbsp;= the measured batch of this report (prefill&nbsp;8 + 2&nbsp;decodes, kv&nbsp;64 &mdash; the
+        &micro;s columns were measured here); <b>128K</b>&nbsp;/ <b>1M</b>&nbsp;= one decode token (batch&nbsp;1)
+        with a 128K- / 1M-token context (<i>computed, not measured</i>). Cells show
+        "<code class="k">m / 128K / 1M</code>"; "<code class="k">a / b</code>" means measured / decode-B=1
+        (identical at 128K and 1M); a single value is scenario-independent. Weight bytes = params &times;
+        bytes/param (fp8&nbsp;1&nbsp;B, bf16&nbsp;2&nbsp;B, fp4&nbsp;0.5&nbsp;B; block-scales negligible), from the
+        vLLM <code class="k">deepseek_v4</code> source. <b>Arithmetic intensity</b> = FLOPs &divide;
+        (weights&nbsp;+&nbsp;KV bytes), activations ignored. B200 roofline ridge: <b>bf16&nbsp;281 / fp8&nbsp;562 /
+        fp4&nbsp;1125&nbsp;FLOP/B</b> &mdash; intensity below the ridge means the op is <b>memory-bound</b>; note
+        every decode-B=1 value sits far below its ridge.</div>
+      <table class="mc">
+        <thead><tr><th>Operation</th><th>Role (abstract)</th><th class="num">Weights</th><th class="num">KV bytes</th><th class="num">FLOPs</th><th class="num">Arith. int. (FLOP/B)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">mHC pre (query side)</td><td class="role">residual replacement: fold prev block output + this block's input mix + RMSNorm</td><td class="num">~0 (mixing coeffs)</td><td class="num">0</td><td class="num">~3 M / ~0.3 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">mHC (ffn side)</td><td class="role">residual replacement: same mix between attention and MoE</td><td class="num">~0</td><td class="num">0</td><td class="num">~3 M / ~0.3 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">hc pre-norm GEMM</td><td class="role">dynamic mixing-map logits: stream (4&times;7168) &rarr; 24 coeffs (attn+ffn <code class="k">fn</code>, fp32)</td><td class="num">5.5 MB (fp32)</td><td class="num">0</td><td class="num">28 M / 2.8 M</td><td class="num">5 / 0.5</td></tr>
+          <tr><td class="rowlabel">mHC post</td><td class="role">model-level stream fold (once per iteration)</td><td class="num">~0</td><td class="num">0</td><td class="num">~3 M / ~0.3 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">hc head fuse</td><td class="role">model-level head-side fuse (once per iteration)</td><td class="num">~0</td><td class="num">0</td><td class="num">~3 M / ~0.3 M</td><td class="num">&mdash; (elementwise)</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">All mHC ops are elementwise mixing over the widened 4&times;7168 stream &mdash;
+        intrinsically memory-bound, but tiny in absolute bytes. The only real GEMM (the fp32
+        <code class="k">fn</code> logits) is 5.5&nbsp;MB of weights.</p>
     </section>
 
     <section class="card" id="attn">
@@ -286,6 +317,33 @@
         (indexer&nbsp;36.3 + compressor&nbsp;11.1 + FlashMLA&nbsp;~41) is what buys the flat context scaling in
         <a href="#scale">§6</a>.</p>
 
+      <h3>&sect;3a &mdash; Memory &amp; compute per operation <span style="font-weight:400;color:var(--muted)">(scenarios &amp; formula: see the <a href="#mc-assume">&sect;2a box</a>)</span></h3>
+      <table class="mc">
+        <thead><tr><th>#</th><th>Operation</th><th>Role (abstract)</th><th class="num">Weights</th><th class="num">KV bytes</th><th class="num">FLOPs</th><th class="num">Arith. int. (FLOP/B)</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="rowlabel">fused_wqa_wkv</td><td class="role">&#9312; shared-intermediate projection: x<sub>t</sub> &rarr; query latent c_q(1536) &#8214; KV latent kv_t(512)</td><td class="num">14.7 MB (fp8)</td><td class="num">0</td><td class="num">294 M / 29 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="num">1</td><td class="rowlabel">input aux GEMMs</td><td class="role">&#9314; indexer-query projection + &#9316;/&#9318; compressor input (kv-score) projections</td><td class="num">49.3 MB (12.6 fp8 + 36.7 bf16)</td><td class="num">0</td><td class="num">619 M / 62 M</td><td class="num">13 / 1.3</td></tr>
+          <tr><td class="num">2</td><td class="rowlabel">fused_q_kv_rmsnorm</td><td class="role">&#9312; finalize shared intermediates (normalise both latents)</td><td class="num">~0 (4 KB &gamma;)</td><td class="num">0</td><td class="num">~0.1 M / ~0.01 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="num">3</td><td class="rowlabel">wq_b</td><td class="role">&#9313; main queries: c_q &rarr; 128 heads &times; 512, born in latent space (no absorption)</td><td class="num">100.7 MB (fp8)</td><td class="num">0</td><td class="num">2.01 G / 201 M</td><td class="num">20 / 2</td></tr>
+          <tr class="hi"><td class="num">4</td><td class="rowlabel">indexer (total)</td><td class="role">&#9314;&ndash;&#9317; lightning indexer: decide <b>where</b> to look (= 4a+4b+4c)</td><td class="num">0.9 MB</td><td class="num">~21 KB / 4.3 MB / 34.6 MB</td><td class="num">~12 M / 538 M / 4.3 G</td><td class="num">13 / 102 / 121</td></tr>
+          <tr><td class="num">4a</td><td class="rowlabel">&nbsp;&nbsp;weights_proj</td><td class="role">&#9315; indexer gate weights: x<sub>t</sub> &rarr; w[64]</td><td class="num">0.9 MB (bf16)</td><td class="num">0</td><td class="num">9.2 M / 0.9 M</td><td class="num">10 / 1</td></tr>
+          <tr><td class="num">4b</td><td class="rowlabel">&nbsp;&nbsp;indexer compressor</td><td class="role">&#9316; token-level compressor &rarr; <b>compressed indexer keys</b> (one 132&nbsp;B key per 4 tokens)</td><td class="num">~0 (APE 4 KB)</td><td class="num">~0 (132 B/entry insert)</td><td class="num">~0 (softmax pooling)</td><td class="num">&mdash; (its GEMM is in "aux")</td></tr>
+          <tr><td class="num">4c</td><td class="rowlabel">&nbsp;&nbsp;SparseAttnIndexer</td><td class="role">&#9317; indexer MQA + top-k: scans <b>all</b> candidates &rarr; T[1024] &mdash; the only O(context) op</td><td class="num">0</td><td class="num">~21 KB / 4.3 MB / 34.6 MB</td><td class="num">~2.6 M / 537 M / 4.29 G</td><td class="num">124 (&#8810; fp8 ridge 562 &rarr; memory-bound)</td></tr>
+          <tr><td class="num">5</td><td class="rowlabel">main compressor</td><td class="role">&#9318; token-level compressor &rarr; <b>compressed KV entries</b> (one 584&nbsp;B entry per 4 tokens)</td><td class="num">~0 (APE 16 KB)</td><td class="num">~0 (584 B/entry insert)</td><td class="num">~0 (softmax pooling)</td><td class="num">&mdash; (its GEMM is in "aux")</td></tr>
+          <tr><td class="num">6</td><td class="rowlabel">FlashMLA core</td><td class="role">&#9319; main shared-KV MQA: plan &rarr; gather top-1024+window (584 B each) &rarr; attend &rarr; combine</td><td class="num">0</td><td class="num">~0.47 MB / 0.67 MB / 0.67 MB <b>(context-independent)</b></td><td class="num">~197 M / 283 M / 283 M</td><td class="num">~421 (&asymp;75% of fp8 ridge &mdash; near-balanced)</td></tr>
+          <tr><td class="num">6</td><td class="rowlabel">gather / norm / rope glue</td><td class="role">&#9313;/&#9319; glue: q rope, dequant-gather, inverse-RoPE</td><td class="num">0</td><td class="num">&mdash;</td><td class="num">~2 M / ~0.2 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="num">7</td><td class="rowlabel">wo_a</td><td class="role">&#9320; output projection stage 1: grouped low-rank (16 &times; [4096&rarr;1024])</td><td class="num">67.1 MB (fp8)</td><td class="num">0</td><td class="num">1.34 G / 134 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="num">7</td><td class="rowlabel">wo_b</td><td class="role">&#9320; output projection stage 2: output latent &rarr; hidden 7168</td><td class="num">117.4 MB (fp8)</td><td class="num">0</td><td class="num">2.35 G / 235 M</td><td class="num">20 / 2</td></tr>
+          <tr><td></td><td class="rowlabel">attention block total</td><td class="role">&mdash;</td><td class="num">&asymp;350 MB</td><td class="num">&asymp;0.5 / 5.0 / 35.3 MB</td><td class="num">&asymp;6.8 G / 1.5 G / 5.2 G</td><td class="num">&asymp;19 / 4.2 / 14</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Reading guide: the weight-streaming GEMMs all share intensity <code class="k">2&times;tokens
+        / bytes-per-param</code> (20 at the measured 10-token batch, 2 at decode&nbsp;B=1) &mdash; far below the
+        fp8 ridge of 562, i.e. decode GEMMs are weight-bandwidth-bound. The only op that grows with context is
+        the 4c scan (KV 4.3&nbsp;MB&rarr;34.6&nbsp;MB from 128K&rarr;1M at a fixed intensity of 124); the FlashMLA
+        gather stays a constant ~0.67&nbsp;MB because top-k is fixed at 1024 &mdash; that is the whole point of
+        CSA.</p>
+
       <div class="callout warn"><b>Four streams at once.</b> V4 launches the metadata-independent input GEMMs on
         four CUDA streams &mdash; <code class="k">fused_wqa_wkv</code> on the default stream, plus the
         compressor <code class="k">kv_score</code>, the indexer <code class="k">weights_proj</code>, and the
@@ -321,6 +379,24 @@
         block. The shared expert &mdash; run for <i>every</i> token, not routed &mdash; costs about as much as
         a full attention output projection. The first 3 layers of V4 route by a fixed token-id hash instead of
         this learned gate (see <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>).</p>
+
+      <h3>&sect;4a &mdash; Memory &amp; compute per operation <span style="font-weight:400;color:var(--muted)">(scenarios &amp; formula: see the <a href="#mc-assume">&sect;2a box</a>)</span></h3>
+      <table class="mc">
+        <thead><tr><th>Operation</th><th>Role (abstract)</th><th class="num">Weights</th><th class="num">KV bytes</th><th class="num">FLOPs</th><th class="num">Arith. int. (FLOP/B)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">GateLinear</td><td class="role">MoE router: score all 384 experts (hidden &rarr; 384 logits)</td><td class="num">5.5 MB (bf16)</td><td class="num">0</td><td class="num">55 M / 5.5 M</td><td class="num">10 / 1</td></tr>
+          <tr><td class="rowlabel">topkGatingSoftplusSqrt</td><td class="role">MoE routing: sqrt(softplus) affinity + top-6 select</td><td class="num">0</td><td class="num">0</td><td class="num">~0</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr class="hi"><td class="rowlabel">MegaMoE experts</td><td class="role">routed expert FFN: 6 experts/token, fp4 (33 MB weights <i>per activated expert</i>)</td><td class="num">&le;1.98 GB (&le;60 experts) / 198 MB (6 experts)</td><td class="num">0</td><td class="num">7.93 G / 793 M</td><td class="num">~4 (tokens/expert &asymp; 1 &#8810; fp4 ridge 1125 &mdash; most memory-bound op in the layer)</td></tr>
+          <tr><td class="rowlabel">shared expert</td><td class="role">shared expert FFN: SwiGLU on <i>every</i> token</td><td class="num">66.1 MB (fp8)</td><td class="num">0</td><td class="num">1.32 G / 132 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">combine add</td><td class="role">merge routed + shared outputs</td><td class="num">0</td><td class="num">0</td><td class="num">~0</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">MoE block total</td><td class="role">&mdash;</td><td class="num">&le;2.05 GB / 270 MB</td><td class="num">0</td><td class="num">9.3 G / 0.93 G</td><td class="num">&asymp;4.5 / 3.4</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">The routed-expert GEMM has the <b>worst</b> arithmetic intensity in the layer: tokens
+        scatter across 384 experts, so each 33&nbsp;MB fp4 expert is streamed for &asymp;1 token's worth of
+        math (intensity &asymp;4 vs a ridge of 1125 &mdash; &lt;1% of peak). It only becomes compute-bound at
+        &asymp;281 tokens <i>per expert</i> (&asymp;18K concurrent tokens). This is the roofline explanation of
+        the &sect;6 MoE matrix: 128&times; more tokens &rarr; only ~7&times; more time.</p>
     </section>
 
     <section class="card" id="table">
@@ -398,6 +474,34 @@
       <p class="cap">Sums exceed 100% column-wise where sub-ops overlap on separate streams (<a href="#method">§7</a>);
         the table ranks attribution, not a strict partition. Per-block roll-ups: attention 217.6, MoE 235.1,
         hyper-connections ~28, layer 480.7&nbsp;&micro;s.</p>
+
+      <h3>&sect;5a &mdash; Memory &amp; compute, same rows <span style="font-weight:400;color:var(--muted)">(scenarios &amp; formula: see the <a href="#mc-assume">&sect;2a box</a>)</span></h3>
+      <table class="mc">
+        <thead><tr><th>Operation</th><th>Role (abstract)</th><th class="num">Weights</th><th class="num">KV bytes</th><th class="num">FLOPs</th><th class="num">Arith. int. (FLOP/B)</th></tr></thead>
+        <tbody>
+          <tr class="hi"><td class="rowlabel">MoE experts (fp4 fused GEMM)</td><td class="role">routed expert FFN (6 experts/token, fp4)</td><td class="num">&le;1.98 GB / 198 MB</td><td class="num">0</td><td class="num">7.93 G / 793 M</td><td class="num">~4 (most memory-bound)</td></tr>
+          <tr><td class="rowlabel">FlashMLA sparse core</td><td class="role">&#9319; main shared-KV MQA (plan&rarr;gather&rarr;attend&rarr;combine)</td><td class="num">0</td><td class="num">~0.47 / 0.67 / 0.67 MB</td><td class="num">~197 M / 283 M / 283 M</td><td class="num">~421 (near-balanced)</td></tr>
+          <tr><td class="rowlabel">lightning indexer</td><td class="role">&#9314;&ndash;&#9317; address selection (scan all &rarr; top-1024)</td><td class="num">0.9 MB</td><td class="num">~21 KB / 4.3 MB / 34.6 MB</td><td class="num">~12 M / 538 M / 4.3 G</td><td class="num">13 / 102 / 121</td></tr>
+          <tr><td class="rowlabel">shared expert (SwiGLU MLP)</td><td class="role">shared expert FFN (every token)</td><td class="num">66.1 MB (fp8)</td><td class="num">0</td><td class="num">1.32 G / 132 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">wo_b output projection</td><td class="role">&#9320; output projection stage 2</td><td class="num">117.4 MB (fp8)</td><td class="num">0</td><td class="num">2.35 G / 235 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">input aux GEMMs (overlapped)</td><td class="role">&#9314; indexer-q proj + &#9316;/&#9318; compressor kv-score projections</td><td class="num">49.3 MB</td><td class="num">0</td><td class="num">619 M / 62 M</td><td class="num">13 / 1.3</td></tr>
+          <tr><td class="rowlabel">wq_b up-projection</td><td class="role">&#9313; main queries (c_q &rarr; 128&times;512)</td><td class="num">100.7 MB (fp8)</td><td class="num">0</td><td class="num">2.01 G / 201 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">wo_a output low-rank</td><td class="role">&#9320; output projection stage 1 (grouped)</td><td class="num">67.1 MB (fp8)</td><td class="num">0</td><td class="num">1.34 G / 134 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">mHC pre (query side)</td><td class="role">residual replacement (stream mixing)</td><td class="num">~0</td><td class="num">0</td><td class="num">~3 M / ~0.3 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">fused_wqa_wkv input GEMM</td><td class="role">&#9312; shared-intermediate projection (c_q &#8214; kv_t)</td><td class="num">14.7 MB (fp8)</td><td class="num">0</td><td class="num">294 M / 29 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">attn glue (gather/rope/etc.)</td><td class="role">&#9313;/&#9319; glue (q rope, dequant-gather, inv-RoPE)</td><td class="num">0</td><td class="num">&mdash;</td><td class="num">~2 M / ~0.2 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">main compressor</td><td class="role">&#9318; token-level compressor &rarr; compressed KV entries (584 B)</td><td class="num">~0</td><td class="num">~0 (insert)</td><td class="num">~0</td><td class="num">&mdash;</td></tr>
+          <tr><td class="rowlabel">mHC ffn side</td><td class="role">residual replacement (stream mixing)</td><td class="num">~0</td><td class="num">0</td><td class="num">~3 M / ~0.3 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">GateLinear + top-6 route</td><td class="role">MoE router scoring + top-6 selection</td><td class="num">5.5 MB (bf16)</td><td class="num">0</td><td class="num">55 M / 5.5 M</td><td class="num">10 / 1</td></tr>
+          <tr><td class="rowlabel">hc pre-norm GEMM</td><td class="role">dynamic mixing-map logits (fp32 <code class="k">fn</code>)</td><td class="num">5.5 MB (fp32)</td><td class="num">0</td><td class="num">28 M / 2.8 M</td><td class="num">5 / 0.5</td></tr>
+          <tr><td class="rowlabel">q/kv RMSNorm</td><td class="role">&#9312; finalize shared intermediates</td><td class="num">~0</td><td class="num">0</td><td class="num">~0.1 M / ~0.01 M</td><td class="num">&mdash; (elementwise)</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">The roofline picture in one glance: at decode batch&nbsp;1 <b>every</b> row sits far below
+        its ridge (bf16&nbsp;281 / fp8&nbsp;562 / fp4&nbsp;1125&nbsp;FLOP/B) &mdash; the whole decoder layer is
+        memory-bound, with the routed experts (&asymp;4) the most extreme and FlashMLA (&asymp;421) the closest
+        to balanced. Weight-streaming GEMMs need &asymp;281 concurrent tokens to reach their ridge; the
+        cache-streaming ops (indexer scan, FlashMLA) never benefit from batching at all.</p>
     </section>
 
     <section class="card" id="scale">
