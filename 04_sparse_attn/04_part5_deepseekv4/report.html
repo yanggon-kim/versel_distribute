@@ -502,6 +502,43 @@
         memory-bound, with the routed experts (&asymp;4) the most extreme and FlashMLA (&asymp;421) the closest
         to balanced. Weight-streaming GEMMs need &asymp;281 concurrent tokens to reach their ridge; the
         cache-streaming ops (indexer scan, FlashMLA) never benefit from batching at all.</p>
+
+      <h3>&sect;5b &mdash; The same analysis for DeepSeek-V3.2 (DSA) <span style="font-weight:400;color:var(--muted)">(computed, not measured)</span></h3>
+      <div class="callout warn"><b>V3.2 was not profiled in this run</b> &mdash; there is no &micro;s column.
+        The table below applies the identical methodology (scenarios &amp; formula: <a href="#mc-assume">&sect;2a
+        box</a>) to DeepSeek-V3.2's decoder layer, with dimensions taken from the vLLM
+        <code class="k">deepseek_v2.py</code> / <code class="k">deepseek_v32</code> source. Structural
+        differences vs V4: <b>no compression</b> (one 656&nbsp;B latent + one 132&nbsp;B indexer key per <i>raw</i>
+        token), the indexer runs on <b>every</b> layer and scans <b>L</b> raw candidates (V4: L/4, C4A layers
+        only), top-k&nbsp;=&nbsp;<b>2048</b> (V4: 1024), queries are born 128&times;192 and need
+        <b>W<sub>UK</sub>/W<sub>UV</sub> absorption</b> (V4: born 128&times;512, none), single
+        <code class="k">o_proj</code> (V4: low-rank wo_a/wo_b), no sliding window / mHC, and the MoE is fp8
+        256-expert top-8 (V4: fp4 384-expert top-6).</div>
+      <table class="mc">
+        <thead><tr><th>Operation</th><th>Role (abstract)</th><th class="num">Weights</th><th class="num">KV bytes</th><th class="num">FLOPs</th><th class="num">Arith. int. (FLOP/B)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">fused_qkv_a_proj</td><td class="role">&#9312; shared-intermediate projection: x<sub>t</sub> &rarr; c_q(1536) &#8214; c_kv(512) &#8214; k_pe(64)</td><td class="num">15.1 MB (fp8)</td><td class="num">0</td><td class="num">303 M / 30 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">q_a / kv_a layernorm</td><td class="role">&#9312; finalize shared intermediates</td><td class="num">~0</td><td class="num">0</td><td class="num">~0.1 M / ~0.01 M</td><td class="num">&mdash; (elementwise)</td></tr>
+          <tr><td class="rowlabel">q_b_proj</td><td class="role">&#9313; main queries: c_q &rarr; 128 heads &times; 192 (nope 128 + rope 64)</td><td class="num">37.7 MB (fp8)</td><td class="num">0</td><td class="num">755 M / 75 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">kv_b_proj (W<sub>UK</sub>/W<sub>UV</sub>)</td><td class="role">&#9313; absorption: q_nope 128&rarr;512 into latent space (+ value up-proj on output) &mdash; <b>absent in V4</b></td><td class="num">16.8 MB (fp8)</td><td class="num">0</td><td class="num">336 M / 34 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">indexer wq_b</td><td class="role">&#9314; indexer queries: c_q &rarr; 64 &times; 128</td><td class="num">12.6 MB (fp8)</td><td class="num">0</td><td class="num">252 M / 25 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">wk_weights_proj</td><td class="role">&#9315;+key: one fused GEMM makes the indexer key k_t(128) <i>and</i> the gate w[64] &mdash; V3.2 has <b>no compressor</b>: k_t goes straight to the cache (132 B per raw token)</td><td class="num">2.8 MB (bf16)</td><td class="num">~0 (132 B/token insert)</td><td class="num">28 M / 2.8 M</td><td class="num">10 / 1</td></tr>
+          <tr class="hi"><td class="rowlabel">SparseAttnIndexer</td><td class="role">&#9317; indexer MQA + top-k: scans <b>all L raw tokens</b> &rarr; T[2048] &mdash; 4&times; the candidates of V4, on every layer</td><td class="num">0</td><td class="num">~85 KB / <b>17.3 MB</b> / <b>138.4 MB</b></td><td class="num">~10 M / 2.15 G / 17.2 G</td><td class="num">124 (memory-bound, O(L))</td></tr>
+          <tr><td class="rowlabel">FlashMLA sparse (fp8)</td><td class="role">&#9319; main shared-KV MQA: gather top-2048 &times; 656 B latents &rarr; attend &rarr; W<sub>UV</sub></td><td class="num">0</td><td class="num">~0.42 MB / 1.34 MB / 1.34 MB (context-independent)</td><td class="num">~178 M / 570 M / 570 M</td><td class="num">~425 (near-balanced)</td></tr>
+          <tr><td class="rowlabel">o_proj</td><td class="role">&#9320; output projection: 128&times;128 heads &rarr; hidden 7168 (single GEMM; V4 uses low-rank wo_a/wo_b)</td><td class="num">117.4 MB (fp8)</td><td class="num">0</td><td class="num">2.35 G / 235 M</td><td class="num">20 / 2</td></tr>
+          <tr><td class="rowlabel">attention block total</td><td class="role">&mdash;</td><td class="num">&asymp;202 MB</td><td class="num">&asymp;0.5 / 18.6 / 139.8 MB</td><td class="num">&asymp;4.2 G / 3.1 G / 18.2 G</td><td class="num">&asymp;21 / 14 / 53</td></tr>
+          <tr><td class="rowlabel">MoE gate</td><td class="role">router: score all 256 experts</td><td class="num">3.7 MB (bf16)</td><td class="num">0</td><td class="num">37 M / 3.7 M</td><td class="num">10 / 1</td></tr>
+          <tr><td class="rowlabel">routed experts (fp8)</td><td class="role">routed expert FFN: 8 experts/token, fp8 (44 MB per activated expert)</td><td class="num">&le;3.52 GB (&le;80 exp) / 352 MB (8 exp)</td><td class="num">0</td><td class="num">7.05 G / 705 M</td><td class="num">~2 (tokens/expert &asymp; 1; ridge fp8 562)</td></tr>
+          <tr><td class="rowlabel">shared expert</td><td class="role">shared expert FFN (every token)</td><td class="num">44.0 MB (fp8)</td><td class="num">0</td><td class="num">881 M / 88 M</td><td class="num">20 / 2</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">V3.2 vs V4, per CSA-equivalent decoder layer at decode B=1: the indexer scan streams
+        <b>17.3&nbsp;MB@128K / 138.4&nbsp;MB@1M</b> (V4: 4.3 / 34.6 &mdash; 4&times; less, and only on the C4A
+        half of the layers), the main gather reads <b>1.34&nbsp;MB</b> (top-2048&times;656&nbsp;B; V4:
+        0.67&nbsp;MB), and the cache grows <b>788&nbsp;B/token/layer &asymp; 48&nbsp;KB/token over 61 layers</b>
+        (V4: &asymp;5.5&nbsp;KB/token, &asymp;9&times; smaller). Both attention cores sit at the same intensity
+        (scan 124, FlashMLA &asymp;420) &mdash; V4 did not change the roofline <i>position</i> of DSA, it
+        shrank the <i>bytes</i>: fewer candidates (L/4), fewer indexer layers, smaller entries, fp4 experts.</p>
     </section>
 
     <section class="card" id="scale">
