@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V3.2 Sparse Attention &mdash; Part VI: One Decoder Layer vs Batch Size and Context Length</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  section.card h3{margin:22px 0 6px;font-size:1.05rem;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0 6px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .scroll{overflow-x:auto;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .fig .cap{color:var(--muted);font-size:.85rem;margin:2px 2px 8px;}
+  code.k{background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.86em;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#what">1 &middot; What DSA changes</a>
+    <a href="#decode">2 &middot; The decode surface</a>
+    <a href="#where">3 &middot; Where the time goes</a>
+    <a href="#cross">4 &middot; The crossover</a>
+    <a href="#prefill">5 &middot; Prefill</a>
+    <a href="#v4">6 &middot; Contrast with V4</a>
+    <a href="#method">7 &middot; Method &amp; caveats</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V3.2 Sparse Attention &mdash; Part&nbsp;VI</h1>
+      <p class="sub">Part&nbsp;V measured one <b>DeepSeek-V4</b> decoder layer at a single batch shape.
+        This part asks the serving question instead: <b>how does one V3.2 decoder layer scale with the
+        two knobs an operator actually controls &mdash; how many users are decoding at once, and how long
+        their conversations are?</b> Measured on a single NVIDIA&nbsp;H200 via vLLM layerwise profiling,
+        then composed through the <a href="../../index.html">LLMServingSim</a> lookup path.</p>
+      <div class="tags">
+        <span class="tag">DeepSeek-V3.2-Exp (256 experts / 8 active, 61 layers)</span>
+        <span class="tag live">measured on NVIDIA H200 (SM90) via vLLM 0.25.1 layerwise profile</span>
+        <span class="tag">decode batch 1&ndash;1024 &middot; KV 1K&ndash;1M</span>
+        <span class="tag">fp8_ds_mla KV &middot; FlashMLA-sparse &middot; enforce_eager &middot; tp1</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">&sect;</span>Overview in one minute</h2>
+      <p class="lead">DeepSeek Sparse Attention (DSA) is usually described as &ldquo;attention that stays
+        cheap at long context&rdquo;. Measured, that is only half true &mdash; and the half that is false
+        is the half that decides how you build a serving cluster.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">5,518.8 &micro;s</div><div class="l">one MoE decoder layer, batch&nbsp;64 at 1M context</div></div>
+        <div class="kpi"><div class="v">10.3&times;</div><div class="l">growth in that layer&rsquo;s <b>attention</b>, 1K &rarr; 1M (whole layer: 1.9&times;)</div></div>
+        <div class="kpi"><div class="v">9% &rarr; 51%</div><div class="l">attention&rsquo;s share of the layer, 1K &rarr; 1M</div></div>
+        <div class="kpi"><div class="v">329.5 ms</div><div class="l">whole-model decode step at batch&nbsp;64, 1M (vs 174.3&nbsp;ms at 1K)</div></div>
+      </div>
+      <div class="callout"><b>Plain-language thesis.</b> DSA makes the part of attention that
+        <i>reads</i> KV cheap &mdash; it attends to a fixed top-2048 no matter how long the context is.
+        But something still has to <i>decide</i> which 2048, and that decision is a lightning indexer
+        that scans every token in the cache. So a V3.2 layer is flat in the attend and <b>linear in the
+        scan</b>. At short context the scan is invisible; at long context it is the whole story.</div>
+      <div class="callout warn"><b>The consequence.</b> Long context does not make V3.2 attention-cheap;
+        it makes V3.2 <b>attention-bound</b>. At batch&nbsp;64 the decoder layer goes from
+        2,974.7 &micro;s to 5,518.8 &micro;s, and attention overtakes the 256-expert MoE block on the way.</div>
+    </section>
+
+    <section class="card" id="what">
+      <h2><span class="num">1</span>What DSA changes, mechanically</h2>
+      <p class="lead">Why the cost splits into a flat part and a linear part.</p>
+      <p>A V3.2 decoder layer runs two RMSNorms, one attention block and one MoE block. The attention
+        block is classic multi-head latent attention (MLA) &mdash; one shared latent per token,
+        <code class="k">kv_lora_rank</code>&nbsp;512 plus a 64-dim RoPE part &mdash; wrapped around a
+        <b>lightning indexer</b>. Per token per layer the cache holds <b>656&nbsp;B</b> of main MLA
+        latent plus <b>132&nbsp;B</b> of indexer key.</p>
+      <p>On every decode step, for every sequence in the batch, the indexer scans that sequence&rsquo;s
+        <i>entire</i> 132&nbsp;B/token key cache to pick the top
+        <code class="k">index_topk</code>&nbsp;=&nbsp;2048 tokens. FlashMLA then attends over exactly
+        those 2048. So:</p>
+      <ul class="notes">
+        <li><b>The attend is O(1) in context</b> &mdash; fixed at 2048 selected tokens. This is the part
+          the &ldquo;sparse attention is cheap&rdquo; story is about, and it is real.</li>
+        <li><b>The scan is O(batch &times; context)</b> &mdash; every cached token is touched to be
+          ranked. This part is bandwidth-bound and it is what the measurement below exposes.</li>
+      </ul>
+      <div class="callout"><b>A back-of-envelope that the data confirms.</b> At batch&nbsp;64 with 1M
+        context the indexer must read 64 &times; 1,048,576 &times; 132&nbsp;B &asymp; <b>8.9&nbsp;GB</b>
+        per layer per step. The measured excess over the short-context baseline implies an effective
+        <b>&asymp;3.5&nbsp;TB/s</b> &mdash; about 73% of the H200&rsquo;s peak HBM bandwidth, which is
+        what a well-tuned streaming scan should achieve. The model and the measurement agree.</div>
+    </section>
+
+    <section class="card" id="decode">
+      <h2><span class="num">2</span>The decode surface</h2>
+      <p class="lead">One MoE decoder layer, GPU time, across batch size and context length.</p>
+      <div class="fig">
+        <div class="cap">One MoE decoder layer at decode &mdash; log&ndash;log. Flat left, linear right:
+          the knee is where the indexer scan overtakes the fixed per-step cost.</div>
+        <svg viewBox="0 0 900 420" role="img" aria-label="One MoE decoder layer latency versus KV context length, by decode batch size">
+        <line x1="66" y1="368.0" x2="772" y2="368.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="372.0" text-anchor="end" font-size="11" fill="#647083">100 &micro;s</text>
+        <line x1="66" y1="333.3" x2="772" y2="333.3" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="337.3" text-anchor="end" font-size="11" fill="#647083">200 &micro;s</text>
+        <line x1="66" y1="287.4" x2="772" y2="287.4" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="291.4" text-anchor="end" font-size="11" fill="#647083">500 &micro;s</text>
+        <line x1="66" y1="252.7" x2="772" y2="252.7" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="256.7" text-anchor="end" font-size="11" fill="#647083">1 ms</text>
+        <line x1="66" y1="217.9" x2="772" y2="217.9" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="221.9" text-anchor="end" font-size="11" fill="#647083">2 ms</text>
+        <line x1="66" y1="172.1" x2="772" y2="172.1" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="176.1" text-anchor="end" font-size="11" fill="#647083">5 ms</text>
+        <line x1="66" y1="137.3" x2="772" y2="137.3" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="141.3" text-anchor="end" font-size="11" fill="#647083">10 ms</text>
+        <line x1="66" y1="102.6" x2="772" y2="102.6" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="106.6" text-anchor="end" font-size="11" fill="#647083">20 ms</text>
+        <line x1="66" y1="56.7" x2="772" y2="56.7" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="60.7" text-anchor="end" font-size="11" fill="#647083">50 ms</text>
+        <line x1="66" y1="22.0" x2="772" y2="22.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="26.0" text-anchor="end" font-size="11" fill="#647083">100 ms</text>
+        <line x1="66.0" y1="368" x2="66.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="66.0" y="388" text-anchor="middle" font-size="11" fill="#647083">1K</text>
+        <line x1="207.2" y1="368" x2="207.2" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="207.2" y="388" text-anchor="middle" font-size="11" fill="#647083">4K</text>
+        <line x1="348.4" y1="368" x2="348.4" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="348.4" y="388" text-anchor="middle" font-size="11" fill="#647083">16K</text>
+        <line x1="489.6" y1="368" x2="489.6" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="489.6" y="388" text-anchor="middle" font-size="11" fill="#647083">64K</text>
+        <line x1="560.2" y1="368" x2="560.2" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="560.2" y="388" text-anchor="middle" font-size="11" fill="#647083">128K</text>
+        <line x1="630.8" y1="368" x2="630.8" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="630.8" y="388" text-anchor="middle" font-size="11" fill="#647083">256K</text>
+        <line x1="701.4" y1="368" x2="701.4" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="701.4" y="388" text-anchor="middle" font-size="11" fill="#647083">512K</text>
+        <line x1="772.0" y1="368" x2="772.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="772.0" y="388" text-anchor="middle" font-size="11" fill="#647083">1M</text>
+        <line x1="66" y1="368" x2="772" y2="368" stroke="#c7ced9" stroke-width="1"/>
+        <text x="419" y="406" text-anchor="middle" font-size="12" fill="#647083">KV context length per sequence</text>
+        <path d="M66.0,315.0 L207.2,313.7 L348.4,313.2 L489.6,312.8 L560.2,311.7 L630.8,310.3 L701.4,307.5 L772.0,302.5" fill="none" stroke="#86b6ef" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="315.0" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="207.2" cy="313.7" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="348.4" cy="313.2" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="489.6" cy="312.8" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="560.2" cy="311.7" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="630.8" cy="310.3" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="701.4" cy="307.5" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="772.0" cy="302.5" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <text x="784.0" y="306.5" font-size="12" font-weight="700" fill="#86b6ef">batch 1</text>
+        <path d="M66.0,259.7 L207.2,259.1 L348.4,258.8 L489.6,257.9 L560.2,256.8 L630.8,254.6 L701.4,250.8 L772.0,244.0" fill="none" stroke="#5598e7" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="259.7" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="207.2" cy="259.1" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="348.4" cy="258.8" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="489.6" cy="257.9" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="560.2" cy="256.8" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="630.8" cy="254.6" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="701.4" cy="250.8" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <circle cx="772.0" cy="244.0" r="4" fill="#5598e7" stroke="#fff" stroke-width="2"/>
+        <text x="784.0" y="248.0" font-size="12" font-weight="700" fill="#5598e7">batch 8</text>
+        <path d="M66.0,198.1 L207.2,197.8 L348.4,197.3 L489.6,195.1 L560.2,192.6 L630.8,188.1 L701.4,180.0 L772.0,167.1" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="198.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="207.2" cy="197.8" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="348.4" cy="197.3" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="489.6" cy="195.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="560.2" cy="192.6" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="630.8" cy="188.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="701.4" cy="180.0" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="772.0" cy="167.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <text x="784.0" y="171.1" font-size="12" font-weight="700" fill="#2a78d6">batch 64</text>
+        <path d="M66.0,187.0 L207.2,186.3 L348.4,184.9 L489.6,179.1 L560.2,172.8 L630.8,162.1 L701.4,145.9 L772.0,133.7" fill="none" stroke="#1c5cab" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="187.0" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="207.2" cy="186.3" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="348.4" cy="184.9" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="489.6" cy="179.1" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="560.2" cy="172.8" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="630.8" cy="162.1" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="701.4" cy="145.9" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <circle cx="772.0" cy="133.7" r="4" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+        <text x="784.0" y="137.7" font-size="12" font-weight="700" fill="#1c5cab">batch 256</text>
+        <path d="M66.0,166.0 L207.2,164.4 L348.4,160.9 L489.6,147.7 L560.2,135.0 L630.8,124.9 L701.4,116.4 L772.0,109.2" fill="none" stroke="#0d366b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="166.0" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="207.2" cy="164.4" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="348.4" cy="160.9" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="489.6" cy="147.7" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="560.2" cy="135.0" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="630.8" cy="124.9" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="701.4" cy="116.4" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="772.0" cy="109.2" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <text x="784.0" y="113.2" font-size="12" font-weight="700" fill="#0d366b">batch 1024</text>
+        </svg>
+      </div>
+      <p>Every curve has the same shape: flat while the scan is negligible, then a straight linear
+        climb once it dominates. Increasing batch raises the floor <i>and</i> moves the knee left,
+        because the scan cost is proportional to the product of the two axes.</p>
+      <p>The floors are not evenly spaced. Between batch&nbsp;32 and batch&nbsp;64 the curve barely
+        moves (2,916.2 &micro;s &rarr; 2,974.7 &micro;s at 1K) because the MoE block has already saturated:
+        at batch&nbsp;32 a step activates all 256 experts, and beyond that point more tokens are
+        nearly free for MoE. Everything above that batch is the indexer talking.</p>
+      <div class="scroll"><table><thead><tr><th>batch \ context</th><th class="num">1K</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">288</td><td class="num">296</td><td class="num">299</td><td class="num">301</td><td class="num">308</td><td class="num">317</td><td class="num">335</td><td class="num">370</td></tr><tr><th class="num">2</th><td class="num">371</td><td class="num">378</td><td class="num">381</td><td class="num">390</td><td class="num">397</td><td class="num">410</td><td class="num">436</td><td class="num">488</td></tr><tr><th class="num">4</th><td class="num">549</td><td class="num">555</td><td class="num">559</td><td class="num">569</td><td class="num">581</td><td class="num">603</td><td class="num">647</td><td class="num">732</td></tr><tr><th class="num">8</th><td class="num">870</td><td class="num">879</td><td class="num">885</td><td class="num">901</td><td class="num">920</td><td class="num">961</td><td class="num">1,037</td><td class="num">1,190</td></tr><tr><th class="num">16</th><td class="num">1,535</td><td class="num">1,545</td><td class="num">1,552</td><td class="num">1,585</td><td class="num">1,622</td><td class="num">1,701</td><td class="num">1,851</td><td class="num">2,162</td></tr><tr><th class="num">32</th><td class="num">2,916</td><td class="num">2,930</td><td class="num">2,953</td><td class="num">3,015</td><td class="num">3,092</td><td class="num">3,245</td><td class="num">3,553</td><td class="num">4,165</td></tr><tr><th class="num">64</th><td class="num">2,975</td><td class="num">2,990</td><td class="num">3,021</td><td class="num">3,154</td><td class="num">3,315</td><td class="num">3,629</td><td class="num">4,262</td><td class="num">5,519</td></tr><tr><th class="num">128</th><td class="num">3,372</td><td class="num">3,400</td><td class="num">3,457</td><td class="num">3,692</td><td class="num">3,983</td><td class="num">4,571</td><td class="num">5,730</td><td class="num">8,064</td></tr><tr><th class="num">256</th><td class="num">3,711</td><td class="num">3,760</td><td class="num">3,870</td><td class="num">4,343</td><td class="num">4,930</td><td class="num">6,093</td><td class="num">8,423</td><td class="num" style="opacity:.62">10,753</td></tr><tr><th class="num">512</th><td class="num">4,352</td><td class="num">4,445</td><td class="num">4,666</td><td class="num">5,608</td><td class="num">6,784</td><td class="num">9,125</td><td class="num" style="opacity:.62">11,466</td><td class="num" style="opacity:.62">13,807</td></tr><tr><th class="num">1024</th><td class="num">5,641</td><td class="num">5,827</td><td class="num">6,250</td><td class="num">8,130</td><td class="num">10,479</td><td class="num" style="opacity:.62">12,829</td><td class="num" style="opacity:.62">15,178</td><td class="num" style="opacity:.62">17,528</td></tr></tbody></table></div>
+      <p style="color:var(--muted);font-size:.85rem;margin-top:6px">Microseconds per layer. Full-opacity
+        cells sit on measured grid points; faded cells are interpolated by the simulator&rsquo;s own
+        lookup. Measured KV points: 16, 64, 256, 1,024, 4,096, 16,384, 65,536, 131,072, 262,144, 524,288, 1,048,576.</p>
+    </section>
+
+    <section class="card" id="where">
+      <h2><span class="num">3</span>Where the time goes</h2>
+      <p class="lead">The same layer, decomposed &mdash; batch 64, across context.</p>
+      <div class="fig">
+        <div class="cap">Composition of one MoE decoder layer at decode batch&nbsp;64. Percentage above
+          each bar is attention&rsquo;s share.</div>
+        <svg viewBox="0 0 900 330" role="img" aria-label="Where the time goes inside one MoE decoder layer at decode batch 64">
+        <rect x="82.2" y="263.4" width="53.0" height="10.6" fill="#2a78d6" rx="2"/>
+        <rect x="82.2" y="138.3" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="82.2" y="138.0" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="108.8" y="130.0" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">9%</text>
+        <text x="108.8" y="294.0" text-anchor="middle" font-size="11" fill="#647083">1K</text>
+        <rect x="167.7" y="262.6" width="53.0" height="11.4" fill="#2a78d6" rx="2"/>
+        <rect x="167.7" y="137.5" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="167.7" y="137.3" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="194.2" y="129.3" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">10%</text>
+        <text x="194.2" y="294.0" text-anchor="middle" font-size="11" fill="#647083">4K</text>
+        <rect x="253.2" y="261.2" width="53.0" height="12.8" fill="#2a78d6" rx="2"/>
+        <rect x="253.2" y="136.1" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="253.2" y="135.9" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="279.8" y="127.9" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">11%</text>
+        <text x="279.8" y="294.0" text-anchor="middle" font-size="11" fill="#647083">16K</text>
+        <rect x="338.7" y="255.1" width="53.0" height="18.9" fill="#2a78d6" rx="2"/>
+        <rect x="338.7" y="130.0" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="338.7" y="129.7" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="365.2" y="121.7" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">14%</text>
+        <text x="365.2" y="294.0" text-anchor="middle" font-size="11" fill="#647083">64K</text>
+        <rect x="424.2" y="247.6" width="53.0" height="26.4" fill="#2a78d6" rx="2"/>
+        <rect x="424.2" y="122.5" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="424.2" y="122.2" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="450.8" y="114.2" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">18%</text>
+        <text x="450.8" y="294.0" text-anchor="middle" font-size="11" fill="#647083">128K</text>
+        <rect x="509.7" y="233.0" width="53.0" height="41.0" fill="#2a78d6" rx="2"/>
+        <rect x="509.7" y="107.9" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="509.7" y="107.6" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="536.2" y="99.6" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">26%</text>
+        <text x="536.2" y="294.0" text-anchor="middle" font-size="11" fill="#647083">256K</text>
+        <rect x="595.2" y="203.7" width="53.0" height="70.3" fill="#2a78d6" rx="2"/>
+        <rect x="595.2" y="78.5" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="595.2" y="78.3" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="621.8" y="70.3" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">37%</text>
+        <text x="621.8" y="294.0" text-anchor="middle" font-size="11" fill="#647083">512K</text>
+        <rect x="680.7" y="145.4" width="53.0" height="128.6" fill="#2a78d6" rx="2"/>
+        <rect x="680.7" y="20.2" width="53.0" height="123.1" fill="#008300" rx="2"/>
+        <rect x="680.7" y="20.0" width="53.0" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="707.2" y="12.0" text-anchor="middle" font-size="11" font-weight="700" fill="#172033">51%</text>
+        <text x="707.2" y="294.0" text-anchor="middle" font-size="11" fill="#647083">1M</text>
+        <line x1="66" y1="276" x2="750" y2="276" stroke="#c7ced9" stroke-width="1"/>
+        <text x="408" y="316" text-anchor="middle" font-size="12" fill="#647083">KV context length per sequence &mdash; label above each bar is attention&rsquo;s share</text>
+        <rect x="764" y="21" width="12" height="12" rx="3" fill="#2a78d6"/>
+        <text x="782" y="31" font-size="11" fill="#43506a">sparse attention (MLA + indexer)</text>
+        <rect x="764" y="43" width="12" height="12" rx="3" fill="#008300"/>
+        <text x="782" y="53" font-size="11" fill="#43506a">MoE (gate + experts + shared)</text>
+        <rect x="764" y="65" width="12" height="12" rx="3" fill="#e87ba4"/>
+        <text x="782" y="75" font-size="11" fill="#43506a">2 x RMSNorm</text>
+        </svg>
+      </div>
+      <p>At short context the layer is an <b>MoE</b> layer with some attention attached: the
+        256-expert block dominates and the picture matches conventional MoE intuition. At long
+        context that inverts completely &mdash; the MoE block does not change at all (it depends on
+        token count, not context), while attention grows without bound.</p>
+      <div class="callout win"><b>Why this matters for a cluster.</b> The MoE block is what expert
+        parallelism exists to spread. If long-context serving is attention-bound, adding EP ranks buys
+        progressively less, and the binding constraint moves to KV-cache bandwidth and capacity instead.</div>
+    </section>
+
+    <section class="card" id="cross">
+      <h2><span class="num">4</span>The crossover</h2>
+      <p class="lead">The context at which attention first costs more than the whole MoE block.</p>
+      <table><thead><tr><th class="num">decode batch</th><th class="num">crossover context</th></tr></thead>
+        <tbody><tr><td class="num">1</td><td class="num">1K</td></tr><tr><td class="num">2</td><td class="num">512K</td></tr><tr><td class="num">4</td><td class="num">&gt; 1M</td></tr><tr><td class="num">8</td><td class="num">&gt; 1M</td></tr><tr><td class="num">16</td><td class="num">&gt; 1M</td></tr><tr><td class="num">32</td><td class="num">&gt; 1M</td></tr><tr><td class="num">64</td><td class="num">1M</td></tr><tr><td class="num">128</td><td class="num">1M</td></tr><tr><td class="num">256</td><td class="num">256K</td></tr><tr><td class="num">512</td><td class="num">128K</td></tr><tr><td class="num">1024</td><td class="num">64K</td></tr></tbody></table>
+      <p>The crossover is <b>not monotonic in batch</b> &mdash; it is U-shaped, and the shape falls
+        straight out of how the two blocks scale.</p>
+      <ul class="notes">
+        <li><b>Batch 1&ndash;2: attention-bound almost immediately.</b> A single token activates only
+          8 of the 256 experts, so the MoE block is tiny and even a short scan outweighs it.</li>
+        <li><b>Batch 4&ndash;32: MoE-bound throughout.</b> Here each added token still lights up more
+          experts, so MoE cost climbs steeply with batch while the scan is still small. Attention never
+          catches up inside a 1M context.</li>
+        <li><b>Batch &ge;64: attention-bound again, and progressively sooner.</b> Once the batch is large
+          enough to activate all 256 experts, MoE <b>saturates</b> &mdash; extra tokens are nearly
+          free for it. The indexer scan keeps growing with batch&nbsp;&times;&nbsp;context, so the
+          crossover marches from 1M at batch&nbsp;64 down to 64K at batch&nbsp;1024.</li>
+      </ul>
+      <div class="callout"><b>The operating regime that matters is the third one.</b> Any deployment
+        serving many concurrent users at long context sits there, and in it the decoder layer is
+        attention-bound and getting worse with both knobs at once.</div>
+      <h3>The first three layers are different</h3>
+      <p>V3.2 sets <code class="k">first_k_dense_replace</code>&nbsp;=&nbsp;3, so layers 0&ndash;2
+        run a dense MLP instead of the MoE block &mdash; 58 of 61 layers are MoE. A dense
+        layer at batch&nbsp;64 / 1M context costs 2,940.9 &micro;s, versus 5,518.8 &micro;s for a MoE layer.</p>
+      <div class="scroll"><table><thead><tr><th>batch \ context</th><th class="num">1K</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">271</td><td class="num">279</td><td class="num">282</td><td class="num">284</td><td class="num">291</td><td class="num">300</td><td class="num">318</td><td class="num">353</td></tr><tr><th class="num">2</th><td class="num">274</td><td class="num">281</td><td class="num">284</td><td class="num">293</td><td class="num">300</td><td class="num">313</td><td class="num">339</td><td class="num">391</td></tr><tr><th class="num">4</th><td class="num">281</td><td class="num">287</td><td class="num">292</td><td class="num">301</td><td class="num">314</td><td class="num">335</td><td class="num">379</td><td class="num">464</td></tr><tr><th class="num">8</th><td class="num">288</td><td class="num">297</td><td class="num">304</td><td class="num">320</td><td class="num">338</td><td class="num">380</td><td class="num">455</td><td class="num">608</td></tr><tr><th class="num">16</th><td class="num">310</td><td class="num">320</td><td class="num">326</td><td class="num">359</td><td class="num">397</td><td class="num">476</td><td class="num">626</td><td class="num">937</td></tr><tr><th class="num">32</th><td class="num">353</td><td class="num">367</td><td class="num">390</td><td class="num">452</td><td class="num">529</td><td class="num">682</td><td class="num">990</td><td class="num">1,602</td></tr><tr><th class="num">64</th><td class="num">397</td><td class="num">412</td><td class="num">443</td><td class="num">576</td><td class="num">737</td><td class="num">1,052</td><td class="num">1,684</td><td class="num">2,941</td></tr><tr><th class="num">128</th><td class="num">543</td><td class="num">571</td><td class="num">628</td><td class="num">863</td><td class="num">1,154</td><td class="num">1,742</td><td class="num">2,901</td><td class="num">5,235</td></tr><tr><th class="num">256</th><td class="num">863</td><td class="num">912</td><td class="num">1,022</td><td class="num">1,496</td><td class="num">2,082</td><td class="num">3,245</td><td class="num">5,575</td><td class="num" style="opacity:.62">7,905</td></tr><tr><th class="num">512</th><td class="num">1,632</td><td class="num">1,725</td><td class="num">1,946</td><td class="num">2,888</td><td class="num">4,065</td><td class="num">6,406</td><td class="num" style="opacity:.62">8,746</td><td class="num" style="opacity:.62">11,087</td></tr><tr><th class="num">1024</th><td class="num">2,998</td><td class="num">3,184</td><td class="num">3,607</td><td class="num">5,487</td><td class="num">7,837</td><td class="num" style="opacity:.62">10,186</td><td class="num" style="opacity:.62">12,536</td><td class="num" style="opacity:.62">14,885</td></tr></tbody></table></div>
+    </section>
+
+    <section class="card" id="prefill">
+      <h2><span class="num">5</span>Prefill</h2>
+      <p class="lead">One chunk of a prompt, against how much of that prompt is already cached.</p>
+      <p>Prefill has the same two-term structure, with the chunk size playing the role batch plays at
+        decode: the indexer scans the already-cached KV once per query token in the chunk.</p>
+      <div class="scroll"><table><thead><tr><th>chunk \ KV already cached</th><th class="num">0</th><th class="num">1K</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">16</th><td class="num">1,484</td><td class="num">1,516</td><td class="num">1,744</td><td class="num">1,619</td><td class="num">2,008</td><td class="num">2,313</td><td class="num">3,040</td><td class="num">4,327</td><td class="num">7,852</td></tr><tr><th class="num">64</th><td class="num">2,865</td><td class="num">2,899</td><td class="num">3,130</td><td class="num">3,005</td><td class="num">3,392</td><td class="num">3,735</td><td class="num">4,595</td><td class="num">6,174</td><td class="num">9,314</td></tr><tr><th class="num">256</th><td class="num">3,327</td><td class="num">3,447</td><td class="num">3,746</td><td class="num">3,632</td><td class="num">4,170</td><td class="num">4,533</td><td class="num">5,391</td><td class="num">9,288</td><td class="num">20,480</td></tr><tr><th class="num">1024</th><td class="num">4,355</td><td class="num">4,811</td><td class="num">5,245</td><td class="num">5,345</td><td class="num">6,694</td><td class="num">8,615</td><td class="num">12,489</td><td class="num">20,082</td><td class="num">56,757</td></tr><tr><th class="num">2048</th><td class="num">6,202</td><td class="num">7,055</td><td class="num">7,284</td><td class="num">7,806</td><td class="num">10,665</td><td class="num">13,551</td><td class="num">20,428</td><td class="num">33,856</td><td class="num">105,863</td></tr></tbody></table></div>
+      <p style="color:var(--muted);font-size:.85rem;margin-top:6px">Microseconds per layer for one
+        chunked-prefill step. Rows are the chunk size; columns are how much KV the request already has.</p>
+    </section>
+
+    <section class="card" id="v4">
+      <h2><span class="num">6</span>Contrast with DeepSeek-V4</h2>
+      <p class="lead">The same measurement path, run against the V4 bundle from Part&nbsp;V.</p>
+      <p>V4&rsquo;s Sparse-MLA compresses KV <i>temporally</i> before selection, so its indexer works over
+        a compressed sequence and its decode attention is close to flat in context. Measured on B200
+        through this same lookup code, one V4 layer&rsquo;s attention at batch&nbsp;64 moves
+        <b>203.9&nbsp;&rarr;&nbsp;240.8&nbsp;&micro;s</b> from 8K to 128K &mdash; about <b>+18%</b>.
+        Over a comparable span (4K&nbsp;&rarr;&nbsp;128K) V3.2&rsquo;s attention moves
+        <b>287.8&nbsp;&rarr;&nbsp;612.6&nbsp;&micro;s</b> &mdash; <b>+113%</b> &mdash; and unlike V4 it
+        never levels off, reaching <b>2,816.3&nbsp;&micro;s at 1M</b>.</p>
+      <p style="color:var(--muted);font-size:.9rem">The two were profiled on different hardware
+        (V4 on B200, V3.2 on H200), so the absolute microseconds are not directly comparable. The
+        <i>shape</i> is the point: V4 is asymptotically flat in context, V3.2 asymptotically linear.</p>
+      <div class="callout"><b>Read this as a design trade, not a verdict.</b> V4 buys flat long-context
+        attention with a lossy temporal compression of the cache. V3.2 keeps every token addressable at
+        full fidelity and pays a scan to rank them. Which is better depends on whether your workload can
+        tolerate the compression &mdash; but they have genuinely different serving cost curves, and a
+        capacity plan built on one does not transfer to the other.</div>
+    </section>
+
+    <section class="card" id="method">
+      <h2><span class="num">7</span>Method &amp; caveats</h2>
+      <ul class="notes">
+        <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
+          DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
+          FlashMLA-sparse backend, <code class="k">enforce_eager</code>, tp1. No checkpoint weights are
+          downloaded &mdash; only kernel shapes and timings matter.</li>
+        <li><b>Composition.</b> Per-layer totals are assembled from the per-category CSVs by calling
+          LLMServingSim&rsquo;s own lookup functions, so these numbers are exactly what the simulator
+          replays, including its interpolation and its extrapolation past the profiled grid.</li>
+        <li><b>Compute-only.</b> Tensor- and expert-parallel collectives are costed by ASTRA-Sim, not by
+          these tables. At the tp1/ep1 configuration profiled here there are none, so the figures are
+          complete for that case &mdash; but a tp8/ep8 deployment adds communication on top.</li>
+        <li><b>MoE backend is Triton</b>, vLLM&rsquo;s own selection on SM90. A DeepGEMM-tuned deployment
+          would shift the MoE bars down and therefore move the crossover to <i>shorter</i> context, which
+          strengthens rather than weakens the conclusion.</li>
+        <li><b>Beyond 163,840 tokens the model is not numerically V3.2.</b> vLLM sizes the YaRN RoPE cache
+          as <code class="k">original_max_position_embeddings &times; factor</code> and ignores
+          <code class="k">max_position_embeddings</code>, so the profiling run raises
+          <code class="k">factor</code> to cover 1M positions. That changes the values in the cos/sin
+          cache, not the shape or cost of any kernel &mdash; timings are unaffected, and positions past
+          the trained range are meaningless for output quality regardless.</li>
+        <li><b>Faded table cells are interpolated</b>, not measured. The measured KV axis is
+          16, 64, 256, 1,024, 4,096, 16,384, 65,536, 131,072, 262,144, 524,288, 1,048,576.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      <p>Yang-gon Kim &middot; profiled via the <a href="../../index.html">LLMServingSim</a> DeepSeek-V3.2 profiling pipeline &middot; <a href="../../index.html">Report Archive</a></p>
+      <p>Related: <a href="../00_part1_characterization/report.html">Part&nbsp;I</a> &middot; <a href="../01_part2_prediction/report.html">Part&nbsp;II</a> &middot; <a href="../02_part3_cpu_kv_locality/report.html">Part&nbsp;III</a> &middot; <a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a> &middot; <a href="../04_part5_deepseekv4/report.html">Part&nbsp;V (V4 decoder layer, op by op)</a>. Mechanism: DeepSeek-V3.2 / vLLM <code class="k">deepseek_v2</code> DSA source. Measurements: this project (H200, vLLM layerwise profile).</p>
+    </div>
+  </main>
+</div>
+
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>
