@@ -65,7 +65,8 @@
     <a href="#prefill">5 &middot; Prefill</a>
     <a href="#v4">6 &middot; Contrast with V4</a>
     <a href="#gather">7 &middot; Inside the indexer: the gather</a>
-    <a href="#method">8 &middot; Method &amp; caveats</a>
+    <a href="#tiers">8 &middot; Gather across memory tiers</a>
+    <a href="#method">9 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -513,8 +514,100 @@
         &ldquo;Sparse attention is cheap&rdquo; is true only of the gather.</div>
     </section>
 
+    
+    <section class="card" id="tiers">
+      <h2><span class="num">8</span>The gather across memory tiers</h2>
+      <p class="lead">&sect;7 measured the gather in HBM. Long-context KV is the obvious thing
+        to offload &mdash; it is huge and each entry is touched rarely &mdash; so this asks: what
+        does the <i>same</i> gather cost if the latents live in CPU DRAM, or are read by the GPU
+        over PCIe? Measured with a standalone microbenchmark (same 2048&times;656&nbsp;B/query
+        shape), one line per tier.</p>
+      <div class="fig">
+        <div class="cap">Effective gather bandwidth vs batch, by where the KV pool lives. HBM
+          saturates near 1&nbsp;TB/s; the PCIe path is a flat ~21&nbsp;GB/s wall.</div>
+        <svg viewBox="0 0 900 420" role="img" aria-label="Effective gather bandwidth versus batch, by memory tier">
+        <line x1="70" y1="368.0" x2="732" y2="368.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="372.0" text-anchor="end" font-size="11" fill="#647083">10 GB/s</text>
+        <line x1="70" y1="315.9" x2="732" y2="315.9" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="319.9" text-anchor="end" font-size="11" fill="#647083">20 GB/s</text>
+        <line x1="70" y1="247.1" x2="732" y2="247.1" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="251.1" text-anchor="end" font-size="11" fill="#647083">50 GB/s</text>
+        <line x1="70" y1="195.0" x2="732" y2="195.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="199.0" text-anchor="end" font-size="11" fill="#647083">100 GB/s</text>
+        <line x1="70" y1="142.9" x2="732" y2="142.9" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="146.9" text-anchor="end" font-size="11" fill="#647083">200 GB/s</text>
+        <line x1="70" y1="74.1" x2="732" y2="74.1" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="78.1" text-anchor="end" font-size="11" fill="#647083">500 GB/s</text>
+        <line x1="70" y1="22.0" x2="732" y2="22.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="62" y="26.0" text-anchor="end" font-size="11" fill="#647083">1000 GB/s</text>
+        <line x1="70.0" y1="368" x2="70.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="70.0" y="388" text-anchor="middle" font-size="11" fill="#647083">1</text>
+        <line x1="268.6" y1="368" x2="268.6" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="268.6" y="388" text-anchor="middle" font-size="11" fill="#647083">8</text>
+        <line x1="467.2" y1="368" x2="467.2" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="467.2" y="388" text-anchor="middle" font-size="11" fill="#647083">64</text>
+        <line x1="599.6" y1="368" x2="599.6" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="599.6" y="388" text-anchor="middle" font-size="11" fill="#647083">256</text>
+        <line x1="732.0" y1="368" x2="732.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="732.0" y="388" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+        <line x1="70" y1="368" x2="732" y2="368" stroke="#c7ced9" stroke-width="1"/>
+        <text x="401" y="406" text-anchor="middle" font-size="12" fill="#647083">decode batch (queries)</text>
+        <path d="M70.0,142.2 L268.6,48.4 L467.2,31.1 L599.6,28.5 L732.0,27.5" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="70.0" cy="142.2" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="268.6" cy="48.4" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="467.2" cy="31.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="599.6" cy="28.5" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="732.0" cy="27.5" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <text x="744.0" y="31.5" font-size="12" font-weight="700" fill="#2a78d6">GPU HBM</text>
+        <path d="M70.0,178.2 L268.6,158.9 L467.2,203.4 L599.6,241.6 L732.0,246.0" fill="none" stroke="#008300" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="70.0" cy="178.2" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="268.6" cy="158.9" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="467.2" cy="203.4" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="599.6" cy="241.6" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="732.0" cy="246.0" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <text x="744.0" y="250.0" font-size="12" font-weight="700" fill="#008300">CPU DRAM</text>
+        <path d="M70.0,313.0 L268.6,310.8 L467.2,311.2 L599.6,311.2 L732.0,311.2" fill="none" stroke="#e87ba4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="70.0" cy="313.0" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="268.6" cy="310.8" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="467.2" cy="311.2" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="599.6" cy="311.2" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="732.0" cy="311.2" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <text x="744.0" y="315.2" font-size="12" font-weight="700" fill="#e87ba4">GPU &rarr; PCIe &rarr; host</text>
+        </svg>
+      </div>
+      <div class="scroll"><table><thead><tr><th>tier \ batch</th><th class="num">1</th><th class="num">8</th><th class="num">64</th><th class="num">256</th><th class="num">1024</th></tr></thead><tbody><tr><th>GPU HBM</th><td class="num">201.8</td><td class="num">704.1</td><td class="num">885.6</td><td class="num">917.6</td><td class="num">929.0</td></tr><tr><th>CPU DRAM</th><td class="num">125.0</td><td class="num">161.6</td><td class="num">89.4</td><td class="num">53.8</td><td class="num">50.7</td></tr><tr><th>GPU &rarr; PCIe &rarr; host</th><td class="num">20.8</td><td class="num">21.4</td><td class="num">21.3</td><td class="num">21.3</td><td class="num">21.3</td></tr></tbody></table></div>
+      <p style="color:var(--muted);font-size:.85rem;margin-top:6px">Effective gather bandwidth
+        (GB/s), bytes-gathered / time. CPU DRAM is a ~20-core cgroup slice of the host, not the
+        full dual-socket box; its batch-1/8 rows are cache-inflated, the batch&nbsp;&ge;256 rows
+        are the DRAM-bound steady state.</p>
+
+      <h3>Steady state (batch 1024)</h3>
+      <div class="scroll"><table><thead><tr><th>tier</th><th class="num">streaming copy</th><th class="num">gather</th><th class="num">scatter penalty</th><th class="num">vs HBM</th></tr></thead><tbody><tr><th>GPU HBM</th><td class="num">967.5</td><td class="num">929.0</td><td class="num">96%</td><td class="num">1&times;</td></tr><tr><th>CPU DRAM</th><td class="num">70.9</td><td class="num">50.7</td><td class="num">72%</td><td class="num">18&times; slower</td></tr><tr><th>GPU &rarr; PCIe &rarr; host</th><td class="num">30.1</td><td class="num">21.3</td><td class="num">71%</td><td class="num">44&times; slower</td></tr></tbody></table></div>
+      <p>Two things fall out, and the second is the one that matters for offloading:</p>
+      <ul class="notes">
+        <li><b>The scatter penalty is small &mdash; the tier is everything.</b> The gather runs at
+          71&ndash;96% of a matched <i>sequential</i> copy on every tier: a 656&nbsp;B record is
+          164 contiguous words, a big enough transaction that random placement barely hurts. So the
+          gather is not slow because it is scattered &mdash; it is exactly as fast as the memory it
+          lands on. (This refines &sect;7&rsquo;s &ldquo;18% of peak&rdquo;: that gap was op-shape
+          &mdash; a copy that also writes, vs the streaming scan &mdash; not randomness.)</li>
+        <li><b>Off-HBM is 18&ndash;44&times; slower.</b> The
+          <code class="k">a&nbsp;+&nbsp;N/b</code> model from &sect;7 holds per tier; only <b>b</b>
+          changes &mdash; <b>929&nbsp;GB/s</b> on HBM, <b>51&nbsp;GB/s</b> on CPU DRAM,
+          <b>21&nbsp;GB/s</b> over PCIe. The PCIe path is a flat wall (gen5&nbsp;&times;16
+          tops out ~35&nbsp;GB/s of read; the gather takes 60% of that).</li>
+      </ul>
+      <div class="callout warn"><b>Offloading the latents off HBM backfires.</b> A batch-1024 gather
+        is <b>1.48&nbsp;ms</b> in HBM but <b>64&nbsp;ms</b> over PCIe &mdash;
+        per layer, per decode step, so ~3.7&nbsp;s across 58&nbsp;MoE layers just to gather. DSA&rsquo;s
+        indexer already makes the <i>scan</i> the long-context cost (&sect;7); moving the gathered
+        latents to CPU DRAM would not relieve that, it would add a second, worse bottleneck. The
+        656&nbsp;B main latent has to stay in HBM; only colder tiers are plausible offload candidates,
+        and only if the scan that reads them can be pushed near the memory.</div>
+    </section>
+
         <section class="card" id="method">
-      <h2><span class="num">8</span>Method &amp; caveats</h2>
+      <h2><span class="num">9</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
