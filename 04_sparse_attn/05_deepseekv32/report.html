@@ -64,7 +64,8 @@
     <a href="#cross">4 &middot; The crossover</a>
     <a href="#prefill">5 &middot; Prefill</a>
     <a href="#v4">6 &middot; Contrast with V4</a>
-    <a href="#method">7 &middot; Method &amp; caveats</a>
+    <a href="#gather">7 &middot; Inside the indexer: the gather</a>
+    <a href="#method">8 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -363,8 +364,138 @@
         capacity plan built on one does not transfer to the other.</div>
     </section>
 
-    <section class="card" id="method">
-      <h2><span class="num">7</span>Method &amp; caveats</h2>
+
+    <section class="card" id="gather">
+      <h2><span class="num">7</span>Inside the indexer: the gather, isolated</h2>
+      <p class="lead">The wrapper number in &sect;2&ndash;&sect;3 hides three different kernels.
+        Pulling them apart with the layerwise-profile tree answers a specific question: how much
+        of the attention cost is <i>gathering</i> the selected top-2048, versus <i>finding</i> them?</p>
+      <p>DSA&rsquo;s attention block runs three phases per decode step. Their scaling is what
+        matters:</p>
+      <table><thead><tr><th>phase</th><th>kernel</th><th>what it does</th><th>scaling</th></tr></thead>
+        <tbody>
+          <tr><td><b>scan</b></td><td><code class="k">sm90_fp8_paged_mqa_logits</code></td>
+            <td>score every cached token</td><td class="num">O(batch &times; context)</td></tr>
+          <tr><td><b>top-k</b></td><td><code class="k">FilteredTopKUnifiedKernel&lt;&hellip;2048u&gt;</code></td>
+            <td>select the top 2048</td><td class="num">~O(batch &times; context)</td></tr>
+          <tr><td><b>gather</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse_kernel</code></td>
+            <td>read the 2048 &amp; attend</td><td class="num"><b>O(batch), flat in context</b></td></tr>
+        </tbody></table>
+      <div class="fig">
+        <div class="cap">The three phases at decode batch&nbsp;64, log&ndash;log. The gather is a flat
+          line &mdash; a fixed top-2048 &mdash; while the scan that feeds it climbs linearly.</div>
+        <svg viewBox="0 0 900 420" role="img" aria-label="Indexer scan, top-k and gather kernel time versus context at decode batch 64">
+        <line x1="66" y1="368.0" x2="750" y2="368.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="372.0" text-anchor="end" font-size="11" fill="#647083">1 &micro;s</text>
+        <line x1="66" y1="342.0" x2="750" y2="342.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="346.0" text-anchor="end" font-size="11" fill="#647083">2 &micro;s</text>
+        <line x1="66" y1="307.5" x2="750" y2="307.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="311.5" text-anchor="end" font-size="11" fill="#647083">5 &micro;s</text>
+        <line x1="66" y1="281.5" x2="750" y2="281.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="285.5" text-anchor="end" font-size="11" fill="#647083">10 &micro;s</text>
+        <line x1="66" y1="255.5" x2="750" y2="255.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="259.5" text-anchor="end" font-size="11" fill="#647083">20 &micro;s</text>
+        <line x1="66" y1="221.0" x2="750" y2="221.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="225.0" text-anchor="end" font-size="11" fill="#647083">50 &micro;s</text>
+        <line x1="66" y1="195.0" x2="750" y2="195.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="199.0" text-anchor="end" font-size="11" fill="#647083">100 &micro;s</text>
+        <line x1="66" y1="169.0" x2="750" y2="169.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="173.0" text-anchor="end" font-size="11" fill="#647083">200 &micro;s</text>
+        <line x1="66" y1="134.5" x2="750" y2="134.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="138.5" text-anchor="end" font-size="11" fill="#647083">500 &micro;s</text>
+        <line x1="66" y1="108.5" x2="750" y2="108.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="112.5" text-anchor="end" font-size="11" fill="#647083">1 ms</text>
+        <line x1="66" y1="82.5" x2="750" y2="82.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="86.5" text-anchor="end" font-size="11" fill="#647083">2 ms</text>
+        <line x1="66" y1="48.0" x2="750" y2="48.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="52.0" text-anchor="end" font-size="11" fill="#647083">5 ms</text>
+        <line x1="66" y1="22.0" x2="750" y2="22.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="58" y="26.0" text-anchor="end" font-size="11" fill="#647083">10 ms</text>
+        <line x1="66.0" y1="368" x2="66.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="66.0" y="388" text-anchor="middle" font-size="11" fill="#647083">4K</text>
+        <line x1="237.0" y1="368" x2="237.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="237.0" y="388" text-anchor="middle" font-size="11" fill="#647083">16K</text>
+        <line x1="408.0" y1="368" x2="408.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="408.0" y="388" text-anchor="middle" font-size="11" fill="#647083">64K</text>
+        <line x1="493.5" y1="368" x2="493.5" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="493.5" y="388" text-anchor="middle" font-size="11" fill="#647083">128K</text>
+        <line x1="579.0" y1="368" x2="579.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="579.0" y="388" text-anchor="middle" font-size="11" fill="#647083">256K</text>
+        <line x1="664.5" y1="368" x2="664.5" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="664.5" y="388" text-anchor="middle" font-size="11" fill="#647083">512K</text>
+        <line x1="750.0" y1="368" x2="750.0" y2="373" stroke="#c7ced9" stroke-width="1"/>
+        <text x="750.0" y="388" text-anchor="middle" font-size="11" fill="#647083">1M</text>
+        <line x1="66" y1="368" x2="750" y2="368" stroke="#c7ced9" stroke-width="1"/>
+        <text x="408" y="406" text-anchor="middle" font-size="12" fill="#647083">KV context length per sequence (decode batch 64)</text>
+        <path d="M66.0,271.1 L237.0,231.0 L408.0,182.4 L493.5,157.4 L579.0,131.8 L664.5,105.9 L750.0,80.0" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="271.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="237.0" cy="231.0" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="408.0" cy="182.4" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="493.5" cy="157.4" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="579.0" cy="131.8" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="664.5" cy="105.9" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="750.0" cy="80.0" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <text x="762.0" y="84.0" font-size="12" font-weight="700" fill="#2a78d6">scan (score all)</text>
+        <path d="M66.0,286.5 L237.0,268.2 L408.0,224.8 L493.5,207.3 L579.0,187.0 L664.5,165.2 L750.0,141.7" fill="none" stroke="#008300" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="286.5" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="237.0" cy="268.2" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="408.0" cy="224.8" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="493.5" cy="207.3" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="579.0" cy="187.0" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="664.5" cy="165.2" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <circle cx="750.0" cy="141.7" r="4" fill="#008300" stroke="#fff" stroke-width="2"/>
+        <text x="762.0" y="145.7" font-size="12" font-weight="700" fill="#008300">top-k select</text>
+        <path d="M66.0,193.2 L237.0,193.1 L408.0,193.1 L493.5,193.1 L579.0,193.2 L664.5,193.1 L750.0,193.2" fill="none" stroke="#e87ba4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="66.0" cy="193.2" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="237.0" cy="193.1" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="408.0" cy="193.1" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="493.5" cy="193.1" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="579.0" cy="193.2" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="664.5" cy="193.1" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <circle cx="750.0" cy="193.2" r="4" fill="#e87ba4" stroke="#fff" stroke-width="2"/>
+        <text x="762.0" y="197.2" font-size="12" font-weight="700" fill="#e87ba4">gather + attend</text>
+        </svg>
+      </div>
+
+      <h3>Gather time alone (&micro;s)</h3>
+      <div class="scroll"><table><thead><tr><th>batch \ context</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">11.6</td><td class="num">11.6</td><td class="num">11.5</td><td class="num">11.5</td><td class="num">11.6</td><td class="num">11.5</td><td class="num">11.5</td></tr><tr><th class="num">8</th><td class="num">24.7</td><td class="num">24.5</td><td class="num">24.4</td><td class="num">24.6</td><td class="num">24.6</td><td class="num">24.5</td><td class="num">24.6</td></tr><tr><th class="num">64</th><td class="num">104.9</td><td class="num">105.3</td><td class="num">105.1</td><td class="num">105.2</td><td class="num">104.9</td><td class="num">105.2</td><td class="num">105.0</td></tr><tr><th class="num">256</th><td class="num">411.9</td><td class="num">411.4</td><td class="num">411.6</td><td class="num">410.8</td><td class="num">411.4</td><td class="num">411.1</td><td class="num">&mdash;</td></tr><tr><th class="num">1024</th><td class="num">1,596.7</td><td class="num">1,591.6</td><td class="num">1,590.2</td><td class="num">1,589.3</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">&mdash;</td></tr></tbody></table></div>
+      <p><code class="k">flash_fwd_splitkv_mla_fp8_sparse_kernel</code>, per-call GPU time, averaged
+        over 3 forwards. <b>Flat in context to within 0.5%</b> at every batch &mdash; exactly what
+        &ldquo;attend over a fixed top-2048&rdquo; predicts &mdash; and linear in batch.</p>
+
+      <h3>Does a simple <code class="k">a&nbsp;+&nbsp;N/b</code> model fit?</h3>
+      <p>The gather reads, per query, the 2048 selected main-MLA latents at 656&nbsp;B each (the
+        <code class="k">fp8_ds_mla</code> layout) = <b>1.34&nbsp;MB/query</b>, and that
+        scales with batch, not context. Fitting <code class="k">gather(B) = a + N/b</code> with
+        <code class="k">N = B &times; 1.34&nbsp;MB</code> gives a clean line (&plusmn;1% in
+        the saturated regime):</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">870&nbsp;GB/s</div><div class="l">fitted <b>b</b> &mdash; effective gather bandwidth (<b>18%</b> of the H200&rsquo;s 4.8&nbsp;TB/s peak)</div></div>
+        <div class="kpi"><div class="v">10.8&nbsp;&micro;s</div><div class="l">fitted <b>a</b> &mdash; the fixed intercept (see the caveat)</div></div>
+        <div class="kpi"><div class="v">4.15&nbsp;TB/s</div><div class="l">the <b>scan</b>&rsquo;s bandwidth for contrast (86% of peak) &mdash; same HBM, contiguous</div></div>
+      </div>
+      <div class="callout win"><b>b makes sense &mdash; as a gather.</b> 870&nbsp;GB/s is only 18%
+        of peak, but that is the signature of a <b>scatter</b>: each query pulls 2048 non-contiguous
+        656&nbsp;B latents chosen by the indexer, and random HBM access runs far below streaming peak.
+        The contiguous scan on the same memory reaches 4.15&nbsp;TB/s (86% of peak) &mdash; a 4.8&times;
+        efficiency gap between reading <i>scattered</i> and reading <i>in order</i>. (One caveat: this
+        kernel gathers <i>and</i> attends, so b folds the MLA attend compute into the number &mdash; it
+        is an effective throughput, not raw DRAM bandwidth.)</div>
+      <div class="callout warn"><b>a does NOT make sense as HBM access latency.</b> Real HBM latency is
+        a few hundred nanoseconds; the fitted 10.8&nbsp;&micro;s is 30&ndash;100&times; that. It is
+        <b>kernel launch plus the small-batch occupancy floor</b>, not memory latency. The batch-1 point
+        proves it: one query gathers 1.34&nbsp;MB, which at peak bandwidth is ~0.3&nbsp;&micro;s
+        of transfer, yet the measured batch-1 gather is <b>11.5&nbsp;&micro;s</b>&hellip; an order of
+        magnitude of pure overhead, because a single query cannot fill the GPU.</div>
+      <div class="callout"><b>Why the gather is not the story.</b> At batch&nbsp;64, 1M context the
+        gather is <b>105.0&nbsp;&micro;s</b> while the scan that finds those 2048 tokens is
+        <b>2,134&nbsp;&micro;s</b> &mdash; <b>20&times; more</b>. DSA&rsquo;s long-context cost
+        is <i>finding</i> the top-2048 (a linear scan), not <i>reading</i> them (a bounded, flat gather).
+        &ldquo;Sparse attention is cheap&rdquo; is true only of the gather.</div>
+    </section>
+
+        <section class="card" id="method">
+      <h2><span class="num">8</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
