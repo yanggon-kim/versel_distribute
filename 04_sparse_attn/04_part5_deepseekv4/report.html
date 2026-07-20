@@ -585,6 +585,41 @@
         expert-selection <b>locality</b> (<a href="../03_part4_moe_locality/report.html">Part&nbsp;IV</a>)
         translates into real GPU savings.</p>
 
+      <h3>Decoder-layer latency vs concurrent users (decode, composed from the grid)</h3>
+      <p>Putting the sweeps together: one CSA decoder layer's decode-step latency at batch
+        <code class="k">B</code> concurrent users =
+        attention(<code class="k">n_decode=B, kv</code>) + MoE(<code class="k">tokens=B</code>,
+        expected activated experts) + ~28&nbsp;&micro;s mHC. All cells below are measured rows
+        (&micro;s, tp8 shard shapes):</p>
+      <table class="mc">
+        <thead><tr><th class="num">B (users)</th><th class="num">Attn @4K</th><th class="num">Attn @16K</th><th class="num">Attn @64K</th><th class="num">Attn @128K</th><th class="num">MoE (E<sub>act</sub>)</th><th class="num">mHC</th><th class="num">Layer total</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="num">131.0</td><td class="num">133.0</td><td class="num">135.4</td><td class="num">138.9</td><td class="num">225 (8)</td><td class="num">28</td><td class="num">392 @128K</td></tr>
+          <tr><td class="num">2</td><td class="num">131.8</td><td class="num">133.9</td><td class="num">136.4</td><td class="num">140.7</td><td class="num">225 (8)</td><td class="num">28</td><td class="num">394 @128K</td></tr>
+          <tr><td class="num">4</td><td class="num">132.1</td><td class="num">134.3</td><td class="num">138.6</td><td class="num">142.3</td><td class="num">280 (16)</td><td class="num">28</td><td class="num">451 @128K</td></tr>
+          <tr><td class="num">8</td><td class="num">133.0</td><td class="num">135.4</td><td class="num">139.3</td><td class="num">143.0</td><td class="num">382 (32)</td><td class="num">28</td><td class="num">553 @128K</td></tr>
+          <tr><td class="num">16</td><td class="num">136.0</td><td class="num">138.4</td><td class="num">144.3</td><td class="num">151.8</td><td class="num">580 (64)</td><td class="num">28</td><td class="num">760 @128K</td></tr>
+          <tr><td class="num">32</td><td class="num">142.1</td><td class="num">146.1</td><td class="num">156.3</td><td class="num">165.1</td><td class="num">989 (128)</td><td class="num">28</td><td class="num">1,182 @128K</td></tr>
+          <tr class="hi"><td class="num">64</td><td class="num">152.5</td><td class="num">158.3</td><td class="num">177.1</td><td class="num">191.5</td><td class="num">1,811 (256)</td><td class="num">28</td><td class="num">2,030 @128K</td></tr>
+          <tr><td class="num">128</td><td class="num">172.7</td><td class="num">180.5</td><td class="num">205.3</td><td class="num">&mdash;</td><td class="num">1,818 (256)</td><td class="num">28</td><td class="num">2,052 @64K</td></tr>
+          <tr><td class="num">256</td><td class="num">224.5</td><td class="num">239.8</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">1,828 (256)</td><td class="num">28</td><td class="num">2,096 @16K</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Sources: attention = <code class="k">tp8/attention.csv</code> pure-decode rows
+        (<code class="k">pc=0, kvp=0</code>); MoE = <code class="k">tp1/moe.csv</code> at tokens=B with
+        E<sub>act</sub> = expected distinct activated experts
+        (384&middot;(1&minus;(1&minus;1/384)<sup>6B</sup>)) snapped to the measured grid; mHC is the
+        batch-insensitive ~28&nbsp;&micro;s glue. "&mdash;" = grid corner not measured (the simulator
+        extrapolates there). Note this is a <i>decode-only</i> composition &mdash; unlike the
+        480.7&nbsp;&micro;s snapshot in <a href="#table">&sect;5</a>, which was a mixed prefill-8 +
+        decode-2 batch. Three readings: the layer is <b>MoE-bound at every batch size</b> (57%&rarr;87%
+        of the total); attention stays nearly flat in both B and context; and once the expert set
+        saturates (B&nbsp;&asymp;&nbsp;64, E<sub>act</sub>&nbsp;=&nbsp;256) extra users are almost free
+        &mdash; per-user cost collapses from 392&nbsp;&micro;s (B=1) to ~8&nbsp;&micro;s (B=256).
+        Cross-check: 392&nbsp;&micro;s &times; 61 layers + LM&nbsp;head&nbsp;268 + sampler&nbsp;37
+        &asymp; 24.2&nbsp;ms/token, vs 23.8&nbsp;ms TPOT measured end-to-end in LLMServingSim at small
+        batch &mdash; the composition closes within 2%.</p>
+
       <h3>The one-time tax: LM head</h3>
       <p>Outside the layer stack, the LM head (hidden 7168 &rarr; 129,280-vocab logits) costs
         <b>~268&nbsp;&micro;s per iteration</b> and the sampler ~37&nbsp;&micro;s. Per layer that is nothing, but
