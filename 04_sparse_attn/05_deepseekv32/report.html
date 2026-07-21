@@ -1557,6 +1557,40 @@
         most TOPS</b> &mdash; the GPU while keys are HBM-resident, the base die once they spill (where the
         GPU&rsquo;s alternative collapses to a 2.74 ms UCIe-streamed scan and even 200 TOPS wins).</div>
 
+      <h3>Partial offload: split the indexer by arithmetic intensity (&ldquo;S1.75&rdquo;)</h3>
+      <p>S2 failed because it moved the <i>whole</i> indexer &mdash; including the AI=124 scan &mdash; onto
+        a compute-poor die. But the kernel table (&sect;8) says the indexer is not one kernel; it is three,
+        with wildly different compute-per-byte:</p>
+      <div class="scroll"><table>
+        <tr><th>Indexer sub-kernel</th><th class="num">AI (FLOP/B)</th><th class="num">GPU &micro;s @b=37</th><th>NMP fit</th></tr>
+        <tr><td>q/k projections + k-norm (GEMMs)</td><td class="num">128</td><td class="num">~25</td><td>stays on GPU (compute)</td></tr>
+        <tr><td>scan (score every key)</td><td class="num">124</td><td class="num">159</td><td>the compute trap that sank S2</td></tr>
+        <tr><td><b>top-2048 select</b></td><td class="num"><b>~1.0</b></td><td class="num">46</td><td><b>the textbook NMP kernel</b></td></tr>
+      </table></div>
+      <p><b>S1.75 = S1.5 + base-die top-k.</b> The top-k reads the logits array (37&times;131072&times;~4 B
+        &asymp; 19 MB/layer), does about one compare per byte, and emits 8 KB of indices &mdash; a pure
+        data-reduction at AI&asymp;1 that a few GOPS handle. Better: its output <i>is the gather&rsquo;s
+        input</i>, so top-k and gather fuse on the die and the indices never visit the GPU at all. The GPU
+        scan writes logits to HBM as it already does; the die streams them up the TSVs (~4 &micro;s),
+        selects as scan tiles complete (visible tail ~5 &micro;s vs the GPU&rsquo;s 46 &micro;s kernel).
+        And since the 200 TOPS MAC array is now otherwise idle, a further increment &mdash;
+        <b>co-scan</b> &mdash; splits the key stream ~72:28 between GPU (bandwidth-bound, 4.15 TB/s) and
+        die (compute-bound, 200 TOPS), the two reading over <i>different</i> paths (PHY vs TSV), with the
+        die merging both logit streams: scan 159 &rarr; ~111 &micro;s.</p>
+      <div class="scroll"><table>
+        <tr><th>Design @ (128K, b=37/GPU)</th><th class="num">sim TPOT</th><th class="num">sim cluster tok/s</th><th class="num">sim vs B0</th><th class="num">analytic</th></tr>
+        <tr><td>S1.5 &mdash; base-die gather only</td><td class="num">52.07 ms</td><td class="num">5,685</td><td class="num">3.34&times;</td><td class="num">51.4 / 5,756</td></tr>
+        <tr><td><b>S1.75 &mdash; + base-die top-k</b></td><td class="num"><b>49.49 ms</b></td><td class="num"><b>5,981</b></td><td class="num"><b>3.51&times;</b></td><td class="num">48.9 / 6,051</td></tr>
+        <tr><td><b>S1.75 + co-scan @200 TOPS</b></td><td class="num"><b>46.74 ms</b></td><td class="num"><b>6,333</b></td><td class="num"><b>3.72&times;</b></td><td class="num">46.3 / 6,399</td></tr>
+        <tr><td><i>S2 full offload @600 TOPS (3&times; the thermal budget)</i></td><td class="num"><i>&mdash;</i></td><td class="num"><i>~6,447 (analytic)</i></td><td class="num"><i>3.79&times;</i></td><td class="num">45.9 / 6,447</td></tr>
+      </table></div>
+      <div class="callout win"><b>The allocation lesson, validated.</b> Splitting the indexer by
+        arithmetic intensity &mdash; AI&asymp;1 top-k and the gather always on the die, the AI=124 scan
+        shared in proportion to each engine&rsquo;s throughput &mdash; gets a 200 TOPS die to
+        <b>3.72&times; over stock (sim-validated, 37/37 concurrency)</b>, within 2% of what naive
+        full-offload needed 600 TOPS (~30 W, over budget) to reach. Same silicon, three times the
+        effective value, purely from putting each kernel on the engine whose roofline it fits.</div>
+
       <p><b>The keys-spill stress point &mdash; where the base-die compute becomes the difference.</b>
         Past b&nbsp;&asymp;&nbsp;37/GPU at 128K (or ~4&ndash;5 sessions at 1M), the keys themselves outgrow
         HBM and every design must stream them from LPDDR. At b=128/GPU (16 sessions/cube, 806 GB KV/GPU) the
