@@ -543,7 +543,7 @@
         BALANCED 256-expert routing the simulator assumes, so these numbers match &sect;2.</p>
 
       <h3>The layer at a glance</h3>
-      <div class="scroll"><table><thead><tr><th>block \ context</th><th class="num">4K</th><th class="num">128K</th><th class="num">1024K</th></tr></thead><tbody><tr><td>2&times; RMSNorm (input + post-attn)</td><td class="num">6.5&nbsp;&micro;s</td><td class="num">6.5&nbsp;&micro;s</td><td class="num">6.6&nbsp;&micro;s</td></tr><tr><td>Sparse attention block (MLA + indexer)</td><td class="num">292.2&nbsp;&micro;s</td><td class="num">610.3&nbsp;&micro;s</td><td class="num">2.81&nbsp;ms</td></tr><tr><td>MoE block (gate + 256 experts + shared)</td><td class="num">2.69&nbsp;ms</td><td class="num">2.69&nbsp;ms</td><td class="num">2.69&nbsp;ms</td></tr><tr><td><b>one decoder layer</b></td><td class="num"><b>2.99&nbsp;ms</b></td><td class="num"><b>3.31&nbsp;ms</b></td><td class="num"><b>5.51&nbsp;ms</b></td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>block \ context</th><th class="num">4K</th><th class="num">128K</th><th class="num">1024K</th></tr></thead><tbody><tr><td>2&times; RMSNorm (input + post-attn)</td><td class="num">5.2&nbsp;&micro;s</td><td class="num">5.3&nbsp;&micro;s</td><td class="num">5.3&nbsp;&micro;s</td></tr><tr><td>Sparse attention block (MLA + indexer)</td><td class="num">290.6&nbsp;&micro;s</td><td class="num">609.0&nbsp;&micro;s</td><td class="num">2.81&nbsp;ms</td></tr><tr><td>MoE block (gate + 256 experts + shared)</td><td class="num">2.66&nbsp;ms</td><td class="num">2.69&nbsp;ms</td><td class="num">2.69&nbsp;ms</td></tr><tr><td><b>one decoder layer</b></td><td class="num"><b>2.96&nbsp;ms</b></td><td class="num"><b>3.31&nbsp;ms</b></td><td class="num"><b>5.51&nbsp;ms</b></td></tr></tbody></table></div>
       <p>The three blocks scale completely differently with context. The MoE block is <b>flat</b>
         (~2.69&nbsp;ms &mdash; it depends on token count, not context) and the norms are
         negligible; <b>only the attention block grows</b>, and all of that growth is the indexer
@@ -555,17 +555,21 @@
       <p>The attention block decomposes cleanly &mdash; its kernels run essentially in sequence, so
         they sum to the block total (unlike DeepSeek-V4, whose kernels overlapped across four CUDA
         streams). The three highlighted rows are the DSA-specific phases from &sect;7:</p>
-      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th></tr></thead><tbody><tr><td>fused QKV-A projection</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">12.8</td><td class="num">2%</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">3.9</td><td class="num">1%</td></tr><tr><td>q_b projection (col-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">26.1</td><td class="num">4%</td></tr><tr><td>indexer q/k proj + k-norm</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">22.9</td><td class="num">4%</td></tr><tr style="background:#eaf2ff"><td><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm90_fp8_paged_mqa_logits</code></td><td class="num">272.5</td><td class="num">45%</td></tr><tr style="background:#eaf2ff"><td><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">70.6</td><td class="num">12%</td></tr><tr style="background:#eaf2ff"><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">105.2</td><td class="num">17%</td></tr><tr><td>MLA metadata / concat / combine</td><td><code class="k">get_mla_metadata + ConcatMLAQ + combine</code></td><td class="num">660.0</td><td class="num">108%</td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">41.1</td><td class="num">7%</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th></tr></thead><tbody><tr><td>fused QKV-A projection (hidden &rarr; q/kv latent)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">12.8</td><td class="num">2%</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">4.0</td><td class="num">1%</td></tr><tr><td>q_b projection (q latent &rarr; per-head query)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">19.4</td><td class="num">3%</td></tr><tr><td>indexer q/k proj + k-norm</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">22.8</td><td class="num">4%</td></tr><tr style="background:#eaf2ff"><td><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm90_fp8_paged_mqa_logits</code></td><td class="num">272.1</td><td class="num">45%</td></tr><tr style="background:#eaf2ff"><td><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">69.9</td><td class="num">11%</td></tr><tr style="background:#eaf2ff"><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">104.9</td><td class="num">17%</td></tr><tr><td>MLA q latent-absorb / metadata / combine</td><td><code class="k">ConcatMLAQ + get_mla_metadata + combine</code></td><td class="num">50.0</td><td class="num">8%</td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">41.0</td><td class="num">7%</td></tr></tbody></table></div>
       <p>The picture in one line: the indexer <b>scan</b> and <b>top-k</b> are the two kernels that
         grow with context; everything else &mdash; the projections, the gather, the FlashMLA attend
         &mdash; is fixed. At 128K the scan is already the single largest kernel in the layer.</p>
 
-      <div class="callout"><b>The MoE block is dispatch-bound at this batch.</b> Of its
-        2.69&nbsp;ms, the routed-expert grouped GEMM (<code class="k">fused_moe_kernel</code>,
-        &times;2 for up/down) is only 1.28&nbsp;ms; the rest is expert dispatch,
-        per-token quantization, and the many tiny per-expert launches that spreading 64&nbsp;tokens
-        across 256&nbsp;experts entails. This is why the MoE block barely moves once it saturates
-        (&sect;3): past 256 active experts it is bound by launch and dispatch overhead, not compute.</div>
+      <div class="callout"><b>The MoE block is the routed-expert GEMM &mdash; and it is bound by the
+        expert count, not the token count.</b> Of the 2.69&nbsp;ms MoE block,
+        <b>2.56&nbsp;ms (95%)</b> is the grouped GEMM over the routed experts
+        (<code class="k">fused_moe_kernel</code>, &times;2 for the up- and down-projections); gate,
+        shared expert and dispatch are the small remainder. Crucially that GEMM is <b>256 small
+        per-expert matmuls</b>: at batch&nbsp;64 each expert sees only ~2&nbsp;tokens, so the cost is
+        set by <i>how many experts are active</i>, not how many tokens flow through them. That is why
+        the MoE block barely grows once all 256&nbsp;experts light up (&sect;3): more tokens make each
+        per-expert matmul slightly larger but add no experts &mdash; the throughput sweet spot in
+        &sect;10.</div>
     </section>
 
         <section class="card" id="tiers">
