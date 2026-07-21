@@ -1484,11 +1484,22 @@
         <tr><td>S2 &mdash; full NPU scans, 400 TOPS/GPU</td><td class="num">409</td><td class="num">49.9</td><td class="num">5,928</td><td class="num">3.48&times;</td></tr>
         <tr><td>S2 &mdash; full NPU scans, 600 TOPS/GPU (near the TSV floor)</td><td class="num">344</td><td class="num">45.9</td><td class="num">6,447</td><td class="num">3.79&times;</td></tr>
       </table></div>
-      <div class="callout win"><b>Validated by simulation.</b> An actual LLMServingSim run of this
-        point (EP8-rank proxy, b=37 staggered-output steady state, 512 GiB config) measures
-        <b>steady TPOT 52.39 ms at full 37-way concurrency &rarr; 5,650 tok/s cluster = 3.32&times; the
-        stock baseline</b> &mdash; within 1.2% of the analytic S0 row and 1.9% of S1.5 (whose UCIe gather
-        is at parity with the all-HBM gather the simulator models).</div>
+      <div class="callout win"><b>Validated by simulation &mdash; all four designs.</b> Each design was
+        run through LLMServingSim at b=37/128K (EP8-rank proxy, staggered-output steady state, full 37-way
+        concurrency verified; S1/S1.5/S2 via profile-variant patching &mdash; the component model&rsquo;s
+        per-row deltas applied to <code class="k">attention.csv</code> in per-design perf bundles):
+        <div class="scroll"><table>
+          <tr><th>Design</th><th class="num">sim TPOT</th><th class="num">sim cluster tok/s</th><th class="num">sim vs B0</th><th class="num">analytic</th><th class="num">agreement</th></tr>
+          <tr><td>S0 all-HBM (unpatched)</td><td class="num">52.39 ms</td><td class="num">5,650</td><td class="num">3.32&times;</td><td class="num">51.8 / 5,717</td><td class="num">1.2%</td></tr>
+          <tr><td>S1 GPU-driven UCIe gather</td><td class="num">54.39 ms</td><td class="num">5,442</td><td class="num">3.20&times;</td><td class="num">53.7 / 5,515</td><td class="num">1.3%</td></tr>
+          <tr><td><b>S1.5 base-die gather</b></td><td class="num"><b>52.07 ms</b></td><td class="num"><b>5,685</b></td><td class="num"><b>3.34&times;</b></td><td class="num">51.4 / 5,756</td><td class="num">1.3%</td></tr>
+          <tr><td>S2 base-die scan @200 TOPS</td><td class="num">67.56 ms</td><td class="num">4,381</td><td class="num">2.57&times;</td><td class="num">62.2 / 4,761</td><td class="num">8%*</td></tr>
+        </table></div>
+        The predicted ordering <b>S1.5 &gt; S0 &asymp; S1 &gt; S2@200 survives the real scheduler</b>, and
+        S1.5 is the measured winner. The capacity-contrast run: the stock 141 GB config offered the same 37
+        requests <b>admits a maximum of 8 concurrent sessions</b> (exactly the predicted cap), taking 488 s
+        end-to-end vs ~60 s on the expanded configs. (*The sim&rsquo;s S2 keeps the full measured kernel
+        plus the engine-swap delta &mdash; conservative vs the analytic&rsquo;s restructured pipeline.)</div>
       <div class="callout"><b>Reading it &mdash; scan placement should be adaptive.</b> With keys
         HBM-resident, the GPU scans 640 MB/layer in 159 &micro;s (measured-rate); a base die needs
         <b>&gt;357 TOPS/GPU (~45 TOPS/cube, ~18 W)</b> to do better, so at feasible thermals the winning
