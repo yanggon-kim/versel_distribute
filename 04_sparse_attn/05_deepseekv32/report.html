@@ -1352,6 +1352,69 @@
         indexer&rsquo;s FLOP/token; (2) the key-capacity crossover from HBM to LPDDR; (3) UCIe bandwidth and
         random-access efficiency for the scattered 2048&times;656&nbsp;B gather. All three are answerable
         from the profile data this report is built on.</div>
+
+      <h3>Sizing it for real: a base-die NPU at (128K, batch 128)</h3>
+      <p>This subsection answers those three questions for a concrete configuration: <b>8 HBM stacks per
+        GPU, each stack carrying a base-die NPU and a 128&nbsp;GB LPDDR extension over a 128&nbsp;GB/s UCIe
+        link</b> (aggregate: 1&nbsp;TB of LPDDR at 1.024&nbsp;TB/s). Indexer keys live in HBM, main latents
+        in LPDDR; the base-die scan runs concurrently with the GPU&rsquo;s q_b projection. Operating point:
+        per-GPU decode batch 128 at 128K context &mdash; the measured grid point where the attention block
+        is <b>1,013&nbsp;&micro;s</b> (scan 540, top-k 99, gather+attend 207, projections/glue the rest) and
+        the full decoder layer is 3,983&nbsp;&micro;s.</p>
+
+      <p><b>First, the capacity ledger &mdash; which decides what the baseline even is.</b> At this point the
+        KV is 806&nbsp;GB (135&nbsp;GB keys + 671&nbsp;GB latents): an all-HBM GPU baseline is physically
+        impossible on any current part, so the honest GPU-only baseline must also use the LPDDR tier &mdash;
+        passively, with the GPU streaming keys across UCIe.</p>
+      <div class="scroll"><table>
+        <tr><th>What</th><th class="num">Size</th><th>Where</th><th>Fits?</th></tr>
+        <tr><td>Main latents, 128 &times; 128K &times; 656 B &times; 61</td><td class="num">671 GB</td><td>LPDDR (8&times;128 GB)</td><td>&#10003; 66% of 1 TB</td></tr>
+        <tr><td>Indexer keys, 128 &times; 128K &times; 132 B &times; 61</td><td class="num">135 GB</td><td>HBM (with 102 GB weights)</td><td>needs <b>&ge;~240 GB HBM</b> &mdash; 8&times;32&ndash;36 GB stacks; the stock 141 GB holds only ~37 key-resident 128K sessions</td></tr>
+      </table></div>
+
+      <p><b>The base-die NPU, component by component (per stack; &times;8 per GPU).</b> Precisions mirror the
+        GPU kernels it replaces (<code class="k">sm90_fp8_paged_mqa_logits</code> +
+        <code class="k">FilteredTopKUnifiedKernel</code>): fp8 e4m3 MACs, fp32 accumulate, fp16 logits, u32 indices.</p>
+      <div class="scroll"><table>
+        <tr><th>Component</th><th>Throughput</th><th>Buffers</th><th>Precision / notes</th></tr>
+        <tr><td>Key-stream DMA (TSV side)</td><td>&le;600 GB/s per stack available; the scan needs only ~0.35 GB/s per TOPS, so TSVs are never the limit</td><td>2&times;64 KB stream buffers</td><td>132 B key records, bank-interleaved, refresh-aware</td></tr>
+        <tr><td>fp8 MAC array (the scan)</td><td><b>25 TOPS/stack</b> (200 agg, ~10 W @0.05 pJ/op) baseline; 50&ndash;75 TOPS/stack for parity-and-beyond. Break-even vs the passive-LPDDR baseline: <b>&gt;16 TOPS/stack (127 agg = 124 FLOP/B &times; 1.024 TB/s)</b></td><td>&mdash;</td><td>64 heads &times; 128 dims dot + ReLU + head-weighted reduce = 16,384 op/(query,token); fp8&times;fp8&rarr;fp32</td></tr>
+        <tr><td>Query / gate-weight SRAM</td><td>refilled once per layer (1.05 MB over PHY, ~0.3 &micro;s)</td><td><b>~2.5 MB</b> (128 tok &times; 64 h &times; 128 B, double-buffered, + 16 KB head gates + scales)</td><td>fp8 queries, fp16 gates</td></tr>
+        <tr><td>Streaming top-2048 unit</td><td>comparator rate = logit rate (TOPS &divide; 16,384 &asymp; 12&ndash;37 Glogit/s)</td><td><b>~1.5 MB</b> (2048 &times; 6 B per query &times; 128)</td><td>threshold filter + insertion heap; fp16 score + u32 index</td></tr>
+        <tr><td>UCIe gather engine</td><td>128 GB/s link, ~64 outstanding 656 B reads, ~80% random efficiency</td><td>~256 KB reorder buffer</td><td>top-k index &rarr; LPDDR address; per-layer load 21.5 MB/stack</td></tr>
+        <tr><td>Latent return DMA (PHY)</td><td>172 MB/layer to GPU staging at 4.8 TB/s (36 &micro;s, hidden under the 210 &micro;s UCIe arrival)</td><td>tile FIFOs</td><td>tiles released to the attend as they land</td></tr>
+        <tr><td>Control</td><td>&mdash;</td><td>61-layer descriptor ring</td><td>ping-pong layer scheduling, sync flags with the GPU stream, ECC on SRAMs</td></tr>
+      </table></div>
+
+      <p><b>The system-level result.</b> Timeline model built from the measured components (scan streams
+        sequentially, so UCIe moves it at line rate for the passive baseline; the sparse gather gets ~80%
+        random efficiency; staged-latent attend ~100 &micro;s; MoE+norms 2,970 &micro;s; model step = 58 MoE
+        + 3 dense layers + head, which reproduces the measured all-HBM step to 0.2%):</p>
+      <div class="scroll"><table>
+        <tr><th>Design @ (128K, batch 128)</th><th class="num">scan (&micro;s)</th><th class="num">attn block (&micro;s)</th><th class="num">decoder layer (&micro;s)</th><th class="num">tok/s per GPU</th><th class="num">vs baseline</th></tr>
+        <tr><td>S0 &mdash; ideal all-HBM GPU (needs 908 GB HBM; reference only)</td><td class="num">540</td><td class="num">1,013</td><td class="num">3,983</td><td class="num">544</td><td class="num">1.45&times;</td></tr>
+        <tr><td><b>S1 &mdash; GPU-only + passive LPDDR (the real baseline)</b></td><td class="num">2,163</td><td class="num">2,747</td><td class="num">5,717</td><td class="num">375</td><td class="num">1.00&times;</td></tr>
+        <tr><td>S2 &mdash; base-die NPU, 100 TOPS agg</td><td class="num">2,746</td><td class="num">3,270</td><td class="num">6,240</td><td class="num">343</td><td class="num">0.91&times;</td></tr>
+        <tr><td>S2 &mdash; base-die NPU, <b>200 TOPS agg</b></td><td class="num">1,373</td><td class="num">1,897</td><td class="num">4,867</td><td class="num">442</td><td class="num"><b>1.18&times;</b></td></tr>
+        <tr><td>S2 &mdash; base-die NPU, 400 TOPS agg</td><td class="num">687</td><td class="num">1,211</td><td class="num">4,181</td><td class="num">517</td><td class="num">1.38&times;</td></tr>
+        <tr><td>S2 &mdash; base-die NPU, 600 TOPS agg</td><td class="num">458</td><td class="num">982</td><td class="num">3,952</td><td class="num">548</td><td class="num">1.46&times;</td></tr>
+      </table></div>
+
+      <div class="callout win"><b>Three readings of that table.</b>
+        (1) Against the baseline that can actually hold this workload, the NPU is worth <b>1.45&times; on the
+        DSA block and 1.18&times; on model throughput at a feasible 200 TOPS</b> (25 TOPS/stack, ~10 W), rising
+        to 2.27&times;/1.38&times; at 400. (2) At ~600 TOPS the design <b>fully recovers ideal-HBM performance
+        (548 vs 544 tok/s) while holding 806 GB of KV</b> &mdash; the LPDDR capacity tier becomes performance-free.
+        (3) The sparse gather is the term NMP wins by default: 2048&times;656 B over UCIe at 80% efficiency costs
+        210 &micro;s vs the GPU&rsquo;s own 207 &micro;s HBM gather &mdash; random 656 B records waste HBM&rsquo;s
+        bandwidth so thoroughly (~0.9 of 4.8 TB/s effective) that a 1 TB/s chiplet link matches it.</div>
+
+      <div class="callout warn"><b>Two honest footnotes.</b> The q_b overlap is real but small &mdash; it hides
+        25 &micro;s under a millisecond-scale scan. And the MoE-overlap lever from the sizing table above is
+        counterproductive at this batch: splitting 128 into two microbatches of 64 to hide the scan re-reads the
+        expert weights twice (2 &times; 2.69 ms vs 2.97 ms once), costing 2.4 ms of MoE to hide at most ~1.4 ms
+        of scan. It only pays where the scan outgrows the MoE re-read penalty &mdash; deep 512K&ndash;1M contexts
+        or microbatches &ge;256. Part VII quantifies what the freed capacity buys at the cluster level.</div>
     </section>
 
         <section class="card" id="method">
