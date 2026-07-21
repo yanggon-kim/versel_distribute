@@ -1428,6 +1428,29 @@
         re-reads expert weights (2&times;690 &micro;s at b=8 vs 381 &micro;s once) &mdash; counterproductive.
         The q_b overlap is real but hides only ~12 &micro;s.</div>
 
+      <p><b>Equal-batch isolation &mdash; what the NPU alone is worth (b=8/GPU, the baseline&rsquo;s own
+        batch).</b> Running our system at the stock cluster&rsquo;s b=8 removes the capacity advantage and
+        isolates the latency contribution. Measured components at b=8: scan 37.9, top-k 17.3, HBM gather
+        24.6, staged attend ~46 &micro;s; scan work 17.2 GFLOP/GPU/layer; UCIe gather 13.1 &micro;s:</p>
+      <div class="scroll"><table>
+        <tr><th>Design @ (128K, b=8/GPU, B=64)</th><th class="num">attn block (&micro;s)</th><th class="num">block vs B0</th><th class="num">TPOT (ms)</th><th class="num">cluster tok/s</th><th class="num">vs B0</th></tr>
+        <tr><td><b>B0 &mdash; stock 8&times;H200</b></td><td class="num">223</td><td class="num">1.00&times;</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.00&times;</td></tr>
+        <tr><td>S1 &mdash; ours without the NPU</td><td class="num">224</td><td class="num">0.99&times;</td><td class="num">37.7</td><td class="num">1,698</td><td class="num">1.00&times;</td></tr>
+        <tr><td>S2 &mdash; NPU, 100 TOPS/GPU</td><td class="num">299</td><td class="num">0.75&times;</td><td class="num">42.2</td><td class="num">1,515</td><td class="num">0.89&times;</td></tr>
+        <tr><td>S2 &mdash; NPU, 200 TOPS/GPU</td><td class="num">213</td><td class="num">1.05&times;</td><td class="num">37.0</td><td class="num">1,730</td><td class="num">1.02&times;</td></tr>
+        <tr><td>S2 &mdash; NPU, 400 TOPS/GPU</td><td class="num">170</td><td class="num">1.31&times;</td><td class="num">34.4</td><td class="num">1,861</td><td class="num">1.09&times;</td></tr>
+        <tr><td>S2 &mdash; NPU, 600 TOPS/GPU</td><td class="num">156</td><td class="num">1.43&times;</td><td class="num">33.5</td><td class="num">1,910</td><td class="num">1.12&times;</td></tr>
+        <tr><td><i>S2 limit (scan fully off the path)</i></td><td class="num"><i>128</i></td><td class="num"><i>1.74&times;</i></td><td class="num"><i>31.8</i></td><td class="num"><i>2,011</i></td><td class="num"><i>1.18&times;</i></td></tr>
+      </table></div>
+      <div class="callout"><b>Reading it.</b> At equal batch the NPU&rsquo;s attention-block win reaches
+        1.31&ndash;1.43&times; at 400&ndash;600 TOPS (faster UCIe gather 24.6&rarr;13 &micro;s + scan/top-k
+        off the GPU path), but the EP8 MoE (~64% of the layer at b=8) dilutes it to <b>+2% to +12% model
+        throughput</b> &mdash; and 100 TOPS is actively harmful. The decomposition is now explicit: of the
+        1.73&times; total at 200 TOPS (offered load B=128, table above), roughly <b>1.7&times; comes from
+        capacity</b> (serving 16 sessions/GPU instead of 8) and <b>~1.0&ndash;1.1&times; from the NPU&rsquo;s
+        latency contribution</b>; the NPU&rsquo;s latency term grows with context (the scan share) and
+        becomes decisive only in the keys-spill regime below.</div>
+
       <p><b>The keys-spill stress point &mdash; where the base-die compute becomes the difference.</b>
         Past b&nbsp;&asymp;&nbsp;37/GPU at 128K (or ~4&ndash;5 sessions at 1M), the keys themselves outgrow
         HBM and every design must stream them from LPDDR. At b=128/GPU (16 sessions/cube, 806 GB KV/GPU) the
