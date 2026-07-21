@@ -1256,6 +1256,52 @@
         number is the indexer&rsquo;s FLOP/token against a realizable near-DRAM MAC array (and whether a
         cheaper scoring approximation gets there).</div>
 
+      <h3>How many TOPS does the base die need?</h3>
+      <p>To make the base die&rsquo;s compute budget concrete: the scan does
+        <b>16,384&nbsp;fp8&nbsp;ops per (query,&nbsp;token)</b> (64 index heads &times; 128
+        dims), for a fixed arithmetic intensity of <b>124&nbsp;FLOP/byte</b>. On the GPU the scan
+        is bandwidth-bound &mdash; it lands at ~496&nbsp;TOPS not because it needs that much compute, but
+        because that is the rate that keeps pace with ~4&nbsp;TB/s of key streaming. So the requirement
+        falls straight out of the roofline:</p>
+      <div class="callout"><b>TOPS&nbsp;=&nbsp;arithmetic intensity &times; bandwidth&nbsp;=&nbsp;
+        124&nbsp;&times;&nbsp;BW.</b> To keep pace with the ~4&nbsp;TB/s the scan streams, the base
+        die needs <b>~496&nbsp;TOPS (fp8)</b> to match the GPU on the single-request critical
+        path (~596 to feed the full 4.8&nbsp;TB/s PHY). This is <b>shape-independent</b> &mdash;
+        both the ops and the bytes scale with batch&times;context, so the required <i>rate</i> does not
+        move with either knob.</div>
+      <p><b>The parallel q_b overlap barely helps.</b> q_b is genuinely independent (both it and the
+        indexer branch off the query latent and reconverge at the attend), but it is only ~19&nbsp;&micro;s
+        against the indexer&rsquo;s ~365&nbsp;&micro;s, so hiding it relaxes the budget ~5% &mdash; and it
+        is the <i>only</i> independent work in single-stream decode, since everything after the indexer
+        needs its indices.</p>
+
+      <h3>The real lever: overlap the indexer with a neighbour&rsquo;s MoE</h3>
+      <p>The requirement collapses if the base die scans microbatch&nbsp;B&rsquo;s keys while the GPU runs
+        microbatch&nbsp;A&rsquo;s MoE. It only has to finish within that MoE window, so
+        TOPS&nbsp;&asymp;&nbsp;indexer&nbsp;ops&nbsp;&divide;&nbsp;MoE&nbsp;time &mdash; and that is
+        <b>context-dependent</b>, because the indexer&rsquo;s share of the layer grows with context:</p>
+      <div class="scroll"><table><thead><tr><th class="num">context</th><th class="num">indexer % of layer</th><th class="num">base-die TOPS to hide it</th></tr></thead><tbody><tr><td class="num">128K</td><td class="num">11%</td><td class="num">47 TOPS</td></tr><tr><td class="num">512K</td><td class="num">31%</td><td class="num">187 TOPS</td></tr><tr><td class="num">1M</td><td class="num">47%</td><td class="num">373 TOPS</td></tr></tbody></table></div>
+      <div class="callout win"><b>Why the overlap is free &mdash; and the real payoff.</b> The indexer
+        reads <b>keys over the internal TSVs</b>; the MoE reads <b>expert weights over the external PHY</b>
+        (it is 92%-bandwidth-bound, &sect;8). Those are <i>different bandwidth domains</i>, so running them
+        concurrently costs nothing on the bandwidth side. In the all-GPU design both contend for the one
+        4.8&nbsp;TB/s PHY; moving the indexer to the base die <b>partitions the two onto separate paths</b>.
+        So the base-die compute you buy purchases both the LPDDR capacity tier <i>and</i> a free
+        indexer&nbsp;/&nbsp;MoE overlap &mdash; the point is not that the base die out-computes the GPU
+        (it cannot), but that it moves a PHY-contending, bandwidth-bound op onto an otherwise-idle path.</div>
+
+      <h3>Thermal reality &mdash; where the design lands</h3>
+      <p>A dedicated fp8 systolic array at ~0.05&nbsp;pJ/op sets the budget:</p>
+      <div class="scroll"><table><thead><tr><th class="num">fp8 throughput</th><th class="num">power @0.05 pJ/op</th><th>base-die budget</th></tr></thead><tbody><tr><td class="num">50 TOPS</td><td class="num">~2 W</td><td>feasible</td></tr><tr><td class="num">100 TOPS</td><td class="num">~5 W</td><td>feasible</td></tr><tr><td class="num">200 TOPS</td><td class="num">~10 W</td><td>feasible</td></tr><tr><td class="num">500 TOPS</td><td class="num">~25 W</td><td>over budget</td></tr></tbody></table></div>
+      <div class="callout warn"><b>Aim for ~100&ndash;200&nbsp;TOPS.</b> A base-die thermal budget under the
+        DRAM stack is realistically ~5&ndash;15&nbsp;W, i.e. <b>~100&ndash;200&nbsp;TOPS</b> &mdash; not the
+        ~496 needed for single-request latency parity at any context. But ~100&ndash;200&nbsp;TOPS
+        is enough to hide the indexer behind the MoE <b>up to ~256&ndash;512K context</b>, a large useful
+        envelope. Beyond that the scan&rsquo;s share outgrows what fits, and you either accept it partly on
+        the critical path (a latency-for-capacity trade &mdash; still a win, since without LPDDR that context
+        does not fit at all) or cut the indexer compute: fewer index heads, int4 / approximate scoring, or a
+        coarse first-pass filter before the full 128-dim dot.</div>
+
       <div class="callout win"><b>Verdict.</b> It is the right operation to offload &mdash; the only one
         that is simultaneously memory-bound, a reduction, and the generator of the LPDDR access itself. The
         real prize is the co-location (index and fetch on the same die), which removes a control round trip,
