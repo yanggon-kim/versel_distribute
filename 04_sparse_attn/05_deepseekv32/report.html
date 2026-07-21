@@ -65,8 +65,9 @@
     <a href="#prefill">5 &middot; Prefill</a>
     <a href="#v4">6 &middot; Contrast with V4</a>
     <a href="#gather">7 &middot; Inside the indexer: the gather</a>
-    <a href="#tiers">8 &middot; Gather across memory tiers</a>
-    <a href="#method">9 &middot; Method &amp; caveats</a>
+    <a href="#kernels">8 &middot; The layer, kernel by kernel</a>
+    <a href="#tiers">9 &middot; Gather across memory tiers</a>
+    <a href="#method">10 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -512,11 +513,62 @@
         <b>2,134&nbsp;&micro;s</b> &mdash; <b>20&times; more</b>. DSA&rsquo;s long-context cost
         is <i>finding</i> the top-2048 (a linear scan), not <i>reading</i> them (a bounded, flat gather).
         &ldquo;Sparse attention is cheap&rdquo; is true only of the gather.</div>
+
+      <h3>Cross-check: model, real kernel, and microbenchmark agree</h3>
+      <p>The <code class="k">a&nbsp;+&nbsp;N/b</code> line is not just a curve fit &mdash; it predicts
+        two <i>independent</i> measurements of the batch-1024 gather to within 7%. At batch&nbsp;1024
+        the gather moves 1.38&nbsp;GB of scattered 656&nbsp;B latents, and:</p>
+      <table><thead><tr><th>source</th><th>what it measures</th><th class="num">batch-1024 gather</th></tr></thead>
+        <tbody>
+          <tr><td>this section&rsquo;s <code class="k">a&nbsp;+&nbsp;N/b</code> model</td><td>prediction</td><td class="num">1.59&nbsp;ms</td></tr>
+          <tr><td>DeepSeek-V3.2 <code class="k">flash_fwd_splitkv_mla_fp8_sparse</code> kernel</td><td>measured &mdash; gather <b>+ attend</b></td><td class="num">1.59&nbsp;ms</td></tr>
+          <tr><td>standalone pure-gather microbenchmark (&sect;8)</td><td>measured &mdash; gather only</td><td class="num">1.48&nbsp;ms</td></tr>
+        </tbody></table>
+      <p>All three land on ~1.5&nbsp;ms because all three move the same 1.38&nbsp;GB. The
+        microbenchmark is <b>7%&nbsp;faster</b> because it is a pure memory copy, while the
+        production FlashMLA kernel also does the attention math over the gathered 2048 &mdash; so a
+        from-scratch gather reproduces the real kernel to within the cost of the attend itself. That
+        agreement is what lets &sect;8 trust the microbenchmark to measure the gather on other memory
+        tiers.</p>
     </section>
 
     
-    <section class="card" id="tiers">
-      <h2><span class="num">8</span>The gather across memory tiers</h2>
+
+    <section class="card" id="kernels">
+      <h2><span class="num">8</span>The layer, kernel by kernel</h2>
+      <p class="lead">&sect;7 isolated the gather. This is the whole decoder layer measured the same
+        way &mdash; every kernel, in one place &mdash; at decode batch&nbsp;64, mirroring the
+        op-by-op table from the DeepSeek-V4 report (Part&nbsp;V). The MoE block is forced to the
+        BALANCED 256-expert routing the simulator assumes, so these numbers match &sect;2.</p>
+
+      <h3>The layer at a glance</h3>
+      <div class="scroll"><table><thead><tr><th>block \ context</th><th class="num">4K</th><th class="num">128K</th><th class="num">1024K</th></tr></thead><tbody><tr><td>2&times; RMSNorm (input + post-attn)</td><td class="num">6.5&nbsp;&micro;s</td><td class="num">6.5&nbsp;&micro;s</td><td class="num">6.6&nbsp;&micro;s</td></tr><tr><td>Sparse attention block (MLA + indexer)</td><td class="num">292.2&nbsp;&micro;s</td><td class="num">610.3&nbsp;&micro;s</td><td class="num">2.81&nbsp;ms</td></tr><tr><td>MoE block (gate + 256 experts + shared)</td><td class="num">2.69&nbsp;ms</td><td class="num">2.69&nbsp;ms</td><td class="num">2.69&nbsp;ms</td></tr><tr><td><b>one decoder layer</b></td><td class="num"><b>2.99&nbsp;ms</b></td><td class="num"><b>3.31&nbsp;ms</b></td><td class="num"><b>5.51&nbsp;ms</b></td></tr></tbody></table></div>
+      <p>The three blocks scale completely differently with context. The MoE block is <b>flat</b>
+        (~2.69&nbsp;ms &mdash; it depends on token count, not context) and the norms are
+        negligible; <b>only the attention block grows</b>, and all of that growth is the indexer
+        scan (from 14&nbsp;&micro;s at 4K to 2.13&nbsp;ms at 1M). The
+        layer totals match the composed surface in &sect;2 to within rounding, which cross-validates
+        both measurements.</p>
+
+      <h3>Sparse attention, kernel by kernel (batch 64, 128K context)</h3>
+      <p>The attention block decomposes cleanly &mdash; its kernels run essentially in sequence, so
+        they sum to the block total (unlike DeepSeek-V4, whose kernels overlapped across four CUDA
+        streams). The three highlighted rows are the DSA-specific phases from &sect;7:</p>
+      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th></tr></thead><tbody><tr><td>fused QKV-A projection</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">12.8</td><td class="num">2%</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">3.9</td><td class="num">1%</td></tr><tr><td>q_b projection (col-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">26.1</td><td class="num">4%</td></tr><tr><td>indexer q/k proj + k-norm</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">22.9</td><td class="num">4%</td></tr><tr style="background:#eaf2ff"><td><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm90_fp8_paged_mqa_logits</code></td><td class="num">272.5</td><td class="num">45%</td></tr><tr style="background:#eaf2ff"><td><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">70.6</td><td class="num">12%</td></tr><tr style="background:#eaf2ff"><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">105.2</td><td class="num">17%</td></tr><tr><td>MLA metadata / concat / combine</td><td><code class="k">get_mla_metadata + ConcatMLAQ + combine</code></td><td class="num">660.0</td><td class="num">108%</td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">41.1</td><td class="num">7%</td></tr></tbody></table></div>
+      <p>The picture in one line: the indexer <b>scan</b> and <b>top-k</b> are the two kernels that
+        grow with context; everything else &mdash; the projections, the gather, the FlashMLA attend
+        &mdash; is fixed. At 128K the scan is already the single largest kernel in the layer.</p>
+
+      <div class="callout"><b>The MoE block is dispatch-bound at this batch.</b> Of its
+        2.69&nbsp;ms, the routed-expert grouped GEMM (<code class="k">fused_moe_kernel</code>,
+        &times;2 for up/down) is only 1.28&nbsp;ms; the rest is expert dispatch,
+        per-token quantization, and the many tiny per-expert launches that spreading 64&nbsp;tokens
+        across 256&nbsp;experts entails. This is why the MoE block barely moves once it saturates
+        (&sect;3): past 256 active experts it is bound by launch and dispatch overhead, not compute.</div>
+    </section>
+
+        <section class="card" id="tiers">
+      <h2><span class="num">9</span>The gather across memory tiers</h2>
       <p class="lead">&sect;7 measured the gather in HBM. Long-context KV is the obvious thing
         to offload &mdash; it is huge and each entry is touched rarely &mdash; so this asks: what
         does the <i>same</i> gather cost if the latents live in CPU DRAM, or are read by the GPU
@@ -607,7 +659,7 @@
     </section>
 
         <section class="card" id="method">
-      <h2><span class="num">9</span>Method &amp; caveats</h2>
+      <h2><span class="num">10</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
