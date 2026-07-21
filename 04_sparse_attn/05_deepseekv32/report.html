@@ -67,7 +67,8 @@
     <a href="#gather">7 &middot; Inside the indexer: the gather</a>
     <a href="#kernels">8 &middot; The layer, kernel by kernel</a>
     <a href="#tiers">9 &middot; Gather across memory tiers</a>
-    <a href="#method">10 &middot; Method &amp; caveats</a>
+    <a href="#throughput">10 &middot; Throughput: what batching buys</a>
+    <a href="#method">11 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -658,8 +659,139 @@
         and only if the scan that reads them can be pushed near the memory.</div>
     </section>
 
+    
+    <section class="card" id="throughput">
+      <h2><span class="num">10</span>Throughput: what batching actually buys</h2>
+      <p class="lead">Everything so far measured one layer&rsquo;s <i>latency</i>. The question an
+        operator asks is different: as I batch more concurrent decodes, does throughput
+        (tokens/s&nbsp;=&nbsp;batch&nbsp;&divide;&nbsp;step&nbsp;latency) actually go up? For DSA the
+        answer has a sharp, non-obvious shape.</p>
+      <div class="fig">
+        <div class="cap">Whole-model decode throughput vs batch (tp1, all 61 layers on one GPU). The
+          dashed line is where the MoE block saturates all 256 experts.</div>
+        <svg viewBox="0 0 900 440" role="img" aria-label="Decode throughput versus batch size, by context">
+        <line x1="74" y1="384.0" x2="750" y2="384.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="388.0" text-anchor="end" font-size="11" fill="#647083">0</text>
+        <line x1="74" y1="281.7" x2="750" y2="281.7" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="285.7" text-anchor="end" font-size="11" fill="#647083">1,000</text>
+        <line x1="74" y1="179.4" x2="750" y2="179.4" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="183.4" text-anchor="end" font-size="11" fill="#647083">2,000</text>
+        <line x1="74" y1="77.1" x2="750" y2="77.1" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="81.1" text-anchor="end" font-size="11" fill="#647083">3,000</text>
+        <line x1="74.0" y1="384" x2="74.0" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="74.0" y="404" text-anchor="middle" font-size="11" fill="#647083">1</text>
+        <line x1="141.6" y1="384" x2="141.6" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="141.6" y="404" text-anchor="middle" font-size="11" fill="#647083">2</text>
+        <line x1="209.2" y1="384" x2="209.2" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="209.2" y="404" text-anchor="middle" font-size="11" fill="#647083">4</text>
+        <line x1="276.8" y1="384" x2="276.8" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="276.8" y="404" text-anchor="middle" font-size="11" fill="#647083">8</text>
+        <line x1="344.4" y1="384" x2="344.4" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="344.4" y="404" text-anchor="middle" font-size="11" fill="#647083">16</text>
+        <line x1="412.0" y1="384" x2="412.0" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="412.0" y="404" text-anchor="middle" font-size="11" fill="#647083">32</text>
+        <line x1="479.6" y1="384" x2="479.6" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="479.6" y="404" text-anchor="middle" font-size="11" fill="#647083">64</text>
+        <line x1="547.2" y1="384" x2="547.2" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="547.2" y="404" text-anchor="middle" font-size="11" fill="#647083">128</text>
+        <line x1="614.8" y1="384" x2="614.8" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="614.8" y="404" text-anchor="middle" font-size="11" fill="#647083">256</text>
+        <line x1="682.4" y1="384" x2="682.4" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="682.4" y="404" text-anchor="middle" font-size="11" fill="#647083">512</text>
+        <line x1="750.0" y1="384" x2="750.0" y2="389" stroke="#c7ced9" stroke-width="1"/>
+        <text x="750.0" y="404" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+        <line x1="74" y1="384" x2="750" y2="384" stroke="#c7ced9" stroke-width="1"/>
+        <line x1="412.0" y1="26" x2="412.0" y2="384" stroke="#b54708" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="418.0" y="38.0" font-size="11" font-weight="700" fill="#b54708">MoE saturates (256 experts)</text>
+        <text x="412" y="426" text-anchor="middle" font-size="12" fill="#647083">decode batch (concurrent sequences, log scale)</text>
+        <text x="16" y="205" text-anchor="middle" font-size="12" fill="#647083" transform="rotate(-90 16 205)">decode throughput (tokens/s)</text>
+        <path d="M74.0,378.3 L141.6,375.0 L209.2,371.6 L276.8,368.2 L344.4,365.9 L412.0,364.8 L479.6,346.4 L547.2,317.8 L614.8,264.2 L682.4,181.6 L750.0,74.8" fill="none" stroke="#86b6ef" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="74.0" cy="378.3" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="141.6" cy="375.0" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="209.2" cy="371.6" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="276.8" cy="368.2" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="344.4" cy="365.9" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="412.0" cy="364.8" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="479.6" cy="346.4" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="547.2" cy="317.8" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="614.8" cy="264.2" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="682.4" cy="181.6" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <circle cx="750.0" cy="74.8" r="4" fill="#86b6ef" stroke="#fff" stroke-width="2"/>
+        <text x="762.0" y="78.8" font-size="12" font-weight="700" fill="#86b6ef">1K context</text>
+        <path d="M74.0,378.7 L141.6,375.6 L209.2,372.3 L276.8,369.1 L344.4,366.9 L412.0,366.0 L479.6,350.4 L547.2,328.3 L614.8,294.6 L682.4,255.4 L750.0,218.8" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="74.0" cy="378.7" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="141.6" cy="375.6" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="209.2" cy="372.3" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="276.8" cy="369.1" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="344.4" cy="366.9" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="412.0" cy="366.0" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="479.6" cy="350.4" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="547.2" cy="328.3" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="614.8" cy="294.6" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="682.4" cy="255.4" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <circle cx="750.0" cy="218.8" r="4" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+        <text x="762.0" y="222.8" font-size="12" font-weight="700" fill="#2a78d6">128K context</text>
+        <path d="M74.0,379.5 L141.6,377.2 L209.2,374.8 L276.8,372.5 L344.4,371.3 L412.0,370.7 L479.6,364.1 L547.2,356.9 L614.8,343.6 L682.4,321.3 L750.0,285.6" fill="none" stroke="#0d366b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="74.0" cy="379.5" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="141.6" cy="377.2" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="209.2" cy="374.8" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="276.8" cy="372.5" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="344.4" cy="371.3" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="412.0" cy="370.7" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="479.6" cy="364.1" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="547.2" cy="356.9" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="614.8" cy="343.6" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="682.4" cy="321.3" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <circle cx="750.0" cy="285.6" r="4" fill="#0d366b" stroke="#fff" stroke-width="2"/>
+        <text x="762.0" y="289.6" font-size="12" font-weight="700" fill="#0d366b">1M context</text>
+        </svg>
+      </div>
+      <div class="scroll"><table><thead><tr><th>context \ batch</th><th class="num">1</th><th class="num">8</th><th class="num">16</th><th class="num">32</th><th class="num">64</th><th class="num">128</th><th class="num">256</th><th class="num">512</th><th class="num">1024</th></tr></thead><tbody><tr><th>1K context</th><td class="num">56</td><td class="num">154</td><td class="num">177</td><td class="num">188</td><td class="num">367</td><td class="num">647</td><td class="num">1,171</td><td class="num">1,979</td><td class="num">3,022</td></tr><tr><th>128K context</th><td class="num">52</td><td class="num">146</td><td class="num">167</td><td class="num">176</td><td class="num">328</td><td class="num">545</td><td class="num">874</td><td class="num">1,258</td><td class="num">1,615</td></tr><tr><th>1M context</th><td class="num">44</td><td class="num">112</td><td class="num">124</td><td class="num">130</td><td class="num">194</td><td class="num">264</td><td class="num">395</td><td class="num">613</td><td class="num">962</td></tr></tbody></table></div>
+      <p style="color:var(--muted);font-size:.85rem;margin-top:6px">Decode tokens/s. Large-batch /
+        long-context cells past the KV budget (&sect;6) are extrapolated.</p>
+
+      <p><b>Throughput always rises with batch &mdash; it never falls &mdash; but the gains are
+        lumpy, with a knee exactly at MoE saturation (batch&nbsp;32).</b> Two effects, both measured
+        in the sections above, set the whole curve:</p>
+      <ul class="notes">
+        <li><b>The MoE dead zone (batch&nbsp;1&ndash;32): batching barely helps.</b> Below 32, every
+          added token activates <i>more</i> of the 256 experts (&sect;3), so the MoE block grows
+          nearly in proportion to batch &mdash; no economy of scale. The worst step is
+          16&nbsp;&rarr;&nbsp;32: batch doubles, throughput rises just <b>6%</b>
+          (177&nbsp;&rarr;&nbsp;188&nbsp;tok/s at 1K).</li>
+        <li><b>The saturation sweet spot (batch&nbsp;32&nbsp;&rarr;&nbsp;64): throughput nearly
+          doubles for free.</b> Once all 256 experts are active the MoE cost <i>freezes</i>
+          (&sect;8), so 2&times; the tokens cost ~2% more latency: throughput jumps
+          <b>2.0&times;</b> (188&nbsp;&rarr;&nbsp;367&nbsp;tok/s). This is
+          the single best batching decision in the range.</li>
+        <li><b>Beyond (batch&nbsp;&ge;128): the indexer scan sets a ceiling.</b> Past saturation the
+          scan (&prop;&nbsp;batch&nbsp;&times;&nbsp;context, &sect;7) becomes the term that grows
+          with batch, so throughput approaches a context-dependent wall.</li>
+      </ul>
+
+      <table><thead><tr><th>context</th><th class="num">throughput ceiling</th></tr></thead>
+        <tbody>
+          <tr><td>1K</td><td class="num">~6,387&nbsp;tok/s</td></tr>
+          <tr><td>128K</td><td class="num">~2,252&nbsp;tok/s</td></tr>
+          <tr><td>1M</td><td class="num">~1,847&nbsp;tok/s</td></tr>
+        </tbody></table>
+
+      <div class="callout win"><b>Serving takeaway.</b> Always batch past 32 &mdash; the
+        16&ndash;32 region is the worst efficiency in the whole range (you pay for all 256 experts but
+        split them over few tokens), and batch&nbsp;64 is the payoff. How far to push beyond depends on
+        context: at short context keep batching hard (the ceiling is ~6,387&nbsp;tok/s and every
+        doubling still helps), but at long context the scan caps you near ~2,252&nbsp;tok/s, so
+        huge batches buy little (57% from 512&rarr;1024 at 1M) <i>and</i> cost KV capacity
+        you may not have.</div>
+      <div class="callout warn"><b>These are tp1 numbers</b> &mdash; all 61 layers on one GPU, which no
+        real deployment runs; decode-only, compute-only (kernel time includes HBM weight/KV reads but
+        not inter-GPU collectives). A production TP/EP setup shifts the absolute tok/s, but the
+        <i>shape</i> &mdash; the batch-32 knee and the context-dependent ceiling &mdash; is the
+        transferable result.</div>
+    </section>
+
         <section class="card" id="method">
-      <h2><span class="num">10</span>Method &amp; caveats</h2>
+      <h2><span class="num">11</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
