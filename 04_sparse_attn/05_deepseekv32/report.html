@@ -1375,8 +1375,8 @@
         <tr><td><i>All-HBM alternative (no LPDDR tier)</i></td><td class="num"><i>202 GB</i></td><td><i>&mdash;</i></td><td><i>&#10007; stock H200 caps at 8 sessions/GPU (B=64)</i></td></tr>
       </table></div>
       <div class="callout win"><b>The capacity result.</b> Stock 8&times;H200 cannot serve B=128 at 128K at
-        all &mdash; it tops out near B=64 (~1.7k tok/s). This architecture serves B=128 at <b>~3.1k tok/s
-        (&asymp;1.8&times;)</b> using 8% of its LPDDR, and scales keys-resident to <b>b&nbsp;=&nbsp;37/GPU
+        all &mdash; it tops out near B=64 (~1.7k tok/s). This architecture serves B=128 at <b>2.9&ndash;3.5k tok/s
+        (1.7&ndash;2.1&times; vs stock, depending on base-die TOPS; see the tables below)</b> using 8% of its LPDDR, and scales keys-resident to <b>b&nbsp;=&nbsp;37/GPU
         (B&nbsp;&asymp;&nbsp;296, est. ~5.8k tok/s)</b> before the indexer keys themselves outgrow HBM.
         The batch-to-cube mapping is clean: sessions are DP-independent, so each cube&rsquo;s base die scans
         only its own 2 sessions&rsquo; keys and gathers only from its own LPDDR &mdash; no cross-cube traffic.</div>
