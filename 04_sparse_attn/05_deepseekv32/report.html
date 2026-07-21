@@ -1499,6 +1499,53 @@
         The batch has a throughput optimum too: b=37 at 3.4&times; beats both b=16 (1.7&ndash;1.8&times;) and
         the b=162 LPDDR-max spill tier (&asymp;3.5&times; but with ~4&times; worse TPOT).</div>
 
+      <h3>Why the winner is who it is: S1 vs S1.5 vs S2, mechanically</h3>
+      <p>All three designs run the same logical pipeline per layer &mdash;
+        <code class="k">qkv_a &rarr; indexer queries &rarr; SCAN &rarr; top-2048 &rarr; GATHER &rarr; attend &rarr; o_proj</code>
+        &mdash; and differ only in <b>which engine executes the scan</b> and <b>which engine executes the
+        gather</b>.</p>
+
+      <p><b>S1 &rarr; S1.5: what &ldquo;base-die gather&rdquo; means, and why it beats GPU-driven gather.</b>
+        After top-k you hold 2048 <i>indices</i> per query; the 656 B latent records they point to live in
+        LPDDR, reachable only through the UCIe controller on each cube&rsquo;s base die. The question is who
+        turns indices into data. <b>GPU-driven (S1):</b> GPU threads issue loads to remote LPDDR addresses.
+        Requests are cacheline-grained (128 B), so one 656 B record becomes ~5&ndash;6 transactions; remote
+        memory is not L2-cached (the same behaviour verified on Grace C2C), so each pays the full
+        ~500&ndash;800 ns round trip; and an SM keeps only a limited number of remote loads in flight &mdash;
+        the link runs <b>latency-bound at ~50% efficiency &rarr; 97 &micro;s</b>, while occupying GPU
+        load/store units the whole time. <b>Base-die (S1.5):</b> the GPU ships the <i>tiny</i> thing &mdash;
+        the index list (2048&times;4 B &asymp; 8 KB per query) &mdash; down to the die. A DMA engine sitting
+        next to the UCIe controller translates indices to addresses, issues native 656 B burst reads with a
+        deep (~64-entry) outstanding queue that hides the latency, coalesces neighbours, and streams the
+        result back up the PHY as one <b>packed sequential buffer</b> the attend then reads at streaming
+        speed &mdash; <b>~80% efficiency &rarr; 61 &micro;s</b>, with the GPU&rsquo;s SMs free. Ship the small
+        descriptor to the data, stream the big payload back in bulk: the classic near-memory move, and it
+        needs no MAC array &mdash; just a DMA block. Net: 97 &rarr; 61 &micro;s/layer &asymp; 2.2 ms/step
+        &asymp; <b>+4% throughput for a thermally free piece of hardware</b> (5,515 &rarr; 5,756 tok/s).</p>
+
+      <p><b>S1.5 &rarr; S2: why also moving the scan onto the NPU is <i>slower</i> at feasible TOPS.</b>
+        The scan is identical work either way &mdash; 640 MB of keys, 79.4 GFLOP per layer at b=37. Only the
+        engine changes, and the two engines are wildly mismatched:</p>
+      <div class="scroll"><table>
+        <tr><th></th><th>GPU scan (S1/S1.5)</th><th>Base-die scan @200 TOPS (S2)</th></tr>
+        <tr><td>Compute available</td><td>~500 TOPS effective (of ~2,000 peak fp8)</td><td>200 TOPS (~10 W thermal ceiling under the stack)</td></tr>
+        <tr><td>Key bandwidth</td><td>4.15 TB/s from HBM</td><td>4.8 TB/s via TSVs (8&times;600 GB/s)</td></tr>
+        <tr><td>Bound by</td><td><b>bandwidth</b> &mdash; finishes as fast as keys stream</td><td><b>compute</b> &mdash; the MACs cannot chew what the TSVs deliver</td></tr>
+        <tr><td>Scan time</td><td>159 &micro;s</td><td>397 &micro;s</td></tr>
+      </table></div>
+      <div class="callout warn"><b>And there is nothing to overlap the loss against.</b> The scan sits on
+        the critical path in every design: the attend cannot start before top-k, the next layer&rsquo;s
+        queries do not exist until this layer finishes, and the only concurrent GPU work is the 15 &micro;s
+        q_b projection. Offloading the scan does free GPU HBM bandwidth &mdash; but during the attention
+        phase nothing else wants it (the MoE runs later, sequentially), so the freed bandwidth buys zero
+        critical-path time. S2 at 200 TOPS is therefore S1.5 plus a pure +238 &micro;s/layer loss
+        (397 vs 159). The crossover where the on-die scan catches the GPU is <b>~357 TOPS/GPU
+        (~45 TOPS/cube, ~18 W)</b> &mdash; above the comfortable budget. Hence adaptive placement:
+        <b>the gather is latency/protocol-limited, so a smart engine next to the memory always wins it;
+        the scan is compute-hungry, so it belongs to whichever engine has both the data at hand and the
+        most TOPS</b> &mdash; the GPU while keys are HBM-resident, the base die once they spill (where the
+        GPU&rsquo;s alternative collapses to a 2.74 ms UCIe-streamed scan and even 200 TOPS wins).</div>
+
       <p><b>The keys-spill stress point &mdash; where the base-die compute becomes the difference.</b>
         Past b&nbsp;&asymp;&nbsp;37/GPU at 128K (or ~4&ndash;5 sessions at 1M), the keys themselves outgrow
         HBM and every design must stream them from LPDDR. At b=128/GPU (16 sessions/cube, 806 GB KV/GPU) the
