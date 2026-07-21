@@ -472,18 +472,31 @@
         GPU time spent reading the selected top-2048:</p>
       <div class="scroll"><table><thead><tr><th>batch \ context</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">3.9%</td><td class="num">3.9%</td><td class="num">3.8%</td><td class="num">3.7%</td><td class="num">3.7%</td><td class="num">3.4%</td><td class="num">3.1%</td></tr><tr><th class="num">8</th><td class="num">2.8%</td><td class="num">2.8%</td><td class="num">2.7%</td><td class="num">2.7%</td><td class="num">2.6%</td><td class="num">2.4%</td><td class="num">2.1%</td></tr><tr><th class="num">64</th><td class="num">3.5%</td><td class="num">3.5%</td><td class="num">3.3%</td><td class="num">3.2%</td><td class="num">2.9%</td><td class="num">2.5%</td><td class="num">1.9%</td></tr><tr><th class="num">256</th><td class="num">11.0%</td><td class="num">10.6%</td><td class="num">9.5%</td><td class="num">8.3%</td><td class="num">6.8%</td><td class="num">4.9%</td><td class="num">&mdash;</td></tr><tr><th class="num">1024</th><td class="num">27.4%</td><td class="num">25.5%</td><td class="num">19.6%</td><td class="num">15.2%</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">&mdash;</td></tr></tbody></table></div>
       <p>The gather is a <b>2&ndash;4% sliver at modest batch</b>, but climbs to <b>27% at
-        batch&nbsp;1024 and 4K context</b>. Two effects set the share, both visible
-        in the table:</p>
-      <ul class="notes">
-        <li><b>It rises steeply with batch</b> once the MoE block saturates (batch&nbsp;&ge;32, all
-          256 experts active, &sect;3): past that point the layer&rsquo;s other big cost stops growing
-          while the gather keeps scaling linearly with the number of queries.</li>
-        <li><b>It falls with context</b> along every row &mdash; not because the gather changes (it is
-          flat), but because the <i>scan</i> inflates the layer as context grows, so the fixed gather
-          becomes a smaller slice of a larger whole.</li>
-      </ul>
-      <p>So the gather only becomes a meaningful fraction of the layer in the high-throughput,
-        short-context corner &mdash; and even there it is dwarfed by the scan at long context.</p>
+        batch&nbsp;1024 and 4K context</b>. That rise with batch is the surprising
+        one, so it is worth spelling out.</p>
+      <div class="callout"><b>Why more batch means a bigger gather share.</b> The share is
+        gather&nbsp;&divide;&nbsp;layer, and the two scale with batch <i>completely differently</i>:
+        <ul class="notes" style="margin-top:8px">
+          <li>The <b>gather grows linearly with batch</b> &mdash; each query gathers its own fixed
+            2048 latents (~1.6&nbsp;&micro;s/query, &sect;7). From batch&nbsp;64 to 1024 at 4K it grows
+            <b>15&times;</b> (105&nbsp;&rarr;&nbsp;1,597&nbsp;&micro;s).</li>
+          <li>The <b>layer barely grows</b>, because its dominant cost &mdash; the MoE block &mdash; has
+            <b>saturated</b>. Past batch&nbsp;32 all 256 experts are already active (&sect;3), so more
+            tokens add no experts and the MoE cost is nearly flat: over the same 64&nbsp;&rarr;&nbsp;1024
+            it grows just <b>1.2&times;</b>, and the whole layer only
+            <b>1.9&times;</b> (2,990&nbsp;&rarr;&nbsp;5,827&nbsp;&micro;s).</li>
+        </ul>
+        A numerator growing 15&times; over a denominator growing 1.9&times; &mdash;
+        the fraction has to climb. In short: <b>batching stops making the layer&rsquo;s big block
+        (MoE) more expensive but keeps making the gather more expensive, so the gather eats an
+        ever-larger slice.</b></div>
+      <p>Two footnotes to that. <b>Below saturation</b> (batch&nbsp;1&ndash;32) the share actually
+        <i>dips</i> &mdash; there the MoE is still growing <i>faster</i> than the gather (each token
+        lights up more experts), so it outruns the numerator. And along every row the share
+        <b>falls with context</b>: the gather is flat in context (&sect;7), but the <i>scan</i>
+        inflates the layer as context grows, shrinking the fixed gather&rsquo;s slice. So the gather
+        only matters in the high-throughput, short-context corner &mdash; and even there it is dwarfed
+        by the scan at long context.</p>
 
       <h3>Does a simple <code class="k">a&nbsp;+&nbsp;N/b</code> model fit?</h3>
       <p>The gather reads, per query, the 2048 selected main-MLA latents at 656&nbsp;B each (the
