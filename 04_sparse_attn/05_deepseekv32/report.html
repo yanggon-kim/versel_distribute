@@ -1466,6 +1466,11 @@
         <tr><td>S2 &mdash; full NPU scans, 400 TOPS/GPU</td><td class="num">409</td><td class="num">49.9</td><td class="num">5,928</td><td class="num">3.48&times;</td></tr>
         <tr><td>S2 &mdash; full NPU scans, 600 TOPS/GPU (near the TSV floor)</td><td class="num">344</td><td class="num">45.9</td><td class="num">6,447</td><td class="num">3.79&times;</td></tr>
       </table></div>
+      <div class="callout win"><b>Validated by simulation.</b> An actual LLMServingSim run of this
+        point (EP8-rank proxy, b=37 staggered-output steady state, 512 GiB config) measures
+        <b>steady TPOT 52.39 ms at full 37-way concurrency &rarr; 5,650 tok/s cluster = 3.32&times; the
+        stock baseline</b> &mdash; within 1.2% of the analytic S0 row and 1.9% of S1.5 (whose UCIe gather
+        is at parity with the all-HBM gather the simulator models).</div>
       <div class="callout"><b>Reading it &mdash; scan placement should be adaptive.</b> With keys
         HBM-resident, the GPU scans 640 MB/layer in 159 &micro;s (measured-rate); a base die needs
         <b>&gt;357 TOPS/GPU (~45 TOPS/cube, ~18 W)</b> to do better, so at feasible thermals the winning
