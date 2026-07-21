@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V3.2 &mdash; Part VII: DP8+EP8 Serving Simulation: Throughput &amp; Energy vs Batch under HBM Capacity</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  section.card h3{margin:22px 0 6px;font-size:1.05rem;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0 6px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.cap{color:var(--warn);font-weight:700;}
+  td.nofit{color:#b42318;font-weight:700;}
+  .scroll{overflow-x:auto;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .fig .cap{color:var(--muted);font-size:.85rem;margin:2px 2px 8px;}
+  code.k{background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.86em;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#intro">Overview</a>
+    <a href="#pipeline">1 &middot; Simulation pipeline</a>
+    <a href="#capacity">2 &middot; Per-GPU memory map</a>
+    <a href="#scaling">3 &middot; Throughput &amp; energy vs batch</a>
+    <a href="#contexts">4 &middot; Context sensitivity</a>
+    <a href="#walls">5 &middot; Capacity walls</a>
+    <a href="#method">6 &middot; Measurement methodology</a>
+    <a href="#caveats">7 &middot; Caveats</a>
+    <a href="#artifacts">Artifacts</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>DeepSeek-V3.2 &mdash; Part VII: DP8+EP8 Serving Simulation</h1>
+      <p class="sub">Cluster throughput and energy-per-token vs. batch size on 8 GPUs (TP1&nbsp;+&nbsp;DP8&nbsp;+&nbsp;EP8, the official vLLM serving layout), swept over per-GPU HBM capacity at fixed bandwidth &mdash; simulated with LLMServingSim driven by H200-measured kernel profiles from Part&nbsp;VI.</p>
+      <div class="tags">
+        <span class="tag live">Simulated from measured kernels</span>
+        <span class="tag">LLMServingSim</span>
+        <span class="tag">DeepSeek-V3.2-Exp</span>
+        <span class="tag">DP8 + EP8</span>
+        <span class="tag">61-run matrix</span>
+      </div>
+    </header>
+
+    <section class="card" id="intro">
+      <h2><span class="num">&sect;0</span>Overview &mdash; batching is a 27&times; lever, and capacity is the only thing gating it</h2>
+      <p class="lead">Batch 8 &rarr; 1024 at 128K context: throughput and energy-per-token both improve 27&times; while per-token latency stays usable. Stock H200 (141&nbsp;GiB) hits its KV-capacity wall at batch 64 &mdash; and cannot hold even <em>one</em> 1M-token session.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">27&times;</div><div class="l">throughput gain, B=8&rarr;1024 @128K (416 &rarr; 11,128 tok/s)</div></div>
+        <div class="kpi"><div class="v">18.7 &rarr; 0.69&nbsp;J</div><div class="l">decode energy per token, B=8&rarr;1024 @128K</div></div>
+        <div class="kpi"><div class="v">B&nbsp;=&nbsp;64</div><div class="l">stock-H200 batch ceiling @128K (8 sessions/GPU)</div></div>
+        <div class="kpi"><div class="v">no fit</div><div class="l">1M session on stock H200: 94.65&nbsp;+&nbsp;46.94&nbsp;&gt;&nbsp;141&nbsp;GiB</div></div>
+      </div>
+      <div class="callout win">
+        <strong>The claim this part establishes:</strong> for DeepSeek-V3.2 in its official DP8+EP8 layout, decode is power-flat (~969&nbsp;W/GPU regardless of batch), so tokens/joule scales almost linearly with concurrency. The only resource that limits concurrency is <strong>KV-cache capacity</strong> &mdash; not memory bandwidth. A capacity-extended HBM at unchanged bandwidth converts directly into throughput and energy efficiency.
+      </div>
+    </section>
+
+    <section class="card" id="pipeline">
+      <h2><span class="num">&sect;1</span>Simulation pipeline &mdash; from Part VI's measured kernels to cluster metrics</h2>
+      <p class="lead">Nothing here is analytical guesswork: every latency the simulator emits is a lookup (or a documented extrapolation) into the H200 kernel measurements behind Part&nbsp;VI.</p>
+      <ul class="notes">
+        <li><strong>Profiles:</strong> the Part-VI profiling run measured one full V3.2 decoder layer (DSA attention wrapper incl. lightning indexer + FlashMLA, MoE 256-expert block, dense/per-sequence ops) on an H200 at tp1, over a 4D attention grid reaching <code class="k">n_decode = 1024</code> and <code class="k">kv = 1M</code> (10,483 attention points, zero failed shots).</li>
+        <li><strong>Simulator:</strong> LLMServingSim replays a vLLM-style continuous-batching scheduler (chunked prefill, block KV allocator, admission control) and prices every iteration from those profiles; energy comes from its per-second power model.</li>
+        <li><strong>DP8+EP8 as an EP8-rank proxy:</strong> the 8 DP ranks are symmetric, so one rank is simulated as a single tp1 instance of a 32-expert slice model (256/8 experts &mdash; exactly what one EP rank holds; weights verified byte-identical, 97.66&nbsp;GB). A cluster batch B runs as b&nbsp;=&nbsp;B/8 requests on the rank; cluster throughput = 8&times;rank, J/token = rank value. The EP all-to-all (~0.9&nbsp;MB/direction/iteration at decode) is the one un-modeled term.</li>
+        <li><strong>Custom-HBM axis:</strong> per-GPU <code class="k">npu_mem &isin; {141 (stock H200), 256, 512, 1024} GiB</code> at fixed 4.8&nbsp;TB/s. This is the "same bandwidth, bigger capacity" abstraction of the HBM + LPDDR-extension architecture under study.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="capacity">
+      <h2><span class="num">&sect;2</span>Per-GPU memory map &mdash; why capacity binds</h2>
+      <p class="lead">Under DP, every rank keeps the <em>full</em> KV of its own sessions (MLA latents are TP-replicated and DP-partitioned, never sharded), so per-GPU KV demand scales with batch &times; context.</p>
+      <div class="scroll"><table>
+        <tr><th>Component</th><th class="num">Per GPU (DP rank, tp1/ep8)</th><th>Notes</th></tr>
+        <tr><td>Weights (runtime-charged)</td><td class="num">94.65 GiB</td><td>32 routed experts (fp8) + shared expert + attention/indexer + dense MLPs + embed &amp; lm_head</td></tr>
+        <tr><td>KV per token (all 61 layers)</td><td class="num">48,068 B</td><td>656 B MLA latent (fp8_ds_mla) + 132 B indexer key, per layer</td></tr>
+        <tr><td>KV per session @128K</td><td class="num">5.87 GiB</td><td>&times;2 at 256K, &times;4 at 512K, 46.94 GiB at 1M</td></tr>
+        <tr><td>Stock H200 free for KV</td><td class="num">46.35 GiB</td><td>141 &minus; 94.65 &rarr; 8 sessions @128K, <strong>0 sessions @1M</strong></td></tr>
+      </table></div>
+      <div class="callout warn">
+        <strong>1M does not fit on stock H200:</strong> 94.65&nbsp;GiB weights + 46.94&nbsp;GiB for a single 1M session = 141.6&nbsp;GiB &gt; 141&nbsp;GiB. In the measured runs the scheduler could never admit the request (the simulator livelocks rather than rejecting &mdash; recorded as a timeout). Long-context V3.2 serving on this cluster <em>requires</em> capacity extension before any performance question even arises.
+      </div>
+    </section>
+
+    <section class="card" id="scaling">
+      <h2><span class="num">&sect;3</span>Throughput &amp; energy vs batch &mdash; the 27&times; amortization curve</h2>
+      <p class="lead">Steady-state full-batch decode at 128K context. Values are identical at every capacity that fits the batch (same kernels, same schedule); capacity only decides <em>which rows exist</em>.</p>
+      <div class="scroll"><table>
+        <tr><th class="num">B (cluster)</th><th class="num">b / GPU</th><th class="num">Steady TPOT (ms)</th><th class="num">Cluster tok/s</th><th class="num">Decode J/token</th><th class="num">Min capacity that fits</th></tr>
+        <tr><td class="num">8</td><td class="num">1</td><td class="num">19.2</td><td class="num">416</td><td class="num">18.65</td><td class="num">141 (stock)</td></tr>
+        <tr><td class="num">32</td><td class="num">4</td><td class="num">35.9</td><td class="num">891</td><td class="num">8.70</td><td class="num">141 (stock)</td></tr>
+        <tr><td class="num">128</td><td class="num">16</td><td class="num">41.0</td><td class="num">3,120</td><td class="num">2.46</td><td class="num">256</td></tr>
+        <tr><td class="num">256</td><td class="num">32</td><td class="num">49.7</td><td class="num">5,156</td><td class="num">1.49</td><td class="num">512</td></tr>
+        <tr><td class="num">512</td><td class="num">64</td><td class="num">63.0</td><td class="num">8,129</td><td class="num">1.49 &rarr; 0.94</td><td class="num">512</td></tr>
+        <tr><td class="num">1024</td><td class="num">128</td><td class="num">92.0</td><td class="num">11,128</td><td class="num">0.69</td><td class="num">1024</td></tr>
+      </table></div>
+
+      <div class="fig">
+        <svg viewBox="0 0 720 300" role="img" aria-label="Cluster decode throughput vs batch at 128K">
+          <line x1="70" y1="250" x2="690" y2="250" stroke="#c8d0dc"/>
+          <line x1="70" y1="20"  x2="70"  y2="250" stroke="#c8d0dc"/>
+          <line x1="70" y1="173.3" x2="690" y2="173.3" stroke="#eef1f6"/>
+          <line x1="70" y1="96.7"  x2="690" y2="96.7"  stroke="#eef1f6"/>
+          <line x1="70" y1="20"    x2="690" y2="20"    stroke="#eef1f6"/>
+          <text x="62" y="254" text-anchor="end" font-size="11" fill="#647083">0</text>
+          <text x="62" y="177" text-anchor="end" font-size="11" fill="#647083">4k</text>
+          <text x="62" y="100" text-anchor="end" font-size="11" fill="#647083">8k</text>
+          <text x="62" y="24"  text-anchor="end" font-size="11" fill="#647083">12k</text>
+          <text x="70"  y="266" text-anchor="middle" font-size="11" fill="#647083">8</text>
+          <text x="247" y="266" text-anchor="middle" font-size="11" fill="#647083">32</text>
+          <text x="424" y="266" text-anchor="middle" font-size="11" fill="#647083">128</text>
+          <text x="513" y="266" text-anchor="middle" font-size="11" fill="#647083">256</text>
+          <text x="601" y="266" text-anchor="middle" font-size="11" fill="#647083">512</text>
+          <text x="690" y="266" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+          <text x="380" y="288" text-anchor="middle" font-size="11" fill="#647083">cluster batch B (log scale)</text>
+          <line x1="335.7" y1="20" x2="335.7" y2="250" stroke="#b54708" stroke-dasharray="4 4"/>
+          <text x="335.7" y="14" text-anchor="middle" font-size="10" fill="#b54708">141 GiB wall (B=64)</text>
+          <line x1="495.8" y1="34" x2="495.8" y2="250" stroke="#b8860b" stroke-dasharray="4 4"/>
+          <text x="495.8" y="30" text-anchor="middle" font-size="10" fill="#b8860b">256 GiB (B=224)</text>
+          <line x1="614.7" y1="48" x2="614.7" y2="250" stroke="#8a7a1e" stroke-dasharray="4 4"/>
+          <text x="614.7" y="44" text-anchor="middle" font-size="10" fill="#8a7a1e">512 GiB (B=568)</text>
+          <polyline fill="none" stroke="#1f6feb" stroke-width="2.5"
+            points="70,242.0 247.1,232.9 424.3,190.2 512.9,151.2 601.4,94.2 690,36.7"/>
+          <g fill="#1f6feb"><circle cx="70" cy="242" r="3.5"/><circle cx="247.1" cy="232.9" r="3.5"/><circle cx="424.3" cy="190.2" r="3.5"/><circle cx="512.9" cy="151.2" r="3.5"/><circle cx="601.4" cy="94.2" r="3.5"/><circle cx="690" cy="36.7" r="3.5"/></g>
+        </svg>
+        <p class="cap">Cluster steady-state decode throughput (tok/s) vs. batch @128K. Dashed lines: where each HBM capacity stops admitting more sessions. Stock H200 exits the curve at B=64.</p>
+      </div>
+
+      <div class="fig">
+        <svg viewBox="0 0 720 300" role="img" aria-label="Decode energy per token vs batch at 128K">
+          <line x1="70" y1="250" x2="690" y2="250" stroke="#c8d0dc"/>
+          <line x1="70" y1="20"  x2="70"  y2="250" stroke="#c8d0dc"/>
+          <line x1="70" y1="192.5" x2="690" y2="192.5" stroke="#eef1f6"/>
+          <line x1="70" y1="135"   x2="690" y2="135"   stroke="#eef1f6"/>
+          <line x1="70" y1="77.5"  x2="690" y2="77.5"  stroke="#eef1f6"/>
+          <line x1="70" y1="20"    x2="690" y2="20"    stroke="#eef1f6"/>
+          <text x="62" y="254" text-anchor="end" font-size="11" fill="#647083">0</text>
+          <text x="62" y="196" text-anchor="end" font-size="11" fill="#647083">5</text>
+          <text x="62" y="139" text-anchor="end" font-size="11" fill="#647083">10</text>
+          <text x="62" y="81"  text-anchor="end" font-size="11" fill="#647083">15</text>
+          <text x="62" y="24"  text-anchor="end" font-size="11" fill="#647083">20</text>
+          <text x="70"  y="266" text-anchor="middle" font-size="11" fill="#647083">8</text>
+          <text x="247" y="266" text-anchor="middle" font-size="11" fill="#647083">32</text>
+          <text x="424" y="266" text-anchor="middle" font-size="11" fill="#647083">128</text>
+          <text x="513" y="266" text-anchor="middle" font-size="11" fill="#647083">256</text>
+          <text x="601" y="266" text-anchor="middle" font-size="11" fill="#647083">512</text>
+          <text x="690" y="266" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+          <text x="380" y="288" text-anchor="middle" font-size="11" fill="#647083">cluster batch B (log scale)</text>
+          <polyline fill="none" stroke="#1a7f37" stroke-width="2.5"
+            points="70,35.5 247.1,149.9 424.3,221.7 512.9,232.9 601.4,239.2 690,242.1"/>
+          <g fill="#1a7f37"><circle cx="70" cy="35.5" r="3.5"/><circle cx="247.1" cy="149.9" r="3.5"/><circle cx="424.3" cy="221.7" r="3.5"/><circle cx="512.9" cy="232.9" r="3.5"/><circle cx="601.4" cy="239.2" r="3.5"/><circle cx="690" cy="242.1" r="3.5"/></g>
+        </svg>
+        <p class="cap">Decode energy per token (J) vs. batch @128K. Decode power is ~flat (~969&nbsp;W/GPU), so J/token &prop; TPOT/b &mdash; it collapses 18.65&nbsp;&rarr;&nbsp;0.69&nbsp;J as concurrency amortizes the weight traffic.</p>
+      </div>
+
+      <p><strong>Why it saturates gently:</strong> TPOT grows only 4.8&times; over a 128&times; batch increase. The MoE block's expert-weight reads (the dominant memory traffic at low batch) are amortized across concurrent tokens; the per-batch costs that do grow &mdash; the indexer scan (&prop;&nbsp;b&times;L) and per-token attend &mdash; are much smaller until deep into the curve.</p>
+    </section>
+
+    <section class="card" id="contexts">
+      <h2><span class="num">&sect;4</span>Context sensitivity &mdash; decode is nearly L-flat, exactly as DSA promises</h2>
+      <p class="lead">In-capacity steady-state values per context. The fixed top-2048 sparse attend keeps per-token attention almost independent of L; only the linear indexer scan grows.</p>
+      <div class="scroll"><table>
+        <tr><th class="num">B (cluster)</th><th colspan="2" class="num">128K</th><th colspan="2" class="num">256K</th><th colspan="2" class="num">512K</th><th colspan="2" class="num">1M</th></tr>
+        <tr><th></th><th class="num">tok/s</th><th class="num">J/tok</th><th class="num">tok/s</th><th class="num">J/tok</th><th class="num">tok/s</th><th class="num">J/tok</th><th class="num">tok/s</th><th class="num">J/tok</th></tr>
+        <tr><td class="num">8</td><td class="num">416</td><td class="num">18.65</td><td class="num">405</td><td class="num">19.16</td><td class="num">383</td><td class="num">20.24</td><td class="num">348</td><td class="num">22.04</td></tr>
+        <tr><td class="num">32</td><td class="num">891</td><td class="num">8.70</td><td class="num">860</td><td class="num">8.91</td><td class="num">802</td><td class="num">9.56</td><td class="num">710</td><td class="num">10.80</td></tr>
+        <tr><td class="num">128</td><td class="num">3,120</td><td class="num">2.46</td><td class="num">2,794</td><td class="num">2.74</td><td class="num">2,328</td><td class="num">3.29</td><td class="num">1,730</td><td class="num">4.43</td></tr>
+        <tr><td class="num">256</td><td class="num">5,156</td><td class="num">1.49</td><td class="num">4,341</td><td class="num">1.76</td><td class="num">3,293</td><td class="num">2.33</td><td class="cap">capacity-limited</td><td class="cap">&mdash;</td></tr>
+        <tr><td class="num">512</td><td class="num">8,129</td><td class="num">0.94</td><td class="num">6,231</td><td class="num">1.23</td><td class="cap">capacity-limited</td><td class="cap">&mdash;</td><td class="cap">&mdash;</td><td class="cap">&mdash;</td></tr>
+        <tr><td class="num">1024</td><td class="num">11,128</td><td class="num">0.69</td><td class="cap">capacity-limited</td><td class="cap">&mdash;</td><td class="cap">&mdash;</td><td class="cap">&mdash;</td><td class="cap">&mdash;</td><td class="cap">&mdash;</td></tr>
+      </table></div>
+      <ul class="notes">
+        <li>At B=8, going 128K &rarr; 1M costs only 20% throughput (19.2 &rarr; 23.0 ms TPOT) &mdash; the measured kv-linearity of the indexer scan, tiny at b=1.</li>
+        <li>At B=128, the scan term is 16&times; larger, so 1M costs 45% vs 128K (41.0 &rarr; 74.0 ms) &mdash; still far from the L-proportional collapse a dense-attention model would suffer.</li>
+        <li>"Capacity-limited" cells: even 1&nbsp;TiB/GPU cannot hold that batch&times;context KV (e.g. B=1024 @256K needs 80 sessions &times; 11.7 GiB &gt; 929 GiB free). These are KV-capacity frontiers, not compute limits.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="walls">
+      <h2><span class="num">&sect;5</span>Capacity walls &mdash; max concurrent sessions per GPU (measured)</h2>
+      <p class="lead">Peak sessions the scheduler could actually admit before queueing (measured from the runs, not computed): multiply by 8 for the max cluster batch.</p>
+      <div class="scroll"><table>
+        <tr><th>Per-GPU capacity (same 4.8 TB/s BW)</th><th class="num">@128K</th><th class="num">@256K</th><th class="num">@512K</th><th class="num">@1M</th></tr>
+        <tr><td>141 GiB (stock H200)</td><td class="num">8&nbsp;&nbsp;(B=64)</td><td class="num">4&nbsp;&nbsp;(B=32)</td><td class="num">2&nbsp;&nbsp;(B=16)</td><td class="nofit">0 &mdash; no fit</td></tr>
+        <tr><td>256 GiB</td><td class="num">28&nbsp;&nbsp;(B=224)</td><td class="num">14&nbsp;&nbsp;(B=112)</td><td class="num">7&nbsp;&nbsp;(B=56)</td><td class="num">4&nbsp;&nbsp;(B=32)</td></tr>
+        <tr><td>512 GiB</td><td class="num">71&nbsp;&nbsp;(B=568)</td><td class="num">36&nbsp;&nbsp;(B=288)</td><td class="num">18&nbsp;&nbsp;(B=144)</td><td class="num">9&nbsp;&nbsp;(B=72)</td></tr>
+        <tr><td>1024 GiB</td><td class="num">&ge;128&nbsp;&nbsp;(B&ge;1024)</td><td class="num">80&nbsp;&nbsp;(B=640)</td><td class="num">40&nbsp;&nbsp;(B=320)</td><td class="num">20&nbsp;&nbsp;(B=160)</td></tr>
+      </table></div>
+      <div class="callout">
+        Over-capacity requests are not served worse &mdash; they are <em>not served concurrently at all</em>: vLLM-style admission control queues them, so throughput hard-saturates at the wall (e.g. stock @128K tops out at the B=64 row: ~1.6k tok/s and ~5 J/token, 7&times; and 7&times; away from the B=1024 point a 1&nbsp;TiB GPU reaches).
+      </div>
+    </section>
+
+    <section class="card" id="method">
+      <h2><span class="num">&sect;6</span>Measurement methodology &mdash; getting a clean steady state out of a serving simulator</h2>
+      <ul class="notes">
+        <li><strong>Workload:</strong> b requests, each with input = L, arriving at t=0; chunked prefill (64K-token chunks) serializes their prefills. Request i is given <code class="k">output = (b&minus;1&minus;i)&middot;L/64K + 64</code> tokens, so every request finishes its ramp exactly when the last prefill ends &mdash; all b then decode their final 64 tokens at <em>full concurrency</em> and complete together.</li>
+        <li><strong>Steady TPOT</strong> = the last-prefilled request's TPOT (its decode happens entirely in the aligned steady phase). Validated per run by counting requests alive in its decode window (must equal b, else the cell is reported as capacity-limited).</li>
+        <li><strong>Decode J/token</strong> = mean decode-phase power (per-second samples with zero prompt throughput) &times; TPOT / b. Decode power is ~flat at ~969&nbsp;W/GPU across all batches &mdash; the whole energy win comes from concurrency.</li>
+        <li><strong>Prefix caching disabled:</strong> two reasons &mdash; identical synthetic prompts would fake-share KV across sessions, and (found during this study) the simulator's radix-tree accounting never charges KV for token-ID-less workloads, silently voiding all capacity limits.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="caveats">
+      <h2><span class="num">&sect;7</span>Caveats</h2>
+      <ul class="notes">
+        <li><strong>EP all-to-all is not modeled</strong> (single-rank proxy): at decode it is ~0.9&nbsp;MB per direction per iteration per rank over NVLink &mdash; a small additive TPOT term that would shift all cells equally.</li>
+        <li><strong>Contexts &gt; 128K are hypothetical-context V3.2</strong>: RoPE is out of its trained range, but kernel latency depends only on allocated KV length, so the performance numbers remain valid as an architecture study.</li>
+        <li><strong>Extrapolated corners:</strong> the attention grid was measured out to (n_decode=1024, kv&le;128K) and (kv=1M, n_decode&le;128); the few cells beyond both wedge edges are log-linear extrapolations of a measured-linear scan surface.</li>
+        <li><strong>J/token here is decode-only</strong>; end-to-end J/token including prefill energy is in the results CSV. Cooling/PSU overheads and host DRAM/interconnect energy for spill paths are outside the model.</li>
+      </ul>
+    </section>
+
+    <div class="footer" id="artifacts">
+      <p><strong>Artifacts:</strong> full 61-run matrix (<code class="k">results.csv</code>, <code class="k">RESULTS.md</code>), runner and aggregator scripts, EP8-rank proxy configs and staggered workloads live in the LLMServingSim working branch under <code class="k">agent/experiments/dsv32-ep8-matrix/</code> (branch <code class="k">deepseek-v32-support</code>). Kernel profiles: <code class="k">profiler/perf/H200/deepseek-ai/DeepSeek-V3.2-Exp/bf16-kvfp8/</code> (Part&nbsp;VI).</p>
+      <p><a href="../05_deepseekv32/report.html">&larr; Part VI: One Decoder Layer vs Batch &amp; Context (measured)</a> &middot; <a href="../../index.html">Report Archive</a></p>
+    </div>
+  </main>
+</div>
+<script>
+  const links=[...document.querySelectorAll('nav.toc a[href^="#"]')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+  const spy=()=>{let i=secs.findIndex(s=>s&&s.getBoundingClientRect().top>90);if(i===-1)i=secs.length;i=Math.max(0,i-1);links.forEach((a,j)=>a.classList.toggle('active',j===i));};
+  document.addEventListener('scroll',spy,{passive:true});spy();
+</script>
+</body>
+</html>
