@@ -68,8 +68,9 @@
     <a href="#kernels">8 &middot; The layer, kernel by kernel</a>
     <a href="#tiers">9 &middot; Gather across memory tiers</a>
     <a href="#throughput">10 &middot; Throughput: what batching buys</a>
-    <a href="#nmp">11 &middot; Near-memory: the indexer on an HBM base die</a>
-    <a href="#method">12 &middot; Method &amp; caveats</a>
+    <a href="#roofline">11 &middot; DSA vs dense: the roofline</a>
+    <a href="#nmp">12 &middot; Near-memory: the indexer on an HBM base die</a>
+    <a href="#method">13 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -1160,9 +1161,51 @@
         transferable result.</div>
     </section>
 
-    
+    <section class="card" id="roofline">
+      <h2><span class="num">11</span>DSA vs dense: the roofline, and why cheaper is memory-bound</h2>
+      <p class="lead">What DSA actually buys, measured against the same attention run densely.</p>
+      <p>The right counterfactual for &ldquo;how much does sparsity help?&rdquo; is <b>the same V3.2
+        attention with the indexer removed</b> &mdash; classic MLA attending over <i>all</i> L cached
+        tokens instead of the top-2048. The q/kv/o projections are identical on both sides and cancel, so
+        this is a clean comparison of the attention <i>mechanism</i>. Per token, the two paths cost:</p>
+      <div class="scroll"><table><thead><tr><th>per (query, token)</th><th class="num">FLOP</th><th class="num">bytes read</th><th class="num">arithmetic intensity</th><th>roofline</th></tr></thead><tbody><tr><td>dense MLA attend</td><td class="num">278,528</td><td class="num">656</td><td class="num">425</td><td>compute-bound</td></tr><tr><td>DSA indexer scan</td><td class="num">16,384</td><td class="num">132</td><td class="num">124</td><td>memory-bound</td></tr><tr><td class="num">ratio (dense / scan)</td><td class="num">17&times;</td><td class="num">5&times;</td><td class="num">&mdash;</td><td>&mdash;</td></tr></tbody></table></div>
+      <p>DSA replaces dense&rsquo;s O(L) attend with a <b>17&times; cheaper (compute)</b>,
+        <b>5&times; cheaper (bytes)</b> O(L) indexer scan, plus a fixed top-2048 attend.
+        Because it cuts compute (17&times;) harder than memory (5&times;),
+        the intensity falls from <b>425</b> (above the 412 ridge &rarr; compute-bound) to
+        <b>124</b> (below it &rarr; memory-bound).</p>
+
+      <h3>The measured full-block comparison</h3>
+      <div class="scroll"><table><thead><tr><th class="num">context</th><th class="num">DSA indexer</th><th class="num">DSA gather+attend</th><th class="num">DSA total</th><th class="num">dense (analytic)</th><th class="num">DSA speedup</th></tr></thead><tbody><tr><td class="num">4K</td><td class="num">55</td><td class="num">155</td><td class="num">209</td><td class="num">37</td><td class="num" style="color:var(--muted)">0.18&times;</td></tr><tr><td class="num">16K</td><td class="num">85</td><td class="num">155</td><td class="num">240</td><td class="num">148</td><td class="num" style="color:var(--muted)">0.61&times;</td></tr><tr><td class="num">64K</td><td class="num">218</td><td class="num">155</td><td class="num">372</td><td class="num">590</td><td class="num" style="color:var(--good)">1.58&times;</td></tr><tr><td class="num">128K</td><td class="num">377</td><td class="num">155</td><td class="num">532</td><td class="num">1181</td><td class="num" style="color:var(--good)">2.22&times;</td></tr><tr><td class="num">256K</td><td class="num">694</td><td class="num">155</td><td class="num">849</td><td class="num">2361</td><td class="num" style="color:var(--good)">2.78&times;</td></tr><tr><td class="num">512K</td><td class="num">1326</td><td class="num">155</td><td class="num">1481</td><td class="num">4723</td><td class="num" style="color:var(--good)">3.19&times;</td></tr><tr><td class="num">1M</td><td class="num">2580</td><td class="num">155</td><td class="num">2735</td><td class="num">9445</td><td class="num" style="color:var(--good)">3.45&times;</td></tr></tbody></table><p style="color:var(--muted);font-size:.85rem;margin-top:6px">&micro;s per attention layer, batch&nbsp;64. DSA columns measured; dense is the analytic roofline for the same MLA attending over all L. Shared q/kv/o projections cancel and are excluded from both sides.</p></div>
+      <div class="callout"><b>Slope + floor vs pure slope.</b> Dense is a big linear slope with no floor
+        (&prop;&nbsp;656&nbsp;B/token). DSA is a <b>5&times; smaller slope</b> (&prop;&nbsp;132&nbsp;B/token,
+        the scan) <b>plus a fixed ~155&nbsp;&micro;s floor</b> (the scatter gather of 2048&times;656&nbsp;B).
+        They cross at <b>~28K context</b>: below it the gather floor makes DSA <i>slower</i> than
+        dense; above it DSA pulls ahead &mdash; <b>2.2&times; at 128K</b>, <b>3.5&times;
+        at 1M</b>. The speedup is bounded (~3.5&ndash;3.8&times;), not unbounded: the indexer still scans
+        every token, and top-k grows with context too.</div>
+
+      <h3>Faster <i>and</i> more memory-bound &mdash; the idle compute</h3>
+      <p>These aren&rsquo;t in tension. &ldquo;Faster&rdquo; is about absolute work; &ldquo;memory-bound&rdquo;
+        is about the compute-to-byte ratio. DSA does less of <i>both</i> &mdash; it just cuts compute harder.
+        The tell is the <b>achieved</b> compute rate on the H200:</p>
+      <div class="scroll"><table><thead><tr><th class="num">context</th><th class="num">dense attend TFLOP/s</th><th class="num">% peak</th><th class="num">DSA scan TFLOP/s</th><th class="num">% peak</th></tr></thead><tbody><tr><td class="num">128K</td><td class="num">1979</td><td class="num">100%</td><td class="num">505</td><td class="num">26%</td></tr><tr><td class="num">1M</td><td class="num">1979</td><td class="num">100%</td><td class="num">515</td><td class="num">26%</td></tr></tbody></table></div>
+      <div class="callout warn"><b>The scan runs the H200 at ~26 of its fp8 TOPS</b>
+        (~505&nbsp;TFLOP/s of 1979) &mdash; the compute engine sits ~75% idle, starved for
+        bandwidth &mdash; while the dense attend runs it near 100%. That idle compute is exactly why the
+        speedup caps at the <b>byte</b> ratio (5&times;), not the <b>FLOP</b> ratio
+        (17&times;): if the scan could saturate the compute units it would be
+        17&times; faster; bandwidth throttles it to ~5&times;. The two memory ops even pull
+        opposite ways &mdash; the scan <b>streams</b> paged keys at ~85% of peak HBM, the gather
+        <b>scatters</b> 2048 random 656&nbsp;B records at ~17% (&sect;7, &sect;9).</div>
+      <div class="callout win"><b>Why this sets up the next section.</b> DSA moves the dominant long-context
+        operation off the compute roof onto the memory roof, leaving most of a datacenter GPU&rsquo;s FLOP
+        engine unused. You don&rsquo;t need 1979&nbsp;TFLOP/s to run a 124-intensity streaming reduction &mdash;
+        you need bandwidth next to the KV. That is the case for near-memory processing.</div>
+    </section>
+
     <section class="card" id="nmp">
-      <h2><span class="num">11</span>An architecture note: the indexer on an HBM base die</h2>
+      <h2><span class="num">12</span>An architecture note: the indexer on an HBM base die</h2>
       <p class="lead">A forward-looking read, not a measurement. Everything above says the long-context
         cost is the indexer scan &mdash; a memory-bound sweep that decides which KV to read. That makes
         it the natural candidate for <b>near-memory processing</b> in a capacity-expanded HBM: run the
@@ -1312,7 +1355,7 @@
     </section>
 
         <section class="card" id="method">
-      <h2><span class="num">12</span>Method &amp; caveats</h2>
+      <h2><span class="num">13</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
