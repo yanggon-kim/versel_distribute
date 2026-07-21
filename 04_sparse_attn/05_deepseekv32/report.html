@@ -68,7 +68,8 @@
     <a href="#kernels">8 &middot; The layer, kernel by kernel</a>
     <a href="#tiers">9 &middot; Gather across memory tiers</a>
     <a href="#throughput">10 &middot; Throughput: what batching buys</a>
-    <a href="#method">11 &middot; Method &amp; caveats</a>
+    <a href="#nmp">11 &middot; Near-memory: the indexer on an HBM base die</a>
+    <a href="#method">12 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -307,6 +308,209 @@
       <div class="callout win"><b>Why this matters for a cluster.</b> The MoE block is what expert
         parallelism exists to spread. If long-context serving is attention-bound, adding EP ranks buys
         progressively less, and the binding constraint moves to KV-cache bandwidth and capacity instead.</div>
+
+      <h3>The same decomposition, over batch size</h3>
+      <p>The chart above sweeps context at fixed batch. Sweeping <b>batch</b> at fixed context shows the
+        other half of the story &mdash; how concurrency shifts the split. Same three panels at 128K, 512K
+        and 1M context, on a shared latency scale (so bar height is comparable across panels):</p>
+      <div class="fig">
+        <div class="cap">128K context. Composition of one MoE decoder layer vs batch; label above each
+          bar is attention&rsquo;s share. Shared y-scale with the two panels below.</div>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Decoder-layer composition vs batch at 128K context">
+        <line x1="74" y1="250.0" x2="750" y2="250.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="254.0" text-anchor="end" font-size="11" fill="#647083">0</text>
+        <line x1="74" y1="193.5" x2="750" y2="193.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="197.5" text-anchor="end" font-size="11" fill="#647083">4 ms</text>
+        <line x1="74" y1="137.0" x2="750" y2="137.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="141.0" text-anchor="end" font-size="11" fill="#647083">9 ms</text>
+        <line x1="74" y1="80.5" x2="750" y2="80.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="84.5" text-anchor="end" font-size="11" fill="#647083">13 ms</text>
+        <line x1="74" y1="24.0" x2="750" y2="24.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="28.0" text-anchor="end" font-size="11" fill="#647083">18 ms</text>
+        <rect x="90.9" y="247.8" width="50.7" height="0.5" fill="#2a78d6" rx="2"/>
+        <rect x="90.9" y="246.1" width="50.7" height="0.5" fill="#008300" rx="2"/>
+        <rect x="90.9" y="246.0" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="116.2" y="240.0" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">56%</text>
+        <text x="116.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">1</text>
+        <rect x="175.4" y="247.1" width="50.7" height="0.9" fill="#2a78d6" rx="2"/>
+        <rect x="175.4" y="238.2" width="50.7" height="6.9" fill="#008300" rx="2"/>
+        <rect x="175.4" y="238.1" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="200.8" y="232.1" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">24%</text>
+        <text x="200.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">8</text>
+        <rect x="259.9" y="244.8" width="50.7" height="3.2" fill="#2a78d6" rx="2"/>
+        <rect x="259.9" y="210.2" width="50.7" height="32.6" fill="#008300" rx="2"/>
+        <rect x="259.9" y="210.1" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="285.2" y="204.1" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">13%</text>
+        <text x="285.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">32</text>
+        <rect x="344.4" y="242.1" width="50.7" height="5.9" fill="#2a78d6" rx="2"/>
+        <rect x="344.4" y="207.3" width="50.7" height="32.8" fill="#008300" rx="2"/>
+        <rect x="344.4" y="207.3" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="369.8" y="201.3" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">18%</text>
+        <text x="369.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">64</text>
+        <rect x="428.9" y="236.9" width="50.7" height="11.1" fill="#2a78d6" rx="2"/>
+        <rect x="428.9" y="198.7" width="50.7" height="36.2" fill="#008300" rx="2"/>
+        <rect x="428.9" y="198.6" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="454.2" y="192.6" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">25%</text>
+        <text x="454.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">128</text>
+        <rect x="513.4" y="225.6" width="50.7" height="22.4" fill="#2a78d6" rx="2"/>
+        <rect x="513.4" y="186.6" width="50.7" height="37.1" fill="#008300" rx="2"/>
+        <rect x="513.4" y="186.4" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="538.8" y="180.4" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">38%</text>
+        <text x="538.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">256</text>
+        <rect x="597.9" y="202.7" width="50.7" height="45.3" fill="#2a78d6" rx="2"/>
+        <rect x="597.9" y="162.7" width="50.7" height="38.0" fill="#008300" rx="2"/>
+        <rect x="597.9" y="162.5" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="623.2" y="156.5" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">54%</text>
+        <text x="623.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">512</text>
+        <rect x="682.4" y="157.4" width="50.7" height="90.6" fill="#2a78d6" rx="2"/>
+        <rect x="682.4" y="115.1" width="50.7" height="40.2" fill="#008300" rx="2"/>
+        <rect x="682.4" y="114.9" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="707.8" y="108.9" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">69%</text>
+        <text x="707.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+        <line x1="74" y1="250" x2="750" y2="250" stroke="#c7ced9" stroke-width="1"/>
+        <text x="412" y="288" text-anchor="middle" font-size="12" fill="#647083">decode batch &mdash; 128K context (label above bar = attention&rsquo;s share)</text>
+        <rect x="764" y="23" width="12" height="12" rx="3" fill="#2a78d6"/>
+        <text x="782" y="33" font-size="11" fill="#43506a">sparse attention</text>
+        <rect x="764" y="43" width="12" height="12" rx="3" fill="#008300"/>
+        <text x="782" y="53" font-size="11" fill="#43506a">MoE</text>
+        <rect x="764" y="63" width="12" height="12" rx="3" fill="#e87ba4"/>
+        <text x="782" y="73" font-size="11" fill="#43506a">norms</text>
+        </svg>
+      </div>
+      <div class="fig">
+        <div class="cap">512K context.</div>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Decoder-layer composition vs batch at 512K context">
+        <line x1="74" y1="250.0" x2="750" y2="250.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="254.0" text-anchor="end" font-size="11" fill="#647083">0</text>
+        <line x1="74" y1="193.5" x2="750" y2="193.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="197.5" text-anchor="end" font-size="11" fill="#647083">4 ms</text>
+        <line x1="74" y1="137.0" x2="750" y2="137.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="141.0" text-anchor="end" font-size="11" fill="#647083">9 ms</text>
+        <line x1="74" y1="80.5" x2="750" y2="80.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="84.5" text-anchor="end" font-size="11" fill="#647083">13 ms</text>
+        <line x1="74" y1="24.0" x2="750" y2="24.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="28.0" text-anchor="end" font-size="11" fill="#647083">18 ms</text>
+        <rect x="90.9" y="247.4" width="50.7" height="0.6" fill="#2a78d6" rx="2"/>
+        <rect x="90.9" y="245.7" width="50.7" height="0.5" fill="#008300" rx="2"/>
+        <rect x="90.9" y="245.7" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="116.2" y="239.7" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">60%</text>
+        <text x="116.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">1</text>
+        <rect x="175.4" y="245.6" width="50.7" height="2.4" fill="#2a78d6" rx="2"/>
+        <rect x="175.4" y="236.7" width="50.7" height="6.9" fill="#008300" rx="2"/>
+        <rect x="175.4" y="236.6" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="200.8" y="230.6" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">33%</text>
+        <text x="200.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">8</text>
+        <rect x="259.9" y="238.8" width="50.7" height="9.2" fill="#2a78d6" rx="2"/>
+        <rect x="259.9" y="204.3" width="50.7" height="32.6" fill="#008300" rx="2"/>
+        <rect x="259.9" y="204.2" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="285.2" y="198.2" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">24%</text>
+        <text x="285.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">32</text>
+        <rect x="344.4" y="229.9" width="50.7" height="18.1" fill="#2a78d6" rx="2"/>
+        <rect x="344.4" y="195.1" width="50.7" height="32.8" fill="#008300" rx="2"/>
+        <rect x="344.4" y="195.0" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="369.8" y="189.0" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">37%</text>
+        <text x="369.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">64</text>
+        <rect x="428.9" y="214.4" width="50.7" height="33.6" fill="#2a78d6" rx="2"/>
+        <rect x="428.9" y="176.2" width="50.7" height="36.2" fill="#008300" rx="2"/>
+        <rect x="428.9" y="176.1" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="454.2" y="170.1" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">48%</text>
+        <text x="454.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">128</text>
+        <rect x="513.4" y="180.6" width="50.7" height="67.4" fill="#2a78d6" rx="2"/>
+        <rect x="513.4" y="141.5" width="50.7" height="37.1" fill="#008300" rx="2"/>
+        <rect x="513.4" y="141.4" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="538.8" y="135.4" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">64%</text>
+        <text x="538.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">256</text>
+        <rect opacity="0.55" x="597.9" y="142.3" width="50.7" height="105.7" fill="#2a78d6" rx="2"/>
+        <rect opacity="0.55" x="597.9" y="102.3" width="50.7" height="38.0" fill="#008300" rx="2"/>
+        <rect opacity="0.55" x="597.9" y="102.2" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="623.2" y="96.2" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">73%</text>
+        <text x="623.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">512</text>
+        <rect opacity="0.55" x="682.4" y="96.8" width="50.7" height="151.2" fill="#2a78d6" rx="2"/>
+        <rect opacity="0.55" x="682.4" y="54.6" width="50.7" height="40.2" fill="#008300" rx="2"/>
+        <rect opacity="0.55" x="682.4" y="54.3" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="707.8" y="48.3" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">78%</text>
+        <text x="707.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+        <line x1="74" y1="250" x2="750" y2="250" stroke="#c7ced9" stroke-width="1"/>
+        <text x="412" y="288" text-anchor="middle" font-size="12" fill="#647083">decode batch &mdash; 512K context (label above bar = attention&rsquo;s share)</text>
+        <rect x="764" y="23" width="12" height="12" rx="3" fill="#2a78d6"/>
+        <text x="782" y="33" font-size="11" fill="#43506a">sparse attention</text>
+        <rect x="764" y="43" width="12" height="12" rx="3" fill="#008300"/>
+        <text x="782" y="53" font-size="11" fill="#43506a">MoE</text>
+        <rect x="764" y="63" width="12" height="12" rx="3" fill="#e87ba4"/>
+        <text x="782" y="73" font-size="11" fill="#43506a">norms</text>
+        </svg>
+      </div>
+      <div class="fig">
+        <div class="cap">1M context. Faded bars past the KV budget (&sect;6) are extrapolated.</div>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Decoder-layer composition vs batch at 1M context">
+        <line x1="74" y1="250.0" x2="750" y2="250.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="254.0" text-anchor="end" font-size="11" fill="#647083">0</text>
+        <line x1="74" y1="193.5" x2="750" y2="193.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="197.5" text-anchor="end" font-size="11" fill="#647083">4 ms</text>
+        <line x1="74" y1="137.0" x2="750" y2="137.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="141.0" text-anchor="end" font-size="11" fill="#647083">9 ms</text>
+        <line x1="74" y1="80.5" x2="750" y2="80.5" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="84.5" text-anchor="end" font-size="11" fill="#647083">13 ms</text>
+        <line x1="74" y1="24.0" x2="750" y2="24.0" stroke="#e6eaf0" stroke-width="1"/>
+        <text x="66" y="28.0" text-anchor="end" font-size="11" fill="#647083">18 ms</text>
+        <rect x="90.9" y="247.0" width="50.7" height="1.0" fill="#2a78d6" rx="2"/>
+        <rect x="90.9" y="245.3" width="50.7" height="0.5" fill="#008300" rx="2"/>
+        <rect x="90.9" y="245.2" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="116.2" y="239.2" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">64%</text>
+        <text x="116.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">1</text>
+        <rect x="175.4" y="243.7" width="50.7" height="4.3" fill="#2a78d6" rx="2"/>
+        <rect x="175.4" y="234.7" width="50.7" height="6.9" fill="#008300" rx="2"/>
+        <rect x="175.4" y="234.7" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="200.8" y="228.7" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">41%</text>
+        <text x="200.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">8</text>
+        <rect x="259.9" y="230.9" width="50.7" height="17.1" fill="#2a78d6" rx="2"/>
+        <rect x="259.9" y="196.4" width="50.7" height="32.6" fill="#008300" rx="2"/>
+        <rect x="259.9" y="196.3" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="285.2" y="190.3" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">36%</text>
+        <text x="285.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">32</text>
+        <rect x="344.4" y="213.7" width="50.7" height="34.3" fill="#2a78d6" rx="2"/>
+        <rect x="344.4" y="178.9" width="50.7" height="32.8" fill="#008300" rx="2"/>
+        <rect x="344.4" y="178.8" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="369.8" y="172.8" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">51%</text>
+        <text x="369.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">64</text>
+        <rect x="428.9" y="184.3" width="50.7" height="63.7" fill="#2a78d6" rx="2"/>
+        <rect x="428.9" y="146.1" width="50.7" height="36.2" fill="#008300" rx="2"/>
+        <rect x="428.9" y="146.0" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="454.2" y="140.0" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">63%</text>
+        <text x="454.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">128</text>
+        <rect opacity="0.55" x="513.4" y="150.5" width="50.7" height="97.5" fill="#2a78d6" rx="2"/>
+        <rect opacity="0.55" x="513.4" y="111.5" width="50.7" height="37.1" fill="#008300" rx="2"/>
+        <rect opacity="0.55" x="513.4" y="111.4" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="538.8" y="105.4" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">72%</text>
+        <text x="538.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">256</text>
+        <rect opacity="0.55" x="597.9" y="112.1" width="50.7" height="135.9" fill="#2a78d6" rx="2"/>
+        <rect opacity="0.55" x="597.9" y="72.1" width="50.7" height="38.0" fill="#008300" rx="2"/>
+        <rect opacity="0.55" x="597.9" y="72.0" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="623.2" y="66.0" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">77%</text>
+        <text x="623.2" y="268.0" text-anchor="middle" font-size="11" fill="#647083">512</text>
+        <rect opacity="0.55" x="682.4" y="66.5" width="50.7" height="181.5" fill="#2a78d6" rx="2"/>
+        <rect opacity="0.55" x="682.4" y="24.3" width="50.7" height="40.2" fill="#008300" rx="2"/>
+        <rect opacity="0.55" x="682.4" y="24.0" width="50.7" height="0.5" fill="#e87ba4" rx="2"/>
+        <text x="707.8" y="18.0" text-anchor="middle" font-size="10" font-weight="700" fill="#172033">81%</text>
+        <text x="707.8" y="268.0" text-anchor="middle" font-size="11" fill="#647083">1024</text>
+        <line x1="74" y1="250" x2="750" y2="250" stroke="#c7ced9" stroke-width="1"/>
+        <text x="412" y="288" text-anchor="middle" font-size="12" fill="#647083">decode batch &mdash; 1M context (label above bar = attention&rsquo;s share)</text>
+        <rect x="764" y="23" width="12" height="12" rx="3" fill="#2a78d6"/>
+        <text x="782" y="33" font-size="11" fill="#43506a">sparse attention</text>
+        <rect x="764" y="43" width="12" height="12" rx="3" fill="#008300"/>
+        <text x="782" y="53" font-size="11" fill="#43506a">MoE</text>
+        <rect x="764" y="63" width="12" height="12" rx="3" fill="#e87ba4"/>
+        <text x="782" y="73" font-size="11" fill="#43506a">norms</text>
+        </svg>
+      </div>
+      <p>Two things read straight off these. <b>The MoE block (green) is nearly the same height at every
+        batch within a panel</b> &mdash; it saturates at batch&nbsp;32 and then barely grows &mdash; while
+        the <b>attention block (blue) climbs steadily with batch</b>, because the indexer scan is
+        &prop;&nbsp;batch&nbsp;&times;&nbsp;context. So batching converts an MoE-dominated layer into an
+        attention-dominated one, and it happens <b>sooner at longer context</b>: attention&rsquo;s share
+        crosses 50% only at the largest batches at 128K, but is already the majority across most of the
+        batch range at 1M. Latency (bar height) rises with both knobs, but for different reasons &mdash;
+        MoE height is set by context (flat) and attention height by batch&times;context.</p>
     </section>
 
     <section class="card" id="cross">
@@ -603,6 +807,22 @@
         (each expert still sees only batch&times;8&divide;256 tokens), so they stay memory-bound across
         the entire serving range. DeepSeek-V3.2 decode is a memory-bandwidth problem, and the MoE
         weights are the largest part of it.</div>
+
+      <h3>Arithmetic intensity across batch</h3>
+      <p>Made concrete &mdash; AI for every kernel in the layer as batch grows (fp8, 128K context).
+        <b style="color:#1a7f37">Green</b> marks a kernel that has crossed the fp8 ridge
+        (412&nbsp;FLOP/byte) into compute-bound; everything else is memory-bound:</p>
+      <div class="scroll"><table><thead><tr><th>kernel \ batch</th><th class="num">1</th><th class="num">8</th><th class="num">64</th><th class="num">256</th><th class="num">1024</th></tr></thead><tbody><tr><td>fused QKV-A projection</td><td class="num">2.0</td><td class="num">16</td><td class="num">119</td><td class="num">390</td><td class="num" style="font-weight:700;color:#1a7f37">908</td></tr><tr><td>q_b projection</td><td class="num">2.0</td><td class="num">16</td><td class="num">118</td><td class="num">378</td><td class="num" style="font-weight:700;color:#1a7f37">847</td></tr><tr><td>indexer q/k projections</td><td class="num">2.0</td><td class="num">16</td><td class="num">128</td><td class="num" style="font-weight:700;color:#1a7f37">512</td><td class="num" style="font-weight:700;color:#1a7f37">2,048</td></tr><tr><td>indexer scan</td><td class="num">124</td><td class="num">124</td><td class="num">124</td><td class="num">124</td><td class="num">124</td></tr><tr><td>MLA gather + attend</td><td class="num">400</td><td class="num">400</td><td class="num">400</td><td class="num">400</td><td class="num">400</td></tr><tr><td>o_proj</td><td class="num">2.0</td><td class="num">16</td><td class="num">125</td><td class="num" style="font-weight:700;color:#1a7f37">464</td><td class="num" style="font-weight:700;color:#1a7f37">1,452</td></tr><tr><td>MoE gate</td><td class="num">2.0</td><td class="num">15</td><td class="num">85</td><td class="num">171</td><td class="num">228</td></tr><tr><td>MoE routed experts</td><td class="num">0.1</td><td class="num">0.5</td><td class="num">4.0</td><td class="num">16</td><td class="num">64</td></tr><tr><td>MoE shared expert</td><td class="num">2.0</td><td class="num">16</td><td class="num">128</td><td class="num" style="font-weight:700;color:#1a7f37">512</td><td class="num" style="font-weight:700;color:#1a7f37">2,048</td></tr></tbody></table></div>
+      <p>The split is stark. The weight-bearing GEMMs (projections, gate, shared expert) ride
+        AI&nbsp;=&nbsp;2&times;batch and cross the ridge into compute-bound <b>between batch&nbsp;256 and
+        1024</b> &mdash; the exact point set by each GEMM&rsquo;s activation overhead (the leaner
+        indexer/o_proj/shared cross by 256, the wider QKV/q_b only by 1024). The <b>indexer scan and the
+        gather are flat</b> &mdash; their AI is batch-independent (numerator and denominator both scale with
+        the tokens gathered), so they are permanently memory-bound (the gather sits at ~400, just under the
+        ridge, forever). And the <b>routed experts sit near the floor</b> (AI&nbsp;&asymp;&nbsp;batch&divide;16),
+        the last kernel to ever leave the memory-bound regime. So even a system batched to 1024, with every
+        projection now compute-bound, leaves the two things that actually dominate the layer &mdash; the
+        scan and the MoE weight streaming &mdash; firmly bandwidth-bound.</p>
 
       <h3>How the lightning indexer&rsquo;s scan scales</h3>
       <p>The three marked rows above are the lightning indexer &mdash; at 128K context it is
@@ -940,8 +1160,113 @@
         transferable result.</div>
     </section>
 
+    
+    <section class="card" id="nmp">
+      <h2><span class="num">11</span>An architecture note: the indexer on an HBM base die</h2>
+      <p class="lead">A forward-looking read, not a measurement. Everything above says the long-context
+        cost is the indexer scan &mdash; a memory-bound sweep that decides which KV to read. That makes
+        it the natural candidate for <b>near-memory processing</b> in a capacity-expanded HBM: run the
+        indexer on the HBM base die, and let the base die drive the fetch from an LPDDR capacity tier
+        over UCIe.</p>
+      <div class="fig">
+        <div class="cap">The proposal: indexer keys stay in HBM, the base die scans them and selects the
+          top-2048, then fetches only those latents from LPDDR over UCIe &mdash; the index never leaves
+          the die that uses it.</div>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Near-memory indexer dataflow: GPU, HBM base die, LPDDR">
+        <rect x="30" y="90" width="200" height="120" rx="10" fill="#eaf2ff" stroke="#1f6feb" stroke-width="2"/>
+        <text x="130.0" y="112" text-anchor="middle" font-size="13" font-weight="800" fill="#1f6feb">GPU</text>
+        <text x="130.0" y="134" text-anchor="middle" font-size="11" fill="#43506a">QKV / q_b projections</text>
+        <text x="130.0" y="151" text-anchor="middle" font-size="11" fill="#43506a">MLA attend + MoE</text>
+        <text x="130.0" y="168" text-anchor="middle" font-size="11" fill="#43506a">sends indexer query</text>
+        <text x="130.0" y="185" text-anchor="middle" font-size="11" fill="#43506a">gets gathered latents</text>
+        <rect x="345" y="60" width="230" height="180" rx="10" fill="#f3eefe" stroke="#8250df" stroke-width="2"/>
+        <text x="460.0" y="82" text-anchor="middle" font-size="13" font-weight="800" fill="#8250df">Custom HBM + base die</text>
+        <text x="460.0" y="104" text-anchor="middle" font-size="11" fill="#43506a">indexer KEYS (132 B/tok)</text>
+        <text x="460.0" y="121" text-anchor="middle" font-size="11" fill="#43506a">&mdash; live in HBM &mdash;</text>
+        <text x="460.0" y="138" text-anchor="middle" font-size="11" fill="#43506a">base die: scan &rarr; top-2048</text>
+        <text x="460.0" y="155" text-anchor="middle" font-size="11" fill="#43506a">drives LPDDR fetch (UCIe)</text>
+        <rect x="690" y="90" width="190" height="120" rx="10" fill="#e7f5ec" stroke="#1a7f37" stroke-width="2"/>
+        <text x="785.0" y="112" text-anchor="middle" font-size="13" font-weight="800" fill="#1a7f37">LPDDR (via UCIe)</text>
+        <text x="785.0" y="134" text-anchor="middle" font-size="11" fill="#43506a">main LATENTS (656 B/tok)</text>
+        <text x="785.0" y="151" text-anchor="middle" font-size="11" fill="#43506a">&mdash; capacity tier &mdash;</text>
+        <text x="785.0" y="168" text-anchor="middle" font-size="11" fill="#43506a">sparse 2048 fetched</text>
+        <text x="785.0" y="185" text-anchor="middle" font-size="11" fill="#43506a">per step</text>
+        <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#647083"/></marker></defs>
+        <line x1="230" y1="130" x2="343" y2="110" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="286.5" y="114.0" text-anchor="middle" font-size="10" fill="#647083">query</text>
+        <line x1="343" y1="190" x2="230" y2="175" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="286.5" y="196.5" text-anchor="middle" font-size="10" fill="#647083">latents / result</text>
+        <line x1="575" y1="120" x2="688" y2="120" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="631.5" y="114.0" text-anchor="middle" font-size="10" fill="#647083">index &rarr; fetch</text>
+        <line x1="688" y1="175" x2="577" y2="190" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="632.5" y="196.5" text-anchor="middle" font-size="10" fill="#647083">2048 latents</text>
+        </svg>
+      </div>
+
+      <h3>Why the indexer, and not the other blocks</h3>
+      <p>Everything in decode is memory-bound (&sect;8), so that alone does not single it out. Three
+        properties do, and no other block has all three:</p>
+      <ul class="notes">
+        <li><b>It is a data-reduction.</b> The scan reads a lot (132&nbsp;B &times; context per query) and
+          emits almost nothing (2048 indices). Near-memory processing exists to reduce near the data and
+          ship only the small result &mdash; exactly this shape. The MoE experts are <i>more</i>
+          bandwidth-bound (AI&nbsp;=&nbsp;4) but they read <b>weights</b>, need real matmul throughput, and
+          their weights want to stay in HBM (reused every step, not a capacity problem) &mdash; a poor NMP
+          fit.</li>
+        <li><b>It <i>is</i> the fetch address.</b> The index is not an intermediate &mdash; it is the
+          LPDDR address list. Computing it anywhere but the LPDDR-facing die means a round trip
+          (GPU&nbsp;&rarr;&nbsp;scores&nbsp;&rarr;&nbsp;GPU&nbsp;&rarr;&nbsp;fetch). The base die is the one
+          place with both HBM access (the keys) and the UCIe link (the latents), so index-and-fetch
+          collapse to one hop.</li>
+        <li><b>It is the long-context bottleneck</b> (&sect;7&ndash;&sect;8): 45% of the attention block at
+          128K, 76% at 1M. Offloading it is where the payoff is.</li>
+      </ul>
+
+      <h3>The refinement the data forces: tier by key vs latent</h3>
+      <p>The KV splits into two halves with opposite access patterns, and they should live in different
+        tiers:</p>
+      <div class="scroll"><table><thead><tr><th></th><th>indexer key</th><th>main latent</th></tr></thead>
+        <tbody>
+          <tr><th>size</th><td><b>132 B/token (17% of KV)</b></td><td>656 B/token (83%)</td></tr>
+          <tr><th>read by</th><td>the scan &mdash; every token, every step</td><td>the gather &mdash; 2048 selected, every step</td></tr>
+          <tr><th>bandwidth</th><td>O(batch &times; context) &mdash; huge, context-scaling</td><td>O(batch &times; 2048) &mdash; fixed, flat in context</td></tr>
+          <tr><th>tier</th><td><b>HBM</b> (hot, near the scan)</td><td><b>LPDDR</b> (cold bulk, sparse)</td></tr>
+        </tbody></table></div>
+      <p>Keeping keys in HBM and latents in LPDDR offloads <b>83% of the KV capacity</b> to LPDDR while
+        keeping the bandwidth-critical half fast. The selected-latent gather is bounded and context-flat
+        (~5&nbsp;GB/step across all layers at batch&nbsp;64), so LPDDR bandwidth is a manageable target
+        there.</p>
+
+      <h3>The wall to design around</h3>
+      <p>NMP does not make the scan cheaper &mdash; it must read <code class="k">batch&nbsp;&times;&nbsp;context&nbsp;&times;&nbsp;132&nbsp;B</code>
+        every step wherever the keys live. That is the hard constraint:</p>
+      <div class="callout warn"><b>The scan&rsquo;s bandwidth is fundamental, so the keys must stay in
+        HBM.</b> At batch&nbsp;64 / 1M the scan reads <b>~540&nbsp;GB/step</b> across layers &mdash;
+        ~113&nbsp;ms at HBM&rsquo;s 4.8&nbsp;TB/s, but <b>~1.1&nbsp;s at an LPDDR-class ~500&nbsp;GB/s</b>.
+        Putting the scan on the base die only wins if it reads the keys from HBM (or its own near-DRAM);
+        if the keys are in LPDDR it is LPDDR-bandwidth-bound no matter where the compute sits. Keys fit in
+        ~100&nbsp;GB of HBM up to roughly <b>batch&times;context &asymp; 12&nbsp;M token-seqs</b> (batch&nbsp;8
+        at 1M, batch&nbsp;64 at ~190K); beyond that they spill and the scan slows. Modelling that crossover
+        is the core of the study.</div>
+      <div class="callout"><b>And the base die needs the compute.</b> The scan is memory-bound on a GPU
+        tensor core, but it still burned ~500&nbsp;TFLOPS to keep pace with 85% of HBM bandwidth at 128K
+        (AI&nbsp;&asymp;&nbsp;124 &mdash; 64 index heads &times; 128 dims is not free). A base die under a
+        DRAM stack has a small fraction of that and a hard thermal budget, so the realistic failure mode is
+        a scan that is <b>compute-limited on the base die</b>, not bandwidth-limited. The make-or-break
+        number is the indexer&rsquo;s FLOP/token against a realizable near-DRAM MAC array (and whether a
+        cheaper scoring approximation gets there).</div>
+
+      <div class="callout win"><b>Verdict.</b> It is the right operation to offload &mdash; the only one
+        that is simultaneously memory-bound, a reduction, and the generator of the LPDDR access itself. The
+        real prize is the co-location (index and fetch on the same die), which removes a control round trip,
+        not just bandwidth. The open questions are quantitative: (1) base-die compute vs the
+        indexer&rsquo;s FLOP/token; (2) the key-capacity crossover from HBM to LPDDR; (3) UCIe bandwidth and
+        random-access efficiency for the scattered 2048&times;656&nbsp;B gather. All three are answerable
+        from the profile data this report is built on.</div>
+    </section>
+
         <section class="card" id="method">
-      <h2><span class="num">11</span>Method &amp; caveats</h2>
+      <h2><span class="num">12</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one H200 (SM90), <code class="k">fp8_ds_mla</code> KV cache,
