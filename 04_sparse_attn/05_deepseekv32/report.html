@@ -1451,6 +1451,31 @@
         latency contribution</b>; the NPU&rsquo;s latency term grows with context (the scan share) and
         becomes decisive only in the keys-spill regime below.</div>
 
+      <p><b>The full-speed capacity tier &mdash; b=37/GPU (B=296), the design point that wins.</b>
+        Keys-in-HBM capacity allows 37 sessions/GPU (39.4 GB free after weights &divide; 1.06 GB of keys per
+        128K session), using only 19% of the LPDDR (194 GB of latents). The scan work grows 4.6&times; with
+        the batch &mdash; <b>79.4 GFLOP/GPU/layer</b>, against a base-die TSV floor of 133 &micro;s
+        (640 MB of keys across 8&times;600 GB/s) &mdash; so where the scan runs matters more than ever:</p>
+      <div class="scroll"><table>
+        <tr><th>Design @ (128K, b=37/GPU, B=296)</th><th class="num">attn block (&micro;s)</th><th class="num">TPOT (ms)</th><th class="num">cluster tok/s</th><th class="num">vs B0</th></tr>
+        <tr><td><b>B0 &mdash; stock 8&times;H200 (caps at b=8)</b></td><td class="num">223 (b=8)</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.00&times;</td></tr>
+        <tr><td>S1 &mdash; no NPU: GPU scans (keys in HBM) + GPU-driven UCIe gather</td><td class="num">470</td><td class="num">53.7</td><td class="num">5,515</td><td class="num">3.24&times;</td></tr>
+        <tr><td><b>S1.5 &mdash; gather-engine NPU: GPU scans, base die gathers</b></td><td class="num">433</td><td class="num">51.4</td><td class="num">5,756</td><td class="num"><b>3.38&times;</b></td></tr>
+        <tr><td>S2 &mdash; full NPU scans, 100 TOPS/GPU</td><td class="num">1,004</td><td class="num">86.7</td><td class="num">3,415</td><td class="num">2.01&times;</td></tr>
+        <tr><td>S2 &mdash; full NPU scans, 200 TOPS/GPU</td><td class="num">607</td><td class="num">62.2</td><td class="num">4,761</td><td class="num">2.80&times;</td></tr>
+        <tr><td>S2 &mdash; full NPU scans, 400 TOPS/GPU</td><td class="num">409</td><td class="num">49.9</td><td class="num">5,928</td><td class="num">3.48&times;</td></tr>
+        <tr><td>S2 &mdash; full NPU scans, 600 TOPS/GPU (near the TSV floor)</td><td class="num">344</td><td class="num">45.9</td><td class="num">6,447</td><td class="num">3.79&times;</td></tr>
+      </table></div>
+      <div class="callout"><b>Reading it &mdash; scan placement should be adaptive.</b> With keys
+        HBM-resident, the GPU scans 640 MB/layer in 159 &micro;s (measured-rate); a base die needs
+        <b>&gt;357 TOPS/GPU (~45 TOPS/cube, ~18 W)</b> to do better, so at feasible thermals the winning
+        configuration here is <b>S1.5: the base die gathers (61 vs 97 &micro;s GPU-driven), the GPU
+        scans</b> &mdash; 3.38&times; over stock from what is essentially the capacity expansion plus a small
+        gather engine. The full MAC array pays either with an aggressive thermal budget (3.5&ndash;3.8&times;
+        at 400&ndash;600 TOPS) or in the keys-spill regime below, where the GPU loses its fast scan path.
+        The batch has a throughput optimum too: b=37 at 3.4&times; beats both b=16 (1.7&ndash;1.8&times;) and
+        the b=162 LPDDR-max spill tier (&asymp;3.5&times; but with ~4&times; worse TPOT).</div>
+
       <p><b>The keys-spill stress point &mdash; where the base-die compute becomes the difference.</b>
         Past b&nbsp;&asymp;&nbsp;37/GPU at 128K (or ~4&ndash;5 sessions at 1M), the keys themselves outgrow
         HBM and every design must stream them from LPDDR. At b=128/GPU (16 sessions/cube, 806 GB KV/GPU) the
@@ -1463,9 +1488,10 @@
         <tr><td>S2 &mdash; base-die NPU, 600 TOPS/GPU</td><td class="num">458</td><td class="num">982</td><td class="num">548</td><td class="num">1.46&times;</td></tr>
       </table></div>
       <div class="callout win"><b>Verdict, quantified.</b> Size the base die at <b>~25 TOPS/cube (200/GPU,
-        ~10 W)</b>: at the design point (B=128) it delivers <b>1.73&times; over the stock 8&times;H200 cluster</b>
-        (1.97&times; at 400 TOPS) and supplies the gather engine and capacity that make B=128 servable at
-        all; in the keys-spill regime it is 1.18&times; over the passive-LPDDR variant, growing with every TOPS added (break-even at 127 TOPS/GPU =
+        ~10 W)</b>: run the scan <i>adaptively</i>: GPU-scan + base-die gather while keys are HBM-resident
+        (<b>3.38&times; over stock at the b=37 full-speed tier</b> &mdash; the capacity does the winning),
+        base-die scan once keys spill or when &ge;~360 TOPS/GPU is affordable (3.5&ndash;3.8&times; at
+        400&ndash;600 TOPS; 1.18&times; over the passive variant in the spill regime), growing with every TOPS added (break-even at 127 TOPS/GPU =
         124 FLOP/B &times; the 1.024 TB/s UCIe aggregate). Part&nbsp;VII quantifies what the freed capacity
         buys at the cluster level.</div>
     </section>
