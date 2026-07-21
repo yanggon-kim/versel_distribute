@@ -568,21 +568,41 @@
       <p>The attention block decomposes cleanly &mdash; its kernels run essentially in sequence, so
         they sum to the block total (unlike DeepSeek-V4, whose kernels overlapped across four CUDA
         streams). The three highlighted rows are the DSA-specific phases from &sect;7:</p>
-      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th></tr></thead><tbody><tr style="background:#f1f4f9"><td colspan="4"><b>Query &amp; KV projections</b></td></tr><tr><td>fused QKV-A projection (hidden &rarr; q/kv latent)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">12.8</td><td class="num">2%</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">4.0</td><td class="num">1%</td></tr><tr><td>q_b projection (q latent &rarr; per-head query)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">19.4</td><td class="num">3%</td></tr><tr style="background:#f3eefe"><td colspan="4" style="border-left:4px solid #8250df"><b style="color:#8250df">Lightning indexer &mdash; consumes the query, produces the top-2048 index scores</b> &middot; <b>365&nbsp;&micro;s (60% of the block)</b></td></tr><tr><td style="border-left:4px solid #8250df">indexer q/k proj + k-norm (wq_b, wk, k-norm)</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">22.8</td><td class="num">4%</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm90_fp8_paged_mqa_logits</code></td><td class="num">272.1</td><td class="num">45%</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">69.9</td><td class="num">11%</td></tr><tr style="background:#f1f4f9"><td colspan="4"><b>Sparse attend over the selected 2048</b></td></tr><tr><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">104.9</td><td class="num">17%</td></tr><tr><td>MLA q latent-absorb / metadata / combine</td><td><code class="k">ConcatMLAQ + get_mla_metadata + combine</code></td><td class="num">50.0</td><td class="num">8%</td></tr><tr style="background:#f1f4f9"><td colspan="4"><b>Output projection</b></td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">41.0</td><td class="num">7%</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th><th class="num">AI</th></tr></thead><tbody><tr style="background:#f1f4f9"><td colspan="5"><b>Query &amp; KV projections</b></td></tr><tr><td>fused QKV-A projection (hidden &rarr; q/kv latent)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">12.8</td><td class="num">2%</td><td class="num">119</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">4.0</td><td class="num">1%</td><td class="num">1.5</td></tr><tr><td>q_b projection (q latent &rarr; per-head query)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">19.4</td><td class="num">3%</td><td class="num">118</td></tr><tr style="background:#f3eefe"><td colspan="5" style="border-left:4px solid #8250df"><b style="color:#8250df">Lightning indexer &mdash; consumes the query, produces the top-2048 index scores</b> &middot; <b>365&nbsp;&micro;s (60% of the block)</b></td></tr><tr><td style="border-left:4px solid #8250df">indexer q/k proj + k-norm (wq_b, wk, k-norm)</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">22.8</td><td class="num">4%</td><td class="num">128</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm90_fp8_paged_mqa_logits</code></td><td class="num">272.1</td><td class="num">45%</td><td class="num">124</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">69.9</td><td class="num">11%</td><td class="num">1.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Sparse attend over the selected 2048</b></td></tr><tr><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">104.9</td><td class="num">17%</td><td class="num">400</td></tr><tr><td>MLA q latent-absorb / metadata / combine</td><td><code class="k">ConcatMLAQ + get_mla_metadata + combine</code></td><td class="num">50.0</td><td class="num">8%</td><td class="num">2.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Output projection</b></td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">41.0</td><td class="num">7%</td><td class="num">125</td></tr></tbody></table></div>
+      <p><b>The AI column is arithmetic intensity</b> &mdash; FLOPs per byte of HBM traffic, computed
+        analytically at this shape (fp8 weights, bf16 activations). It says how memory-bound each
+        kernel is: on the H200 the roofline <b>ridge is ~412&nbsp;FLOP/byte</b> (fp8) /
+        ~206&nbsp;(bf16) &mdash; below it a kernel is bandwidth-bound, above it
+        compute-bound. <b>Every kernel here is below the ridge, so the whole decode is memory-bound</b>;
+        the AI just says <i>by how much</i>. The projection GEMMs sit around 119 (weight-load
+        bound &mdash; at decode each token reads the weight once, so AI&nbsp;&asymp;&nbsp;2&times;batch),
+        the <b>scan is ~124</b> but reads the KV cache at 85% of peak bandwidth, and the
+        gather+attend is ~400 (right at the ridge, the one near-balanced kernel).</p>
       <p>The picture in one line: the indexer <b>scan</b> and <b>top-k</b> are the two kernels that
         grow with context; everything else &mdash; the projections, the gather, the FlashMLA attend
         &mdash; is fixed. At 128K the scan is already the single largest kernel in the layer.</p>
 
-      <div class="callout"><b>The MoE block is the routed-expert GEMM &mdash; and it is bound by the
-        expert count, not the token count.</b> Of the 2.69&nbsp;ms MoE block,
-        <b>2.56&nbsp;ms (95%)</b> is the grouped GEMM over the routed experts
-        (<code class="k">fused_moe_kernel</code>, &times;2 for the up- and down-projections); gate,
-        shared expert and dispatch are the small remainder. Crucially that GEMM is <b>256 small
-        per-expert matmuls</b>: at batch&nbsp;64 each expert sees only ~2&nbsp;tokens, so the cost is
-        set by <i>how many experts are active</i>, not how many tokens flow through them. That is why
-        the MoE block barely grows once all 256&nbsp;experts light up (&sect;3): more tokens make each
-        per-expert matmul slightly larger but add no experts &mdash; the throughput sweet spot in
-        &sect;10.</div>
+      <h3>MoE, kernel by kernel (batch 64, 256 experts)</h3>
+      <p>The MoE block forced to the BALANCED 256-expert routing (so it matches &sect;2). It is almost
+        entirely one thing &mdash; and that thing is the most memory-bound kernel in the whole layer:</p>
+      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th><th class="num">AI</th></tr></thead><tbody><tr><td>gate (router GEMM)</td><td><code class="k">GateLinear / deep_gemm</code></td><td class="num">6.6</td><td class="num">0%</td><td class="num">85</td></tr><tr style="background:#f3eefe"><td colspan="5" style="border-left:4px solid #8250df"><b style="color:#8250df">Routed experts &mdash; the block, and the most memory-bound kernel in the layer</b></td></tr><tr><td style="border-left:4px solid #8250df"><b>routed experts (up + down GEMM)</b></td><td><code class="k">fused_moe_kernel &times;2</code></td><td class="num">2,560.6</td><td class="num">95%</td><td class="num">4.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Shared expert &amp; dispatch</b></td></tr><tr><td>shared expert MLP (all tokens)</td><td><code class="k">DeepseekV2MLP</code></td><td class="num">100.6</td><td class="num">4%</td><td class="num">128</td></tr><tr><td>dispatch / quant / combine</td><td><code class="k">moe_align, quant, moe_sum, &hellip;</code></td><td class="num">23.7</td><td class="num">1%</td><td class="num">&mdash;</td></tr></tbody></table></div>
+      <div class="callout warn"><b>The routed experts are the block, and they are weight-streaming
+        bound: AI&nbsp;=&nbsp;4.</b> The grouped GEMM (<code class="k">fused_moe_kernel</code>,
+        &times;2 for up/down) is 2.56&nbsp;ms &mdash; 95% of the block &mdash;
+        and it moves the <b>full 11.3&nbsp;GB of all 256&nbsp;experts&rsquo; fp8 weights</b> to process
+        only ~2&nbsp;tokens each. That is an arithmetic intensity of just <b>4&nbsp;FLOP/byte</b>
+        (vs the 412 ridge), and it runs at <b>92% of peak HBM bandwidth</b> &mdash; the layer&rsquo;s
+        one truly bandwidth-saturating kernel. Because the weight traffic is set by the <b>expert count,
+        not the token count</b>, the block barely grows once all 256 experts are active (&sect;3): more
+        tokens make each per-expert matmul slightly larger but add no weight to stream. That is the
+        throughput sweet spot in &sect;10, and it is a memory-bandwidth effect end to end.</div>
+      <div class="callout"><b>How AI moves with batch.</b> Arithmetic intensity is not fixed &mdash; it
+        rises with batch, because more tokens reuse the same weights. For the dense GEMMs
+        AI&nbsp;&asymp;&nbsp;2&times;batch, so they only cross the ridge into compute-bound above
+        batch&nbsp;~206. The routed experts are far worse: AI&nbsp;&asymp;&nbsp;batch&nbsp;&divide;&nbsp;16
+        (each expert still sees only batch&times;8&divide;256 tokens), so they stay memory-bound across
+        the entire serving range. DeepSeek-V3.2 decode is a memory-bandwidth problem, and the MoE
+        weights are the largest part of it.</div>
 
       <h3>How the lightning indexer&rsquo;s scan scales</h3>
       <p>The three marked rows above are the lightning indexer &mdash; at 128K context it is
