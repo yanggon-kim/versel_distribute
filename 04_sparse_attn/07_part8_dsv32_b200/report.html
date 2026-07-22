@@ -235,10 +235,14 @@
       <p>Every curve has the same shape: flat while the scan is negligible, then a straight linear
         climb once it dominates. Increasing batch raises the floor <i>and</i> moves the knee left,
         because the scan cost is proportional to the product of the two axes.</p>
-      <p>The floors are not evenly spaced. Between batch&nbsp;32 and batch&nbsp;64 the curve barely
-        moves (385.3 &micro;s &rarr; 625.0 &micro;s at 1K) because the MoE block has already saturated:
-        at batch&nbsp;32 a step activates all 256 experts, and beyond that point more tokens are
-        nearly free for MoE. Everything above that batch is the indexer talking.</p>
+      <p>The floors are not evenly spaced &mdash; and not the way the H200 curve was. Between
+        batch&nbsp;32 and batch&nbsp;64 the layer grows <b>+62%</b>
+        (385.3 &micro;s &rarr; 625.0 &micro;s at 1K): although batch&nbsp;32 already activates all
+        256 experts, the FlashInfer TRT-LLM MoE keeps scaling with tokens well past that
+        point (155&nbsp;&rarr;&nbsp;350&nbsp;&micro;s from 32 to 64 tokens, &sect;8), flattening only
+        around 128&ndash;256 tokens (619&nbsp;&rarr;&nbsp;677&nbsp;&micro;s from 128 to 512). On the
+        H200&rsquo;s Triton path the MoE cost was already flat at batch&nbsp;32; on B200 the MoE cost
+        keeps growing deeper into the batch axis before the indexer takes over.</p>
       <div class="scroll"><table><thead><tr><th>batch \ context</th><th class="num">1K</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">308</td><td class="num">317</td><td class="num">327</td><td class="num">330</td><td class="num">334</td><td class="num">340</td><td class="num">352</td><td class="num">373</td></tr><tr><th class="num">2</th><td class="num">320</td><td class="num">326</td><td class="num">336</td><td class="num">339</td><td class="num">347</td><td class="num">356</td><td class="num">371</td><td class="num">403</td></tr><tr><th class="num">4</th><td class="num">331</td><td class="num">338</td><td class="num">348</td><td class="num">353</td><td class="num">359</td><td class="num">377</td><td class="num">402</td><td class="num">452</td></tr><tr><th class="num">8</th><td class="num">337</td><td class="num">344</td><td class="num">356</td><td class="num">364</td><td class="num">380</td><td class="num">406</td><td class="num">459</td><td class="num">559</td></tr><tr><th class="num">16</th><td class="num">368</td><td class="num">376</td><td class="num">388</td><td class="num">411</td><td class="num">437</td><td class="num">486</td><td class="num">587</td><td class="num">792</td></tr><tr><th class="num">32</th><td class="num">385</td><td class="num">395</td><td class="num">411</td><td class="num">451</td><td class="num">495</td><td class="num">590</td><td class="num">771</td><td class="num">1,140</td></tr><tr><th class="num">64</th><td class="num">625</td><td class="num">636</td><td class="num">658</td><td class="num">754</td><td class="num">859</td><td class="num">1,069</td><td class="num">1,493</td><td class="num">2,337</td></tr><tr><th class="num">128</th><td class="num">966</td><td class="num">983</td><td class="num">1,021</td><td class="num">1,181</td><td class="num">1,366</td><td class="num">1,734</td><td class="num">2,477</td><td class="num">3,971</td></tr><tr><th class="num">256</th><td class="num">1,200</td><td class="num">1,227</td><td class="num">1,295</td><td class="num">1,606</td><td class="num">1,968</td><td class="num">2,721</td><td class="num">4,201</td><td class="num" style="opacity:.62">5,681</td></tr><tr><th class="num">512</th><td class="num">1,553</td><td class="num">1,612</td><td class="num">1,751</td><td class="num">2,365</td><td class="num">3,089</td><td class="num">4,593</td><td class="num" style="opacity:.62">6,097</td><td class="num" style="opacity:.62">7,601</td></tr><tr><th class="num">1024</th><td class="num">2,389</td><td class="num">2,507</td><td class="num">2,772</td><td class="num">3,961</td><td class="num">5,424</td><td class="num" style="opacity:.62">6,887</td><td class="num" style="opacity:.62">8,349</td><td class="num" style="opacity:.62">9,812</td></tr></tbody></table></div>
       <p style="color:var(--muted);font-size:.85rem;margin-top:6px">Microseconds per layer. Full-opacity
         cells sit on measured grid points; faded cells are interpolated by the simulator&rsquo;s own
@@ -669,7 +673,7 @@
       <h3>Gather time alone (&micro;s)</h3>
       <div class="scroll"><table><thead><tr><th>batch \ context</th><th class="num">4K</th><th class="num">16K</th><th class="num">64K</th><th class="num">128K</th><th class="num">256K</th><th class="num">512K</th><th class="num">1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">12.0</td><td class="num">12.0</td><td class="num">12.1</td><td class="num">12.0</td><td class="num">12.1</td><td class="num">12.0</td><td class="num">12.0</td></tr><tr><th class="num">8</th><td class="num">14.4</td><td class="num">14.4</td><td class="num">14.4</td><td class="num">14.5</td><td class="num">14.5</td><td class="num">14.5</td><td class="num">14.6</td></tr><tr><th class="num">64</th><td class="num">42.7</td><td class="num">42.6</td><td class="num">42.5</td><td class="num">42.6</td><td class="num">42.3</td><td class="num">42.0</td><td class="num">42.0</td></tr><tr><th class="num">256</th><td class="num">141.6</td><td class="num">141.4</td><td class="num">139.9</td><td class="num">139.6</td><td class="num">139.4</td><td class="num">139.2</td><td class="num">&mdash;</td></tr><tr><th class="num">1024</th><td class="num">469.0</td><td class="num">466.4</td><td class="num">463.6</td><td class="num">463.4</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">&mdash;</td></tr></tbody></table></div>
       <p><code class="k">flash_fwd_splitkv_mla_fp8_sparse_kernel</code>, per-call GPU time, averaged
-        over 3 forwards. <b>Flat in context to within 0.5%</b> at every batch &mdash; exactly what
+        over 3 forwards. <b>Flat in context to within ~2.5%</b> at every batch (worst spread 2.5% at batch 8) &mdash; exactly what
         &ldquo;attend over a fixed top-2048&rdquo; predicts &mdash; and linear in batch.</p>
 
       <h3>Gather as a share of the whole decoder layer</h3>
@@ -762,9 +766,9 @@
         BALANCED 256-expert routing the simulator assumes, so these numbers match &sect;2.</p>
 
       <h3>The layer at a glance</h3>
-      <div class="scroll"><table><thead><tr><th>block \ context</th><th class="num">4K</th><th class="num">128K</th><th class="num">1024K</th></tr></thead><tbody><tr><td>2&times; RMSNorm (input + post-attn)</td><td class="num">6.7&nbsp;&micro;s</td><td class="num">46.7&nbsp;&micro;s</td><td class="num">6.9&nbsp;&micro;s</td></tr><tr><td>Sparse attention block (MLA + indexer)</td><td class="num">278.9&nbsp;&micro;s</td><td class="num">6.72&nbsp;ms</td><td class="num">1.97&nbsp;ms</td></tr><tr><td>MoE block (gate + 256 experts + shared)</td><td class="num">371.3&nbsp;&micro;s</td><td class="num">2.16&nbsp;ms</td><td class="num">369.5&nbsp;&micro;s</td></tr><tr><td><b>one decoder layer</b></td><td class="num"><b>656.9&nbsp;&micro;s</b></td><td class="num"><b>8.93&nbsp;ms</b></td><td class="num"><b>2.35&nbsp;ms</b></td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>block \ context</th><th class="num">4K</th><th class="num">128K</th><th class="num">1024K</th></tr></thead><tbody><tr><td>2&times; RMSNorm (input + post-attn)</td><td class="num">6.7&nbsp;&micro;s</td><td class="num">6.7&nbsp;&micro;s</td><td class="num">6.9&nbsp;&micro;s</td></tr><tr><td>Sparse attention block (MLA + indexer)</td><td class="num">278.9&nbsp;&micro;s</td><td class="num">498.7&nbsp;&micro;s</td><td class="num">1.97&nbsp;ms</td></tr><tr><td>MoE block (gate + 256 experts + shared)</td><td class="num">371.3&nbsp;&micro;s</td><td class="num">372.0&nbsp;&micro;s</td><td class="num">369.5&nbsp;&micro;s</td></tr><tr><td><b>one decoder layer</b></td><td class="num"><b>656.9&nbsp;&micro;s</b></td><td class="num"><b>877.4&nbsp;&micro;s</b></td><td class="num"><b>2.35&nbsp;ms</b></td></tr></tbody></table></div>
       <p>The three blocks scale completely differently with context. The MoE block is <b>flat</b>
-        (~2.16&nbsp;ms &mdash; it depends on token count, not context) and the norms are
+        (~0.37&nbsp;ms &mdash; it depends on token count, not context) and the norms are
         negligible; <b>only the attention block grows</b>, and all of that growth is the indexer
         scan (from 12&nbsp;&micro;s at 4K to 1.31&nbsp;ms at 1M). The
         layer totals match the composed surface in &sect;2 to within rounding, which cross-validates
@@ -774,7 +778,7 @@
       <p>The attention block decomposes cleanly &mdash; its kernels run essentially in sequence, so
         they sum to the block total (unlike DeepSeek-V4, whose kernels overlapped across four CUDA
         streams). The three highlighted rows are the DSA-specific phases from &sect;7:</p>
-      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th><th class="num">AI</th></tr></thead><tbody><tr style="background:#f1f4f9"><td colspan="5"><b>Query &amp; KV projections</b></td></tr><tr><td>fused QKV-A projection (hidden &rarr; q/kv latent)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">78.1</td><td class="num">1%</td><td class="num">119</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">27.0</td><td class="num">0%</td><td class="num">1.5</td></tr><tr><td>q_b projection (q latent &rarr; per-head query)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">88.4</td><td class="num">1%</td><td class="num">118</td></tr><tr style="background:#f3eefe"><td colspan="5" style="border-left:4px solid #8250df"><b style="color:#8250df">Lightning indexer &mdash; consumes the query, produces the top-2048 index scores</b> &middot; <b>4,273&nbsp;&micro;s (64% of the block)</b></td></tr><tr><td style="border-left:4px solid #8250df">indexer q/k proj + k-norm (wq_b, wk, k-norm)</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">136.2</td><td class="num">2%</td><td class="num">128</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm100_fp8_paged_mqa_logits</code></td><td class="num">3,473.9</td><td class="num">52%</td><td class="num">124</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">663.1</td><td class="num">10%</td><td class="num">1.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Sparse attend over the selected 2048</b></td></tr><tr><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">1,344.0</td><td class="num">20%</td><td class="num">400</td></tr><tr><td>MLA q latent-absorb / metadata / combine</td><td><code class="k">ConcatMLAQ + get_mla_metadata + combine</code></td><td class="num">524.2</td><td class="num">8%</td><td class="num">2.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Output projection</b></td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">223.8</td><td class="num">3%</td><td class="num">125</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th><th class="num">AI</th></tr></thead><tbody><tr style="background:#f1f4f9"><td colspan="5"><b>Query &amp; KV projections</b></td></tr><tr><td>fused QKV-A projection (hidden &rarr; q/kv latent)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">12.3</td><td class="num">2%</td><td class="num">119</td></tr><tr><td>q/kv latent RMSNorms</td><td><code class="k">rms_norm</code></td><td class="num">5.1</td><td class="num">1%</td><td class="num">1.5</td></tr><tr><td>q_b projection (q latent &rarr; per-head query)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">14.5</td><td class="num">3%</td><td class="num">118</td></tr><tr style="background:#f3eefe"><td colspan="5" style="border-left:4px solid #8250df"><b style="color:#8250df">Lightning indexer &mdash; consumes the query, produces the top-2048 index scores</b> &middot; <b>266&nbsp;&micro;s (53% of the block)</b></td></tr><tr><td style="border-left:4px solid #8250df">indexer q/k proj + k-norm (wq_b, wk, k-norm)</td><td><code class="k">GEMM + LayerNorm</code></td><td class="num">26.0</td><td class="num">5%</td><td class="num">128</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer SCAN &mdash; score every kv token</b></td><td><code class="k">sm100_fp8_paged_mqa_logits</code></td><td class="num">173.9</td><td class="num">35%</td><td class="num">124</td></tr><tr><td style="border-left:4px solid #8250df"><b>indexer top-2048 select</b></td><td><code class="k">FilteredTopKUnifiedKernel</code></td><td class="num">65.8</td><td class="num">13%</td><td class="num">1.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Sparse attend over the selected 2048</b></td></tr><tr><td><b>MLA gather + sparse attend</b></td><td><code class="k">flash_fwd_splitkv_mla_fp8_sparse</code></td><td class="num">84.9</td><td class="num">17%</td><td class="num">400</td></tr><tr><td>MLA q latent-absorb / metadata / combine</td><td><code class="k">ConcatMLAQ + get_mla_metadata + combine</code></td><td class="num">69.3</td><td class="num">14%</td><td class="num">2.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Output projection</b></td></tr><tr><td>o_proj (row-parallel)</td><td><code class="k">deep_gemm fp8 GEMM</code></td><td class="num">32.4</td><td class="num">6%</td><td class="num">125</td></tr></tbody></table></div>
       <p><b>The AI column is arithmetic intensity</b> &mdash; FLOPs per byte of HBM traffic, computed
         analytically at this shape (fp8 weights, bf16 activations). It says how memory-bound each
         kernel is: on the H200 the roofline <b>ridge is ~562&nbsp;FLOP/byte</b> (fp8) /
@@ -791,7 +795,7 @@
       <h3>MoE, kernel by kernel (batch 64, 256 experts)</h3>
       <p>The MoE block forced to the BALANCED 256-expert routing (so it matches &sect;2). It is almost
         entirely one thing &mdash; and that thing is the most memory-bound kernel in the whole layer:</p>
-      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th><th class="num">AI</th></tr></thead><tbody><tr><td>gate (router GEMM)</td><td><code class="k">GateLinear / deep_gemm</code></td><td class="num">34.8</td><td class="num">2%</td><td class="num">85</td></tr><tr style="background:#f3eefe"><td colspan="5" style="border-left:4px solid #8250df"><b style="color:#8250df">Routed experts &mdash; the block, and the most memory-bound kernel in the layer</b></td></tr><tr><td style="border-left:4px solid #8250df"><b>routed experts (up + down GEMM)</b></td><td><code class="k">fused_moe_kernel &times;2</code></td><td class="num">0.0</td><td class="num">0%</td><td class="num">4.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Shared expert &amp; dispatch</b></td></tr><tr><td>shared expert MLP (all tokens)</td><td><code class="k">DeepseekV2MLP</code></td><td class="num">175.8</td><td class="num">8%</td><td class="num">128</td></tr><tr><td>dispatch / quant / combine</td><td><code class="k">moe_align, quant, moe_sum, &hellip;</code></td><td class="num">1,954.2</td><td class="num">90%</td><td class="num">&mdash;</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>operation</th><th>kernel</th><th class="num">GPU &micro;s</th><th class="num">% of block</th><th class="num">AI</th></tr></thead><tbody><tr><td>gate (router GEMM)</td><td><code class="k">GateLinear / deep_gemm</code></td><td class="num">7.3</td><td class="num">2%</td><td class="num">85</td></tr><tr style="background:#f3eefe"><td colspan="5" style="border-left:4px solid #8250df"><b style="color:#8250df">Routed experts &mdash; the block, and the most memory-bound kernel in the layer</b></td></tr><tr><td style="border-left:4px solid #8250df"><b>routed experts (up + down GEMM)</b></td><td><code class="k">fused_moe_kernel &times;2</code></td><td class="num">0.0</td><td class="num">0%</td><td class="num">4.0</td></tr><tr style="background:#f1f4f9"><td colspan="5"><b>Shared expert &amp; dispatch</b></td></tr><tr><td>shared expert MLP (all tokens)</td><td><code class="k">DeepseekV2MLP</code></td><td class="num">27.2</td><td class="num">7%</td><td class="num">128</td></tr><tr><td>dispatch / quant / combine</td><td><code class="k">moe_align, quant, moe_sum, &hellip;</code></td><td class="num">337.5</td><td class="num">91%</td><td class="num">&mdash;</td></tr></tbody></table></div>
       <div class="callout warn"><b>The routed experts are the block, and they are weight-streaming
         bound: AI&nbsp;=&nbsp;4.</b> The grouped GEMM (<code class="k">fused_moe_kernel</code>,
         &times;2 for up/down) is 0.00&nbsp;ms &mdash; 0% of the block &mdash;
@@ -828,7 +832,7 @@
 
       <h3>How the lightning indexer&rsquo;s scan scales</h3>
       <p>The three marked rows above are the lightning indexer &mdash; at 128K context it is
-        <b>4,273&nbsp;&micro;s, 64% of the attention block</b>, and the
+        <b>266&nbsp;&micro;s, 53% of the attention block</b>, and the
         <b>scan</b> is the bulk of it. The scan is the one kernel whose cost grows with the serving
         knobs, so it is worth seeing on its own. It reads every cached token&rsquo;s 132&nbsp;B
         indexer key, for every query, to produce the index scores &mdash; so its work is
@@ -1014,7 +1018,7 @@
           71&ndash;96% of a matched <i>sequential</i> copy on every tier: a 656&nbsp;B record is
           164 contiguous words, a big enough transaction that random placement barely hurts. So the
           gather is not slow because it is scattered &mdash; it is exactly as fast as the memory it
-          lands on. (This refines &sect;7&rsquo;s &ldquo;18% of peak&rdquo;: that gap was op-shape
+          lands on. (This refines &sect;7&rsquo;s &ldquo;38% of peak&rdquo;: that gap was op-shape
           &mdash; a copy that also writes, vs the streaming scan &mdash; not randomness.)</li>
         <li><b>Off-HBM is 13&ndash;27&times; slower.</b> The
           <code class="k">a&nbsp;+&nbsp;N/b</code> model from &sect;7 holds per tier; only <b>b</b>
@@ -1131,19 +1135,22 @@
         long-context cells past the KV budget (&sect;6) are extrapolated.</p>
 
       <p><b>Throughput always rises with batch &mdash; it never falls &mdash; but the gains are
-        lumpy, with a knee exactly at MoE saturation (batch&nbsp;32).</b> Two effects, both measured
-        in the sections above, set the whole curve:</p>
+        lumpy, and on B200 the lumps sit where the TRT-LLM MoE cost curve bends, not at expert
+        saturation.</b> Two effects, both measured in the sections above, set the whole curve:</p>
       <ul class="notes">
-        <li><b>The MoE dead zone (batch&nbsp;1&ndash;32): batching barely helps.</b> Below 32, every
-          added token activates <i>more</i> of the 256 experts (&sect;3), so the MoE block grows
-          nearly in proportion to batch &mdash; no economy of scale. The worst step is
-          16&nbsp;&rarr;&nbsp;32: batch doubles, throughput rises just <b>91%</b>
-          (710&nbsp;&rarr;&nbsp;1,355&nbsp;tok/s at 1K).</li>
-        <li><b>The saturation sweet spot (batch&nbsp;32&nbsp;&rarr;&nbsp;64): throughput nearly
-          doubles for free.</b> Once all 256 experts are active the MoE cost <i>freezes</i>
-          (&sect;8), so 2&times; the tokens cost ~2% more latency: throughput jumps
-          <b>1.3&times;</b> (1,355&nbsp;&rarr;&nbsp;1,697&nbsp;tok/s). This is
-          the single best batching decision in the range.</li>
+        <li><b>The cheap step (batch&nbsp;16&nbsp;&rarr;&nbsp;32): near-free doubling.</b>
+          Throughput rises <b>91%</b>
+          (710&nbsp;&rarr;&nbsp;1,355&nbsp;tok/s at 1K) &mdash; 2&times; the tokens for
+          ~5% more step latency, because at &le;32 tokens the TRT-LLM MoE is still in its flat
+          small-batch regime (&sect;8). On the H200 this same step was the <i>worst</i> in the range
+          (Triton&rsquo;s MoE cost was already fully paid); the backend swap moved the free lunch.</li>
+        <li><b>The dead zone moved to batch&nbsp;32&nbsp;&rarr;&nbsp;64.</b> Throughput gains only
+          <b>1.3&times;</b> (1,355&nbsp;&rarr;&nbsp;1,697&nbsp;tok/s): the MoE
+          cost 2.26&times;-es exactly here (155&nbsp;&rarr;&nbsp;350&nbsp;&micro;s, &sect;8) even
+          though all 256 experts were already active &mdash; the inverse of the H200, where
+          32&nbsp;&rarr;&nbsp;64 was the saturation sweet spot. The MoE only freezes past
+          ~128&ndash;256 tokens (619&nbsp;&rarr;&nbsp;677&nbsp;&micro;s from 128 to 512), after
+          which batching pays again.</li>
         <li><b>Beyond (batch&nbsp;&ge;128): the indexer scan sets a ceiling.</b> Past saturation the
           scan (&prop;&nbsp;batch&nbsp;&times;&nbsp;context, &sect;7) becomes the term that grows
           with batch, so throughput approaches a context-dependent wall.</li>
