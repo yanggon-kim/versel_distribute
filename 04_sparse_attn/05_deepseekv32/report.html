@@ -814,6 +814,30 @@
         <b style="color:#1a7f37">Green</b> marks a kernel that has crossed the fp8 ridge
         (412&nbsp;FLOP/byte) into compute-bound; everything else is memory-bound:</p>
       <div class="scroll"><table><thead><tr><th>kernel \ batch</th><th class="num">1</th><th class="num">8</th><th class="num">64</th><th class="num">256</th><th class="num">1024</th></tr></thead><tbody><tr><td>fused QKV-A projection</td><td class="num">2.0</td><td class="num">16</td><td class="num">119</td><td class="num">390</td><td class="num" style="font-weight:700;color:#1a7f37">908</td></tr><tr><td>q_b projection</td><td class="num">2.0</td><td class="num">16</td><td class="num">118</td><td class="num">378</td><td class="num" style="font-weight:700;color:#1a7f37">847</td></tr><tr><td>indexer q/k projections</td><td class="num">2.0</td><td class="num">16</td><td class="num">128</td><td class="num" style="font-weight:700;color:#1a7f37">512</td><td class="num" style="font-weight:700;color:#1a7f37">2,048</td></tr><tr><td>indexer scan</td><td class="num">124</td><td class="num">124</td><td class="num">124</td><td class="num">124</td><td class="num">124</td></tr><tr><td>MLA gather + attend</td><td class="num">400</td><td class="num">400</td><td class="num">400</td><td class="num">400</td><td class="num">400</td></tr><tr><td>o_proj</td><td class="num">2.0</td><td class="num">16</td><td class="num">125</td><td class="num" style="font-weight:700;color:#1a7f37">464</td><td class="num" style="font-weight:700;color:#1a7f37">1,452</td></tr><tr><td>MoE gate</td><td class="num">2.0</td><td class="num">15</td><td class="num">85</td><td class="num">171</td><td class="num">228</td></tr><tr><td>MoE routed experts</td><td class="num">0.1</td><td class="num">0.5</td><td class="num">4.0</td><td class="num">16</td><td class="num">64</td></tr><tr><td>MoE shared expert</td><td class="num">2.0</td><td class="num">16</td><td class="num">128</td><td class="num" style="font-weight:700;color:#1a7f37">512</td><td class="num" style="font-weight:700;color:#1a7f37">2,048</td></tr></tbody></table></div>
+
+      <h3>Where the time goes as batch grows (measured, 128K)</h3>
+      <p>The same block, re-measured across the batch axis (phase level: the sweep isolates the DSA
+        phases; the projection GEMMs + glue are the remainder against the wrapper total). Two things to
+        watch: the <b>% of block</b> column for each phase, and the AI table above &mdash; the scan&rsquo;s
+        share explodes while <b>its AI never moves</b>:</p>
+      <div class="scroll"><table>
+        <tr><th class="num">batch</th><th class="num">block &micro;s</th><th class="num">scan</th><th class="num">top-k</th><th class="num">idx-proj</th><th class="num">gather</th><th class="num">attend+meta</th><th class="num">GEMMs+glue</th><th class="num">scan+top-k+gather</th></tr>
+        <tr><td class="num">1</td><td class="num">174</td><td class="num">5%</td><td class="num">9%</td><td class="num">15%</td><td class="num">7%</td><td class="num">25%</td><td class="num">40%</td><td class="num">21%</td></tr>
+        <tr><td class="num">8</td><td class="num">223</td><td class="num">17%</td><td class="num">8%</td><td class="num">13%</td><td class="num">11%</td><td class="num">21%</td><td class="num">31%</td><td class="num">36%</td></tr>
+        <tr><td class="num">64</td><td class="num">613</td><td class="num">44%</td><td class="num">12%</td><td class="num">5%</td><td class="num">17%</td><td class="num">8%</td><td class="num">13%</td><td class="num">73%</td></tr>
+        <tr><td class="num">256</td><td class="num">1,890</td><td class="num"><b>57%</b></td><td class="num">8%</td><td class="num">2%</td><td class="num">22%</td><td class="num">5%</td><td class="num">6%</td><td class="num"><b>87%</b></td></tr>
+        <tr><td class="num">1024</td><td class="num">7,185</td><td class="num"><b>59%</b></td><td class="num">8%</td><td class="num">1%</td><td class="num">22%</td><td class="num">4%</td><td class="num">5%</td><td class="num"><b>89%</b></td></tr>
+      </table></div>
+      <div class="callout"><b>Share grows; intensity doesn&rsquo;t.</b> The scan goes 5% &rarr; 59% of the
+        block (and the whole scan&rarr;top-k&rarr;gather reduction chain 21% &rarr; 89%) because its
+        traffic is <code class="k">batch &times; context &times; 132 B</code> with <i>zero</i>
+        amortization &mdash; every sequence brings its own private key stream and one query. Yet its
+        <b>arithmetic intensity is pinned at 124 FLOP/B at every batch size</b> (see the AI table above):
+        ops and bytes scale together, so growing the batch never makes the scan easier per byte &mdash;
+        it only makes it bigger. The GEMMs move in the opposite direction (AI &asymp; 2&times;batch,
+        amortizing weight reads until they turn compute-bound), which is why their share collapses
+        40% &rarr; 5%. This pair of facts &mdash; share &uarr;, AI flat &mdash; is the batch-scaling case
+        for near-memory processing developed in &sect;12.</div>
       <p>The split is stark. The weight-bearing GEMMs (projections, gate, shared expert) ride
         AI&nbsp;=&nbsp;2&times;batch and cross the ridge into compute-bound <b>between batch&nbsp;256 and
         1024</b> &mdash; the exact point set by each GEMM&rsquo;s activation overhead (the leaner
@@ -1602,6 +1626,38 @@
         memory-bound kernel to the memory side &mdash; and the rungs are ordered by arithmetic intensity:
         gather (protocol-bound) &rarr; top-k (AI&asymp;1) &rarr; scan share (AI 124, only the die&rsquo;s
         proportional slice) &rarr; full scan (only worth it when the keys themselves leave HBM).</div>
+
+      <h3>The scan on eight dies &mdash; per-cube rate, and the thermal ledger that changes the verdict</h3>
+      <p>The full-offload verdicts above priced the base-die compute as one pot. Physically it is
+        <b>eight pots</b>: each of the GPU&rsquo;s 8 HBM cubes carries its own base die with its own
+        thermal envelope. Worked example at B=256 on the 8-GPU EP8 cluster: DP8 &rarr; 32 sessions/GPU
+        &rarr; <b>4 sessions per cube</b> (sessions are cube-local: each die scans and gathers only its
+        own sessions&rsquo; keys and latents; capacity check: keys 33.8 + weights 101.6 = 135.4 GB &le;
+        141 in HBM, latents 21 GB/cube in LPDDR).</p>
+      <p><b>Amount vs rate.</b> Per cube per layer the scan is tiny in <i>amount</i> &mdash; 69 MB of
+        keys, 8.6 GFLOP &mdash; but the die races the GPU&rsquo;s alternative, which scans all 8
+        cubes&rsquo; keys through its unified 4.15 TB/s in ~133 &micro;s. Latency-neutrality fixes the
+        <i>rate</i>: 8.6 GFLOP &divide; 133 &micro;s &asymp; <b>64 TOPS per cube</b> (&asymp; 520 GB/s of
+        its 600 GB/s TSV share &times; AI 124). Distributing batches across cubes divides the work and
+        the time budget together &mdash; the required rate per die never moves, and it is
+        <b>batch-independent</b> (2 or 16 sessions per cube need the same TOPS, just for less or more
+        time). What the 8-die view <i>does</i> change is the feasibility judgment:</p>
+      <div class="scroll"><table>
+        <tr><th>Per-die MAC array</th><th class="num">Per-die power (@0.05 pJ/op)</th><th class="num">Aggregate</th><th>What it buys</th></tr>
+        <tr><td>25 TOPS (&asymp;64&times;64 array)</td><td class="num">~1.25 W</td><td class="num">200</td><td>the validated co-scan share (~28%) &rarr; 3.72&times; design</td></tr>
+        <tr><td><b>45 TOPS</b></td><td class="num"><b>~2.3 W</b></td><td class="num">~360</td><td><b>break-even: on-die scan matches the GPU&rsquo;s</b></td></tr>
+        <tr><td>64 TOPS (128&times;128 systolic @2 GHz, a few mm&sup2;)</td><td class="num">~3.2 W</td><td class="num">~516</td><td>full scan parity &mdash; the GPU is freed of the indexer entirely</td></tr>
+      </table></div>
+      <div class="callout win"><b>The corrected framing.</b> Each base die needs only a
+        <b>tens-of-TOPS array</b> &mdash; small silicon that trivially fits the base-die area. The
+        earlier &ldquo;500 TOPS &asymp; 25 W, over budget&rdquo; verdict silently assumed one die;
+        spread across eight, full scan offload is a <b>2&ndash;3 W-per-die thermal negotiation under
+        each DRAM stack</b> (aggressive but in the range shipped PIM base dies have reached), not a
+        compute-scale problem. Below that budget the design degrades gracefully along the AI-ordered
+        ladder: gather and top-k always fit (&lt;0.1 W-class), and the co-scan share simply tracks
+        whatever TOPS the thermal envelope allows. What does <i>not</i> change: the scan&rsquo;s AI=124
+        rate requirement per TB/s &mdash; distributing batches lowers the per-die <i>amount</i> of work,
+        never the required <i>rate</i>.</div>
 
       <h3>Inside the gather engine &mdash; coalescing, packing, latency hiding</h3>
       <p>The S1-vs-S1.5 gap is entirely a datapath story. Geometry: 656 B latent records at
