@@ -1319,6 +1319,13 @@
         needs its indices.</p>
 
       <h3>The real lever: overlap the indexer with a neighbour&rsquo;s MoE</h3>
+      <div class="callout warn" style="margin-top:10px"><b>Post-study note (superseded for the EP8
+        system).</b> The overlap analysis below assumes the tp1/EP1 MoE (~2.7 ms window, all 256 experts
+        on one GPU). Under the official DP8+EP8 serving layout the per-GPU MoE shrinks to ~381 &micro;s
+        (32 local experts) and splitting the batch into microbatches to create an overlap window
+        re-reads expert weights (2&times;690 &micro;s at b=8 vs 381 &micro;s once) &mdash; measured
+        counterproductive. The sizing subsection below replaces this lever with the design that did
+        survive measurement: top-k + gather on the die, scan shared by throughput ratio.</div>
       <p>The requirement collapses if the base die scans microbatch&nbsp;B&rsquo;s keys while the GPU runs
         microbatch&nbsp;A&rsquo;s MoE. It only has to finish within that MoE window, so
         TOPS&nbsp;&asymp;&nbsp;indexer&nbsp;ops&nbsp;&divide;&nbsp;MoE&nbsp;time &mdash; and that is
@@ -1336,7 +1343,7 @@
       <h3>Thermal reality &mdash; where the design lands</h3>
       <p>A dedicated fp8 systolic array at ~0.05&nbsp;pJ/op sets the budget:</p>
       <div class="scroll"><table><thead><tr><th class="num">fp8 throughput</th><th class="num">power @0.05 pJ/op</th><th>base-die budget</th></tr></thead><tbody><tr><td class="num">50 TOPS</td><td class="num">~2 W</td><td>feasible</td></tr><tr><td class="num">100 TOPS</td><td class="num">~5 W</td><td>feasible</td></tr><tr><td class="num">200 TOPS</td><td class="num">~10 W</td><td>feasible</td></tr><tr><td class="num">500 TOPS</td><td class="num">~25 W</td><td>over budget</td></tr></tbody></table></div>
-      <div class="callout warn"><b>Aim for ~100&ndash;200&nbsp;TOPS.</b> A base-die thermal budget under the
+      <div class="callout warn"><b>Aim for ~100&ndash;200&nbsp;TOPS &mdash; and allocate them by arithmetic intensity.</b> (The measured design ladder below confirms 200 TOPS reaches within 2% of the 600-TOPS full-offload result when spent on top-k + gather + a proportional scan share.) A base-die thermal budget under the
         DRAM stack is realistically ~5&ndash;15&nbsp;W, i.e. <b>~100&ndash;200&nbsp;TOPS</b> &mdash; not the
         ~496 needed for single-request latency parity at any context. But ~100&ndash;200&nbsp;TOPS
         is enough to hide the indexer behind the MoE <b>up to ~256&ndash;512K context</b>, a large useful
@@ -1434,7 +1441,10 @@
         the rest &mdash; TPOT 37.6&nbsp;ms interpolated from the measured 35.9&nbsp;ms (b=4) and 41.0&nbsp;ms
         (b=16) simulation anchors. Per-token DSA-block throughput tells the same story: baseline 35.9
         tok/ms&middot;GPU (8 queries / 223&nbsp;&micro;s) vs 50&ndash;78 tok/ms for the NPU designs
-        (1.4&ndash;2.2&times;).</p>
+        (1.4&ndash;2.2&times;). At this batch the attention block is only ~42% of the layer and the scan
+        just 71 &micro;s, so the offload designs sit within &plusmn;10% of each other &mdash; the design
+        choice differentiates at the b=37 full-speed tier below (master table), which is also where the
+        S1.5/S1.75 refinements were introduced.</p>
 
       <div class="callout"><b>The honest reading at this operating point.</b> With keys HBM-resident and only
         16 queries/GPU, the GPU&rsquo;s own scan is just ~71 &micro;s &mdash; a base die below ~350 TOPS/GPU is
@@ -1469,48 +1479,36 @@
         latency contribution</b>; the NPU&rsquo;s latency term grows with context (the scan share) and
         becomes decisive only in the keys-spill regime below.</div>
 
-      <p><b>The full-speed capacity tier &mdash; b=37/GPU (B=296), the design point that wins.</b>
+      <p><b>The full-speed capacity tier &mdash; b=37/GPU (B=296): the master comparison.</b>
         Keys-in-HBM capacity allows 37 sessions/GPU (39.4 GB free after weights &divide; 1.06 GB of keys per
-        128K session), using only 19% of the LPDDR (194 GB of latents). The scan work grows 4.6&times; with
-        the batch &mdash; <b>79.4 GFLOP/GPU/layer</b>, against a base-die TSV floor of 133 &micro;s
-        (640 MB of keys across 8&times;600 GB/s) &mdash; so where the scan runs matters more than ever:</p>
+        128K session), using only 19% of the LPDDR. The scan work grows with the batch to
+        <b>79.4 GFLOP/GPU/layer</b> (640 MB of keys; base-die TSV floor 133 &micro;s), so this is the point
+        where the offload designs differentiate. One table, every design, analytic model and
+        LLMServingSim validation side by side (sim runs use profile-variant patching at full 37-way
+        steady concurrency; &dagger; = analytic only):</p>
       <div class="scroll"><table>
-        <tr><th>Design @ (128K, b=37/GPU, B=296)</th><th class="num">attn block (&micro;s)</th><th class="num">TPOT (ms)</th><th class="num">cluster tok/s</th><th class="num">vs B0</th></tr>
-        <tr><td><b>B0 &mdash; stock 8&times;H200 (caps at b=8)</b></td><td class="num">223 (b=8)</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.00&times;</td></tr>
-        <tr><td>S1 &mdash; no NPU: GPU scans (keys in HBM) + GPU-driven UCIe gather</td><td class="num">470</td><td class="num">53.7</td><td class="num">5,515</td><td class="num">3.24&times;</td></tr>
-        <tr><td>S1.5 &mdash; gather-engine NPU: GPU scans, base die gathers</td><td class="num">433</td><td class="num">51.4</td><td class="num">5,756</td><td class="num">3.38&times;</td></tr>
-        <tr><td><b>S1.75 &mdash; + base-die top-k (see partial-offload section)</b></td><td class="num">393</td><td class="num">48.9</td><td class="num">6,051</td><td class="num"><b>3.56&times;</b></td></tr>
-        <tr><td><b>S1.75 + co-scan @200 TOPS</b></td><td class="num">349</td><td class="num">46.3</td><td class="num">6,399</td><td class="num"><b>3.76&times;</b></td></tr>
-        <tr><td>S2 &mdash; full NPU scans, 100 TOPS/GPU</td><td class="num">1,004</td><td class="num">86.7</td><td class="num">3,415</td><td class="num">2.01&times;</td></tr>
-        <tr><td>S2 &mdash; full NPU scans, 200 TOPS/GPU</td><td class="num">607</td><td class="num">62.2</td><td class="num">4,761</td><td class="num">2.80&times;</td></tr>
-        <tr><td>S2 &mdash; full NPU scans, 400 TOPS/GPU</td><td class="num">409</td><td class="num">49.9</td><td class="num">5,928</td><td class="num">3.48&times;</td></tr>
-        <tr><td>S2 &mdash; full NPU scans, 600 TOPS/GPU (near the TSV floor)</td><td class="num">344</td><td class="num">45.9</td><td class="num">6,447</td><td class="num">3.79&times;</td></tr>
+        <tr><th>Design @ (128K, b=37/GPU, B=296)</th><th class="num">attn blk &micro;s</th><th class="num">TPOT analytic</th><th class="num">TPOT sim</th><th class="num">cluster tok/s (sim)</th><th class="num">vs B0</th></tr>
+        <tr><td><b>B0 &mdash; stock 8&times;H200 (capacity-capped at b=8)</b></td><td class="num">223 (b=8)</td><td class="num">37.6</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.00&times;</td></tr>
+        <tr><td><i>S0 &mdash; hypothetical all-HBM holding b=37</i></td><td class="num">439</td><td class="num">51.8</td><td class="num">52.39</td><td class="num">5,650</td><td class="num">3.32&times;</td></tr>
+        <tr><td>S1 &mdash; passive LPDDR, GPU-driven gather</td><td class="num">470</td><td class="num">53.7</td><td class="num">54.39</td><td class="num">5,442</td><td class="num">3.20&times;</td></tr>
+        <tr><td>S1.5 &mdash; + base-die gather engine</td><td class="num">433</td><td class="num">51.4</td><td class="num">52.07</td><td class="num">5,685</td><td class="num">3.34&times;</td></tr>
+        <tr><td>S1.75 &mdash; + base-die top-k</td><td class="num">393</td><td class="num">48.9</td><td class="num">49.49</td><td class="num">5,981</td><td class="num">3.51&times;</td></tr>
+        <tr><td><b>S1.75 + co-scan @200 TOPS</b></td><td class="num">349</td><td class="num">46.3</td><td class="num"><b>46.74</b></td><td class="num"><b>6,333</b></td><td class="num"><b>3.72&times;</b></td></tr>
+        <tr><td>S2 &mdash; full indexer offload @200 TOPS</td><td class="num">607</td><td class="num">62.2</td><td class="num">67.56</td><td class="num">4,381</td><td class="num">2.57&times;</td></tr>
+        <tr><td>S2 @400 / @600 TOPS&dagger;</td><td class="num">409 / 344</td><td class="num">49.9 / 45.9</td><td class="num">&mdash;</td><td class="num">5,928 / 6,447&dagger;</td><td class="num">3.48&times; / 3.79&times;&dagger;</td></tr>
       </table></div>
-      <div class="callout win"><b>Validated by simulation &mdash; all four designs.</b> Each design was
-        run through LLMServingSim at b=37/128K (EP8-rank proxy, staggered-output steady state, full 37-way
-        concurrency verified; S1/S1.5/S2 via profile-variant patching &mdash; the component model&rsquo;s
-        per-row deltas applied to <code class="k">attention.csv</code> in per-design perf bundles):
-        <div class="scroll"><table>
-          <tr><th>Design</th><th class="num">sim TPOT</th><th class="num">sim cluster tok/s</th><th class="num">sim vs B0</th><th class="num">analytic</th><th class="num">agreement</th></tr>
-          <tr><td>S0 all-HBM (unpatched)</td><td class="num">52.39 ms</td><td class="num">5,650</td><td class="num">3.32&times;</td><td class="num">51.8 / 5,717</td><td class="num">1.2%</td></tr>
-          <tr><td>S1 GPU-driven UCIe gather</td><td class="num">54.39 ms</td><td class="num">5,442</td><td class="num">3.20&times;</td><td class="num">53.7 / 5,515</td><td class="num">1.3%</td></tr>
-          <tr><td><b>S1.5 base-die gather</b></td><td class="num"><b>52.07 ms</b></td><td class="num"><b>5,685</b></td><td class="num"><b>3.34&times;</b></td><td class="num">51.4 / 5,756</td><td class="num">1.3%</td></tr>
-          <tr><td>S2 base-die scan @200 TOPS</td><td class="num">67.56 ms</td><td class="num">4,381</td><td class="num">2.57&times;</td><td class="num">62.2 / 4,761</td><td class="num">8%*</td></tr>
-        </table></div>
-        The predicted ordering <b>S1.5 &gt; S0 &asymp; S1 &gt; S2@200 survives the real scheduler</b>, and
-        S1.5 is the measured winner. The capacity-contrast run: the stock 141 GB config offered the same 37
-        requests <b>admits a maximum of 8 concurrent sessions</b> (exactly the predicted cap), taking 488 s
-        end-to-end vs ~60 s on the expanded configs. (*The sim&rsquo;s S2 keeps the full measured kernel
-        plus the engine-swap delta &mdash; conservative vs the analytic&rsquo;s restructured pipeline.)</div>
-      <div class="callout"><b>Reading it &mdash; scan placement should be adaptive.</b> With keys
-        HBM-resident, the GPU scans 640 MB/layer in 159 &micro;s (measured-rate); a base die needs
-        <b>&gt;357 TOPS/GPU (~45 TOPS/cube, ~18 W)</b> to do better, so at feasible thermals the winning
-        configuration here is <b>S1.5: the base die gathers (61 vs 97 &micro;s GPU-driven), the GPU
-        scans</b> &mdash; 3.38&times; over stock from what is essentially the capacity expansion plus a small
-        gather engine. The full MAC array pays either with an aggressive thermal budget (3.5&ndash;3.8&times;
-        at 400&ndash;600 TOPS) or in the keys-spill regime below, where the GPU loses its fast scan path.
-        The batch has a throughput optimum too: b=37 at 3.4&times; beats both b=16 (1.7&ndash;1.8&times;) and
-        the b=162 LPDDR-max spill tier (&asymp;3.5&times; but with ~4&times; worse TPOT).</div>
+      <div class="callout win"><b>Reading the master table.</b> (1) Capacity does most of the winning:
+        even the passive S1 gets 3.20&times;, because stock caps at 8 sessions (the capacity-contrast run:
+        offered the same 37 requests, the 141 GB config admits exactly 8 and takes 488 s vs ~60 s).
+        (2) Each rung of base-die intelligence buys 4&ndash;6% more, ordered by arithmetic intensity
+        (gather &rarr; top-k &rarr; scan share) &mdash; the winner is <b>S1.75+co-scan at 3.72&times;,
+        within 2% of full-offload@600 TOPS at one third the thermal budget</b>. (3) Naive full offload at
+        feasible TOPS (S2@200, 2.57&times;) is the one rung that goes <i>backwards</i> &mdash; the scan is
+        compute-bound on the die below ~360 TOPS/GPU, so scan placement must be adaptive: shared while
+        keys are HBM-resident, fully on-die only once keys spill (next subsection but one). (4) Analytic
+        and sim agree to 1&ndash;2% everywhere except S2 (8%, sim conservative). The batch axis has its
+        optimum here too: b=37 beats both b=16 (1.7&ndash;2.1&times;) and the b=162 LPDDR-max tier
+        (similar throughput, ~4&times; worse TPOT).</div>
 
       <h3>Why the winner is who it is: S1 vs S1.5 vs S2, mechanically</h3>
       <p>All three designs run the same logical pipeline per layer &mdash;
@@ -1579,13 +1577,8 @@
         <b>co-scan</b> &mdash; splits the key stream ~72:28 between GPU (bandwidth-bound, 4.15 TB/s) and
         die (compute-bound, 200 TOPS), the two reading over <i>different</i> paths (PHY vs TSV), with the
         die merging both logit streams: scan 159 &rarr; ~111 &micro;s.</p>
-      <div class="scroll"><table>
-        <tr><th>Design @ (128K, b=37/GPU)</th><th class="num">sim TPOT</th><th class="num">sim cluster tok/s</th><th class="num">sim vs B0</th><th class="num">analytic</th></tr>
-        <tr><td>S1.5 &mdash; base-die gather only</td><td class="num">52.07 ms</td><td class="num">5,685</td><td class="num">3.34&times;</td><td class="num">51.4 / 5,756</td></tr>
-        <tr><td><b>S1.75 &mdash; + base-die top-k</b></td><td class="num"><b>49.49 ms</b></td><td class="num"><b>5,981</b></td><td class="num"><b>3.51&times;</b></td><td class="num">48.9 / 6,051</td></tr>
-        <tr><td><b>S1.75 + co-scan @200 TOPS</b></td><td class="num"><b>46.74 ms</b></td><td class="num"><b>6,333</b></td><td class="num"><b>3.72&times;</b></td><td class="num">46.3 / 6,399</td></tr>
-        <tr><td><i>S2 full offload @600 TOPS (3&times; the thermal budget)</i></td><td class="num"><i>&mdash;</i></td><td class="num"><i>~6,447 (analytic)</i></td><td class="num"><i>3.79&times;</i></td><td class="num">45.9 / 6,447</td></tr>
-      </table></div>
+      <p>Both variants are in the master table above (S1.75: 49.49 ms sim, 3.51&times;;
+        S1.75+co-scan: 46.74 ms sim, 3.72&times;).</p>
       <div class="callout win"><b>The allocation lesson, validated.</b> Splitting the indexer by
         arithmetic intensity &mdash; AI&asymp;1 top-k and the gather always on the die, the AI=124 scan
         shared in proportion to each engine&rsquo;s throughput &mdash; gets a 200 TOPS die to
