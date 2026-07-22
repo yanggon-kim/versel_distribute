@@ -70,8 +70,10 @@
     <a href="#throughput">10 &middot; Throughput: what batching buys</a>
     <a href="#roofline">11 &middot; DSA vs dense: the roofline</a>
     <a href="#h200b200">12 &middot; H200 &harr; B200, kernel by kernel</a>
-    <a href="#nmp">13 &middot; Near-memory: what changes on B200</a>
-    <a href="#method">14 &middot; Method &amp; caveats</a>
+    <a href="#surprises">13 &middot; The five unexpected differences</a>
+    <a href="#studies">14 &middot; What to study next: derived analyses</a>
+    <a href="#nmp">15 &middot; Near-memory: what changes on B200</a>
+    <a href="#method">16 &middot; Method &amp; caveats</a>
   </nav>
 
   <main>
@@ -1216,7 +1218,7 @@
         124-intensity streaming reduction leaves an even larger fraction of the chip idle than on the
         H200. You don&rsquo;t need 4500&nbsp;TFLOP/s to rank KV tokens &mdash; you need bandwidth next
         to the KV. The near-memory case (Part&nbsp;VI &sect;12) strengthens with every
-        compute-heavy generation; &sect;13 summarizes what changes.</div>
+        compute-heavy generation; &sect;15 summarizes what changes.</div>
     </section>
 
     <section class="card" id="h200b200">
@@ -1256,8 +1258,121 @@
         phase mix &mdash; the per-phase rows above are the primitives.</div>
     </section>
 
+    <section class="card" id="surprises">
+      <h2><span class="num">13</span>The five unexpected differences</h2>
+      <p class="lead">&sect;12&rsquo;s table, distilled: the rows a naive &ldquo;scale H200 by the
+        spec sheet&rdquo; model gets wrong, each with its evidence and its consequence.</p>
+      <div class="callout warn"><b>1&nbsp;&middot; The gather+attend floor did not move: 1.00&times;
+        (154.7 &rarr; 154.6&nbsp;&micro;s).</b> The top-2048 scatter+attend is latency-bound, not
+        bandwidth-bound &mdash; 1.67&times; the HBM bandwidth bought it <i>nothing</i>. DSA&rsquo;s
+        fixed floor is generation-invariant, with a compounding consequence quantified in &sect;14.2.</div>
+      <div class="callout warn"><b>2&nbsp;&middot; Single-user decode got slower: 1.18&times;
+        (173.8 &rarr; 205.4&nbsp;&micro;s at kv=128K).</b> The sm100 FlashMLA-sparse decode path
+        carries a higher fixed launch/setup cost; at batch&nbsp;1 that cost dominates. B200 does not
+        pay off until batch ~16&ndash;32 (&sect;14.1) &mdash; interactive single-stream serving is a
+        regression, not an upgrade.</div>
+      <div class="callout warn"><b>3&nbsp;&middot; MoE at (64 tok, 256 exp): 0.13&times; &mdash;
+        7.7&times; faster, beyond any roofline.</b> Not silicon: vLLM swapped MoE backends
+        (SM90&nbsp;Triton &rarr; SM100 FlashInfer TRT-LLM), and Triton was pathological at
+        few-tokens&nbsp;&times;&nbsp;many-experts (2,697&nbsp;&micro;s for 64 tokens). This one swap
+        drives the batch-64 TPOT ratio to 0.27&times; &mdash; better than the best hardware prior
+        (&sect;14.4 separates backend from silicon).</div>
+      <div class="callout warn"><b>4&nbsp;&middot; <code class="k">act_fn</code> got slower: 1.24&times;
+        (60.0 &rarr; 74.2&nbsp;&micro;s at 2048 tokens).</b> A memory-bound elementwise SiLU&times;mul
+        &ldquo;should&rdquo; scale by ~0.6&times;. Same vLLM kernel on both GPUs, consistent across the
+        token axis. Unexplained; recorded as measured &mdash; the simulator replays the measured value.</div>
+      <div class="callout warn"><b>5&nbsp;&middot; The scan streams further from peak: 66% vs 73%
+        (wrapper-level).</b> The isolated <code class="k">sm100_fp8_paged_mqa_logits</code> kernel
+        still scales essentially at the bandwidth prior (0.61&ndash;0.64&times; vs 0.60), but the
+        non-scaling parts around it (top-k at 0.91&times;, fixed floor at 1.00&times;) dilute the
+        wrapper. Fraction-of-peak erodes a little each generation even when the streaming kernel
+        itself is healthy.</div>
+    </section>
+
+    <section class="card" id="studies">
+      <h2><span class="num">14</span>What to study next: derived analyses</h2>
+      <p class="lead">The ridge, bandwidth, and compute deltas between the two GPUs are themselves an
+        instrument. Four analyses computed from the two committed bundles, each ending in an open
+        question about the workload.</p>
+
+      <h3>14.1 &mdash; Where B200 actually pays off: the batch crossover</h3>
+      <p>B200/H200 decode-attention time ratio over (batch, context). Shaded cells are where B200 is
+        faster; the boundary is the <b>break-even batch</b>:</p>
+      <div class="scroll"><table><thead><tr><th>batch \ context</th><th>4K</th><th>16K</th><th>64K</th><th>128K</th><th>256K</th><th>512K</th><th>1M</th></tr></thead><tbody><tr><th class="num">1</th><td class="num">1.16</td><td class="num">1.20</td><td class="num">1.20</td><td class="num">1.18</td><td class="num">1.16</td><td class="num">1.11</td><td class="num">1.04</td></tr><tr><th class="num">2</th><td class="num">1.16</td><td class="num">1.20</td><td class="num">1.16</td><td class="num">1.16</td><td class="num">1.13</td><td class="num">1.07</td><td class="num" style="background:#e8f6ec">0.98</td></tr><tr><th class="num">4</th><td class="num">1.19</td><td class="num">1.22</td><td class="num">1.18</td><td class="num">1.14</td><td class="num">1.11</td><td class="num">1.02</td><td class="num" style="background:#e8f6ec">0.91</td></tr><tr><th class="num">8</th><td class="num">1.13</td><td class="num">1.15</td><td class="num">1.10</td><td class="num">1.08</td><td class="num">1.01</td><td class="num" style="background:#e8f6ec">0.94</td><td class="num" style="background:#e8f6ec">0.85</td></tr><tr><th class="num">16</th><td class="num">1.05</td><td class="num">1.08</td><td class="num">1.03</td><td class="num" style="background:#e8f6ec">0.98</td><td class="num" style="background:#e8f6ec">0.90</td><td class="num" style="background:#e8f6ec">0.83</td><td class="num" style="background:#e8f6ec">0.77</td></tr><tr><th class="num">32</th><td class="num" style="background:#e8f6ec">0.95</td><td class="num" style="background:#e8f6ec">0.93</td><td class="num" style="background:#e8f6ec">0.88</td><td class="num" style="background:#e8f6ec">0.82</td><td class="num" style="background:#e8f6ec">0.76</td><td class="num" style="background:#e8f6ec">0.70</td><td class="num" style="background:#e8f6ec">0.66</td></tr><tr><th class="num">64</th><td class="num" style="background:#e8f6ec">0.97</td><td class="num" style="background:#e8f6ec">0.95</td><td class="num" style="background:#e8f6ec">0.88</td><td class="num" style="background:#e8f6ec">0.82</td><td class="num" style="background:#e8f6ec">0.77</td><td class="num" style="background:#e8f6ec">0.73</td><td class="num" style="background:#e8f6ec">0.70</td></tr><tr><th class="num">128</th><td class="num" style="background:#e8f6ec">0.83</td><td class="num" style="background:#e8f6ec">0.81</td><td class="num" style="background:#e8f6ec">0.77</td><td class="num" style="background:#e8f6ec">0.73</td><td class="num" style="background:#e8f6ec">0.69</td><td class="num" style="background:#e8f6ec">0.67</td><td class="num" style="background:#e8f6ec">0.66</td></tr></tbody></table><p style="color:var(--muted);font-size:.85rem">B200/H200 decode-attention time ratio; green = B200 faster. Pure-decode cells from the two committed attention.csv grids at identical shapes.</p></div>
+      <div class="callout"><b>Reading.</b> The break-even batch is ~16&ndash;32 at every context below
+        1M (at 1M the scan dominates early and break-even drops to ~2&ndash;4). Below it, the sm100
+        path&rsquo;s fixed cost wins; above it, bandwidth wins and the ratio approaches the 0.60
+        prior. <b>Open question:</b> is the batch-1 penalty launch overhead (fixable in software:
+        fewer kernel launches, persistent kernels, graph capture &mdash; note this profile runs
+        <code class="k">enforce_eager</code>) or intrinsic sm100 kernel setup? A CUDA-graphs replay
+        of the same shots would separate the two.</div>
+
+      <h3>14.2 &mdash; The floor is forever: slope&ndash;floor decomposition across generations</h3>
+      <p>Decode attention fits <code class="k">t(kv) = floor + slope&times;kv</code> per batch
+        (fit over the measured 256K&ndash;1M segment):</p>
+      <div class="scroll"><table><thead><tr><th>batch</th><th>H200 floor &micro;s</th><th>H200 slope &micro;s/Ktok</th><th>H200 floor share @128K</th><th>B200 floor &micro;s</th><th>B200 slope &micro;s/Ktok</th><th>B200 floor share @128K</th><th>next-gen share (slope&divide;1.67, same floor)</th></tr></thead><tbody><tr><th class="num">16</th><td class="num">203</td><td class="num">0.59</td><td class="num">73%</td><td class="num">221</td><td class="num">0.39</td><td class="num"><b>81%</b></td><td class="num"><b>88%</b></td></tr><tr><th class="num">64</th><td class="num">297</td><td class="num">2.40</td><td class="num">49%</td><td class="num">290</td><td class="num">1.61</td><td class="num"><b>58%</b></td><td class="num"><b>70%</b></td></tr><tr><th class="num">128</th><td class="num">437</td><td class="num">4.44</td><td class="num">43%</td><td class="num">362</td><td class="num">2.84</td><td class="num"><b>49%</b></td><td class="num"><b>62%</b></td></tr></tbody></table><p style="color:var(--muted);font-size:.85rem">Linear fit over the measured 256K&ndash;1M segment. The floor (gather + fixed attend) barely moves between generations; the slope (indexer scan) carries the improvement.</p></div>
+      <div class="callout warn"><b>The scan slope improved 1.49&times;; the floor improved
+        1.02&times;.</b> So the floor&rsquo;s share of attention time <i>grows</i> every generation
+        (49% &rarr; 58% at batch&nbsp;64, kv=128K). Extrapolate one more +1.67&times;-bandwidth
+        generation with the same frozen floor and the floor is ~70% &mdash; <b>DSA&rsquo;s binding
+        cost stops being the scan and becomes the 2048-record gather</b>. That inverts the
+        optimization target: larger effective gather granularity, software-pipelined
+        gather&harr;attend overlap, or moving the gather next to the memory (Part&nbsp;VI &sect;12)
+        matter more than any further scan tuning.</div>
+
+      <h3>14.3 &mdash; Regime map: every op against both ridges</h3>
+      <p>Analytical arithmetic intensity (FLOP/HBM-byte) of each decode-shape op at batch&nbsp;64 /
+        kv=128K, against the fp8 ridge of each GPU (H200 ~412, B200 ~562):</p>
+      <div class="scroll"><table><thead><tr><th>op</th><th>AI (FLOP/B)</th><th>H200 regime (ridge 412)</th><th>B200 regime (ridge 562)</th><th>generation sensitivity</th></tr></thead><tbody><tr style="background:#fff3e6"><td>dense-MLA attend (counterfactual)</td><td class="num">425</td><td class="num">compute</td><td class="num">memory</td><td><b>crossed the ridge</b></td></tr><tr><td>gather + attend (top-2048)</td><td class="num">400</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>indexer projections</td><td class="num">128</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>shared-expert MLP</td><td class="num">128</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>o_proj</td><td class="num">125</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>indexer scan</td><td class="num">124</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>fused q/kv-A projection</td><td class="num">119</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>q_b projection</td><td class="num">118</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>MoE gate</td><td class="num">85</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>MoE routed GEMMs</td><td class="num">4</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>attention setup</td><td class="num">2</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>RMSNorms</td><td class="num">2</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr><tr><td>indexer top-k</td><td class="num">1</td><td class="num">memory</td><td class="num">memory</td><td>stays memory-bound</td></tr></tbody></table><p style="color:var(--muted);font-size:.85rem">Analytical AI at decode batch 64, kv=128K (weights fp8, activations bf16, fp8_ds_mla cache), from the same compute_ai() model the kernel table (&sect;8) uses.</p></div>
+      <div class="callout"><b>Reading.</b> Ops between the two ridges are the generation-sensitive
+        band: compute-bound on Hopper, memory-bound on Blackwell &mdash; dense-MLA attend (AI&nbsp;425)
+        is the headline crossing. Everything in the projection/MoE GEMM family sits far above both
+        ridges and keeps its 0.44&times; scaling; everything indexer-side sits far below and keeps
+        0.60&times;. <b>Open question:</b> a further fp4 step (~2&times; FLOPs again &rarr; ridge
+        ~1100) would drag the <i>whole GEMM family</i> into the sensitive band &mdash; at that point
+        V3.2 decode is memory-bound end to end, and per-op profiling of an fp4 variant
+        (<code class="k">fp8-kvfp8</code> &rarr; fp4 weights) becomes the natural next bundle.</div>
+
+      <h3>14.4 &mdash; Backend vs silicon: decomposing the 0.27&times; TPOT</h3>
+      <p>The batch-64, 128K decode step improved 195.0 &rarr; 52.0&nbsp;ms (0.27&times;) &mdash;
+        better than any hardware ratio. Splitting the win using H200&rsquo;s own well-shaped MoE cell
+        as a counterfactual (its (2048,&nbsp;256) cell scaled linearly to 64 tokens &asymp;
+        115&nbsp;&micro;s/layer vs the 2,697&nbsp;&micro;s Triton pathology):</p>
+      <div class="scroll"><table><thead><tr><th>batch-64, 128K decode step</th><th>step ms</th><th>vs H200 measured</th></tr></thead><tbody><tr><td>H200 measured (Triton MoE)</td><td class="num">195.0</td><td class="num"><b>1.00&times;</b></td></tr><tr><td>H200 counterfactual: MoE cell linearized from its own (2048, 256) cell (115 &micro;s vs 2,697 measured)</td><td class="num">45.3</td><td class="num"><b>0.23&times;</b></td></tr><tr><td>B200 measured (FlashInfer TRT-LLM MoE)</td><td class="num">52.0</td><td class="num"><b>0.27&times;</b></td></tr></tbody></table><p style="color:var(--muted);font-size:.85rem">The counterfactual is a linear lower bound (a real backend keeps some per-launch overhead at 64 tokens), so it brackets the backend effect from below; the silicon-only gap is the remaining distance to the B200 row.</p></div>
+      <div class="callout warn"><b>Most of the 3.75&times; step win at batch 64 is the MoE backend,
+        not the GPU.</b> An H200 with a TRT-LLM-class MoE backend would already capture the bulk of
+        it; the silicon contributes roughly the per-phase roofline ratios (0.44&ndash;0.82). Two
+        implications: (1) H200&rarr;B200 scaling models must treat backend selection as a variable,
+        not a constant; (2) for the simulator, an H200 bundle re-profiled with a modern MoE backend
+        is a cheap, high-value follow-up &mdash; it isolates true silicon scaling at every batch.</div>
+
+      <h3>14.5 &mdash; Serving-level consequences &amp; open questions</h3>
+      <ul class="notes">
+        <li><b>Capacity:</b> the KV budget grew 144.4M &rarr; 194.2M tokens (+34%), yet the same six
+          (batch&nbsp;&times;&nbsp;context) profiling corners stay infeasible, and end-to-end
+          LLMServingSim runs on this bundle show DP4+EP4 capacity-dead at 128K (64-expert rank
+          &asymp; 172&nbsp;GiB of 192) and a 1&nbsp;TiB single GPU capping at ~61 concurrent 128K
+          streams. Capacity, not bandwidth, still bounds long-context V3.2 serving on Blackwell
+          &mdash; the memory-tier studies this bundle feeds.</li>
+        <li><b>Measured cluster point:</b> DP8+EP8 at 128K, B_cluster=128: 4,749 tok/s vs 3,120 on
+          H200 &mdash; 1.52&times;, i.e. the TPOT blend (0.66&times;) of &sect;12, not the spec-sheet
+          1.67&ndash;2.27&times;.</li>
+        <li><b>Unprofiled by design, now worth revisiting:</b> skew profiling was skipped on the
+          DSA ruling (fixed top-2048 attend). The sm100 scan&rsquo;s <i>batch-1 penalty</i> and the
+          frozen gather floor were not visible on H200 &mdash; a small heterogeneous-decode sweep on
+          B200 would test whether the scan stays mean-exact under skew there too.</li>
+        <li><b>The act_fn 1.24&times; regression</b> (&sect;13.4): dump the elementwise kernel&rsquo;s
+          launch config on both GPUs (grid/block/vectorization) &mdash; likely a tuning artifact,
+          cheap to confirm, and it biases every dense-layer composition by a few percent.</li>
+        <li><b>Top-k at 0.91&times;:</b> neither bandwidth- nor overhead-shaped. The
+          <code class="k">cooperative_topk cs8&rarr;cs16</code> change suggests a different
+          cooperative width; worth a dedicated microbench before trusting extrapolations of the
+          top-k term past 1M context.</li>
+      </ul>
+    </section>
+
     <section class="card" id="nmp">
-      <h2><span class="num">13</span>Near-memory: what changes on B200</h2>
+      <h2><span class="num">15</span>Near-memory: what changes on B200</h2>
       <p class="lead">Part&nbsp;VI&rsquo;s &sect;12 makes the full base-die/NMP case on H200 numbers;
         it is deliberately not duplicated here.</p>
       <p>Read the architecture note in
@@ -1281,7 +1396,7 @@
     </section>
 
         <section class="card" id="method">
-      <h2><span class="num">14</span>Method &amp; caveats</h2>
+      <h2><span class="num">16</span>Method &amp; caveats</h2>
       <ul class="notes">
         <li><b>Measurement.</b> vLLM 0.25.1 layerwise profiling of a 1-layer dummy-weight
           DeepSeek-V3.2-Exp on one B200 (SM100, 192&nbsp;GB HBM3e), <code class="k">fp8_ds_mla</code> KV cache,
