@@ -1440,13 +1440,30 @@
       </ul>
 
       <h3>What the B200 numbers change</h3>
-      <p><b>1&nbsp;&middot; The parity budget doubles.</b> The scan&rsquo;s intensity is fixed at
-        124&nbsp;FLOP/byte (64 index heads &times; 128 dims,
-        16,384&nbsp;fp8&nbsp;ops per query&ndash;token), so the TOPS to keep pace scale
-        with bandwidth: <b>~650&nbsp;TOPS</b> to match what the B200 scan actually streams
-        (5.24&nbsp;TB/s measured), <b>~993&nbsp;TOPS to feed the full 8&nbsp;TB/s PHY</b> —
-        double the H200-parity figure. Aggregate across a stack&rsquo;s base dies, this is the
-        ~1,000-TOPS class.</p>
+      <p><b>1&nbsp;&middot; The parity budget: read it per die, and know which target you are
+        sizing for.</b> The scan&rsquo;s intensity is fixed at 124&nbsp;FLOP/byte
+        (64 index heads &times; 128 dims, 16,384&nbsp;fp8&nbsp;ops per
+        query&ndash;token), so <b>rate parity</b> &mdash; scoring keys as fast as a die&rsquo;s own
+        stack can stream them &mdash; is TOPS&nbsp;=&nbsp;AI&nbsp;&times;&nbsp;per-stack bandwidth.
+        This bound is <b>batch-invariant</b>: sharding the batch across GPUs and stacks (say
+        cluster&nbsp;256 &rarr; 32/GPU &rarr; 4/stack) shrinks each die&rsquo;s <i>work</i>
+        proportionally, but ops and bytes shrink together, so the TOPS needed to keep pace with the
+        local 1&nbsp;TB/s stream do not move &mdash; a smaller slice just finishes sooner:</p>
+      <div class="scroll"><table><thead><tr><th>GPU</th><th>HBM stacks</th><th>per-stack BW</th><th>rate-parity per die</th><th>aggregate per GPU</th></tr></thead><tbody><tr><td>H200</td><td class="num">6</td><td class="num">0.80 TB/s</td><td class="num"><b>99 TOPS/die</b></td><td class="num">596 TOPS</td></tr><tr><td>B200</td><td class="num">8</td><td class="num">1.00 TB/s</td><td class="num"><b>124 TOPS/die</b></td><td class="num">993 TOPS</td></tr></tbody></table></div>
+      <p>Two readings follow. Aggregate per GPU the budget grew 1.67&times; (596&nbsp;&rarr;&nbsp;993
+        &mdash; the &ldquo;~600 vs ~1,000&rdquo; framing), but <b>per die it grew only 1.25&times;
+        (99&nbsp;&rarr;&nbsp;124&nbsp;TOPS)</b>, because the B200 spreads its 8&nbsp;TB/s over 8
+        stacks where the H200 spread 4.8 over 6. And rate parity is the <i>latency-parity
+        ceiling</i>, not the deployment requirement: if each die only has to finish its slice within
+        the GPU&rsquo;s MoE window (&sect; below), the DP-sharded target is far smaller &mdash;
+        measured windows, batch dividing exactly as in the DP=EP serving studies:</p>
+      <div class="scroll"><table><thead><tr><th>cluster batch (8 GPUs)</th><th>per GPU</th><th>per stack</th><th>scan work / layer-step / die @128K</th><th>MoE window (measured)</th><th>window-target TOPS/die</th></tr></thead><tbody><tr><td class="num">128</td><td class="num">16</td><td class="num">2</td><td class="num">4.3 GFLOP</td><td class="num">157 &micro;s</td><td class="num"><b>27 TOPS/die</b></td></tr><tr><td class="num">256</td><td class="num">32</td><td class="num">4</td><td class="num">8.6 GFLOP</td><td class="num">155 &micro;s</td><td class="num"><b>55 TOPS/die</b></td></tr><tr><td class="num">512</td><td class="num">64</td><td class="num">8</td><td class="num">17.2 GFLOP</td><td class="num">350 &micro;s</td><td class="num"><b>49 TOPS/die</b></td></tr></tbody></table></div>
+      <p style="color:var(--muted);font-size:.9rem">Placement caveat: a base die can only scan keys
+        in its own stack. Request-local placement (whole requests per stack, as in the sharding
+        above) gives each die an independent slice but caps a <i>single</i> request&rsquo;s scan at
+        one stack&rsquo;s 1&nbsp;TB/s (8&times; slower single-stream); striping keys across stacks
+        keeps every die working on every request and preserves single-request bandwidth &mdash; the
+        per-die parity number is identical either way.</p>
       <p><b>2&nbsp;&middot; The overlap window shrank &mdash; the TRT-LLM effect cuts against the base
         die.</b> Part&nbsp;VI&rsquo;s cheapest lever was hiding the indexer behind a neighbour
         microbatch&rsquo;s MoE. But on B200 the MoE got disproportionately faster (&sect;13.3), so the
