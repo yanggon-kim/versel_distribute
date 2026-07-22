@@ -1659,6 +1659,47 @@
         rate requirement per TB/s &mdash; distributing batches lowers the per-die <i>amount</i> of work,
         never the required <i>rate</i>.</div>
 
+      <h3>Can the on-die scan&rarr;index&rarr;LPDDR-gather pipeline speed up the whole system? (128K, B=256)</h3>
+      <p>The end-to-end question: if the base die runs the indexer scan, produces the top-2048 indices,
+        and gathers the latents from its own LPDDR &mdash; does the <i>system</i> get faster, and by how
+        much? Worked at B=256 (DP8 &rarr; b=32/GPU, 4 sessions/cube; measured anchors:
+        attn(32,128K)=406.7 &micro;s, EP8 MoE 398.6 &micro;s; the S0 composition, 5,153 tok/s, matches the
+        Part&nbsp;VII simulation&rsquo;s 5,156 &mdash; the model is calibrated):</p>
+      <div class="scroll"><table>
+        <tr><th>Design @ (128K, B=256)</th><th class="num">attn blk &micro;s</th><th class="num">TPOT (ms)</th><th class="num">cluster tok/s</th><th class="num">vs stock B0</th><th class="num">vs all-HBM S0</th></tr>
+        <tr><td><b>B0 &mdash; stock 8&times;H200 (caps at b=8)</b></td><td class="num">223 (b=8)</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.00&times;</td><td class="num">&mdash;</td></tr>
+        <tr><td>S0 &mdash; all-HBM reference</td><td class="num">407</td><td class="num">49.7</td><td class="num">5,153</td><td class="num">3.03&times;</td><td class="num">1.00&times;</td></tr>
+        <tr><td>S1.5 &mdash; GPU scan + die gather</td><td class="num">400</td><td class="num">49.3</td><td class="num">5,195</td><td class="num">3.05&times;</td><td class="num">1.01&times;</td></tr>
+        <tr><td>S1.75 &mdash; + die top-k</td><td class="num">364</td><td class="num">47.1</td><td class="num">5,439</td><td class="num">3.20&times;</td><td class="num">1.06&times;</td></tr>
+        <tr><td><b>S1.75 + co-scan @200 TOPS agg (25/cube, ~1.25 W)</b></td><td class="num">289</td><td class="num">42.4</td><td class="num"><b>6,038</b></td><td class="num"><b>3.55&times;</b></td><td class="num">1.17&times;</td></tr>
+        <tr><td>Full on-die scan @200 TOPS agg</td><td class="num">533</td><td class="num">57.5</td><td class="num">4,452</td><td class="num">2.62&times;</td><td class="num">0.86&times;</td></tr>
+        <tr><td><b>S1.75 + co-scan @516 agg (64/cube, ~3.2 W)</b></td><td class="num">258</td><td class="num">40.5</td><td class="num"><b>6,321</b></td><td class="num"><b>3.71&times;</b></td><td class="num">1.23&times;</td></tr>
+        <tr><td>Full on-die scan @516 agg</td><td class="num">323</td><td class="num">44.5</td><td class="num">5,749</td><td class="num">3.38&times;</td><td class="num">1.12&times;</td></tr>
+        <tr><td><i>Amdahl limit (attention &rarr; 0)</i></td><td class="num"><i>0</i></td><td class="num"><i>24.6</i></td><td class="num"><i>10,410</i></td><td class="num"><i>6.12&times;</i></td><td class="num"><i>2.02&times;</i></td></tr>
+      </table></div>
+      <p><b>How the speedup happens &mdash; three distinct mechanisms.</b>
+        (1) <b>Capacity enablement is the multiplier (3.03&times;)</b>: B=256 does not exist on stock
+        hardware &mdash; 8&times;H200 caps at b=8/GPU and queues the rest at 1,702 tok/s; the LPDDR tier
+        holding the 168 GB of latents is what makes 5,100+ tok/s possible at all.
+        (2) <b>Path shortening (+6% over S0)</b>: top-k (41 &micro;s) moves on-die and the coalescing
+        engine gathers from LPDDR in 52 &micro;s &mdash; faster than the 59 &micro;s HBM gather at this
+        batch &mdash; with essentially no TOPS spent.
+        (3) <b>Engine addition &mdash; the co-scan (+17&ndash;23% over S0)</b>: the MAC array&rsquo;s best
+        use is <i>joining</i> the GPU&rsquo;s scan, not replacing it &mdash; GPU streams HBM keys at
+        4.15 TB/s while each die scans its own sessions&rsquo; share; the scan drops 138 &rarr; 94
+        &micro;s (200 TOPS) or &rarr; 68 &micro;s (64 TOPS/cube). Two engines on two bandwidth domains
+        beat either alone.</p>
+      <div class="callout warn"><b>Two honest caveats.</b> The pure pipeline as stated &mdash; full
+        on-die scan &rarr; indices &rarr; LPDDR gather &mdash; is only net-positive above <b>~45
+        TOPS/cube (~2.3 W/die)</b>: at the comfortable 25 TOPS/cube it is <i>slower than not
+        offloading</i> (0.86&times; of S0), because a 343 &micro;s die scan replaces a 138 &micro;s GPU
+        scan &mdash; and even where it wins, co-scan with the same silicon wins more. And the
+        whole-system ceiling is <b>Amdahl-bound by the EP8 MoE</b> (~399 &micro;s, ~55% of the layer,
+        untouched by attention-side NMP): even a free attention block caps at 2.02&times; over S0. Net
+        answer: <b>3.5&ndash;3.7&times; over the stock baseline &mdash; ~3.0&times; from capacity,
+        ~1.15&ndash;1.25&times; from the base-die pipeline &mdash; with co-scan, not full offload, as
+        the winning configuration at any thermal budget.</b></div>
+
       <h3>Inside the gather engine &mdash; coalescing, packing, latency hiding</h3>
       <p>The S1-vs-S1.5 gap is entirely a datapath story. Geometry: 656 B latent records at
         <code class="k">base + index &times; 656</code>, LPDDR row buffer 2 KB (~3 records), each cube
