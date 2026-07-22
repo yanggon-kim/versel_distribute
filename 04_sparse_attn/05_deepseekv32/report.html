@@ -1593,6 +1593,63 @@
         full-offload needed 600 TOPS (~30 W, over budget) to reach. Same silicon, three times the
         effective value, purely from putting each kernel on the engine whose roofline it fits.</div>
 
+      <h3>The design ladder at a glance &mdash; versions, strengths, weaknesses</h3>
+      <p>The five designs form a ladder of base-die capability. Each rung keeps everything below it;
+        all system numbers are the sim-validated b=37/128K results (vs the stock 1,702 tok/s baseline):</p>
+      <div class="scroll"><table>
+        <tr><th>Version</th><th>On the base die</th><th class="num">Result</th><th>Strong points</th><th>Weaknesses / when it loses</th></tr>
+        <tr><td><b>S1</b> &mdash; passive bridge</td><td>nothing (PHY&harr;UCIe&harr;LPDDR bridging only)</td><td class="num">3.20&times;</td><td>zero new logic; the full capacity win (37 vs 8 sessions) already materializes</td><td>GPU-driven gather is latency-bound (~50% link, 97 &micro;s); attend warps stall issuing 5&ndash;6 cacheline reads per record</td></tr>
+        <tr><td><b>S1.5</b> &mdash; gather engine</td><td>scatter-gather DMA (descriptor queue + AGU + ~256 KB reorder SRAM)</td><td class="num">3.34&times;</td><td>thermally free (no MACs); link runs bandwidth-bound (~80%, 61 &micro;s); GPU SMs freed; attend reads packed tiles at HBM rate</td><td>top-k still on GPU &mdash; indices make a GPU&rarr;die round trip; scan untouched</td></tr>
+        <tr><td><b>S1.75</b> &mdash; + top-k select</td><td>+ streaming threshold/select unit (AI&asymp;1, a few GOPS)</td><td class="num">3.51&times;</td><td>the textbook NMP kernel: 19 MB of logits in, 8 KB of indices out; fuses with the gather &mdash; indices never visit the GPU; 46 &micro;s kernel &rarr; ~5 &micro;s tail</td><td>needs logits readable from the die (TSV path) and a small 2048-entry sorter/heap</td></tr>
+        <tr><td><b>S1.75+co-scan</b></td><td>+ MAC array shares the scan ~28:72 with the GPU</td><td class="num"><b>3.72&times;</b></td><td>uses the otherwise-idle 200 TOPS; PHY and TSV bandwidth domains add; matches full-offload@600 TOPS at &frac13; the thermal budget</td><td>needs logit-stream merge and a work-split scheduler; gains cap at the die&rsquo;s TOPS share</td></tr>
+        <tr><td><b>S2</b> &mdash; full offload</td><td>entire indexer incl. the AI=124 scan</td><td class="num">2.57&times; @200 TOPS</td><td>only design that keeps working when keys spill to LPDDR (GPU alternative collapses to a 2.74 ms UCIe scan; S2 wins 1.18&ndash;1.46&times; there); GPU fully freed of indexer work</td><td>scan is compute-bound on the die: below ~360 TOPS/GPU it is slower than just letting the GPU scan HBM-resident keys</td></tr>
+      </table></div>
+      <div class="callout"><b>How to read the ladder.</b> Capacity does most of the winning (S1 already
+        gets 3.20&times;); each rung of base-die intelligence then buys 4&ndash;6% more by moving one
+        memory-bound kernel to the memory side &mdash; and the rungs are ordered by arithmetic intensity:
+        gather (protocol-bound) &rarr; top-k (AI&asymp;1) &rarr; scan share (AI 124, only the die&rsquo;s
+        proportional slice) &rarr; full scan (only worth it when the keys themselves leave HBM).</div>
+
+      <h3>Inside the gather engine &mdash; coalescing, packing, latency hiding</h3>
+      <p>The S1-vs-S1.5 gap is entirely a datapath story. Geometry: 656 B latent records at
+        <code class="k">base + index &times; 656</code>, LPDDR row buffer 2 KB (~3 records), each cube
+        gathering ~6.2 MB/layer for its own sessions over its 128 GB/s UCIe link:</p>
+      <div class="scroll"><table>
+        <tr><th></th><th>S1: GPU-driven</th><th>S1.5: base-die engine</th></tr>
+        <tr><td>Who issues</td><td>attend warps (ordinary loads)</td><td>DMA engine next to the UCIe controller</td></tr>
+        <tr><td>Request unit</td><td>128 B cachelines, 5&ndash;6 per record</td><td>native 656 B (or merged multi-record) bursts</td></tr>
+        <tr><td>Crosses the link down</td><td>~10&ndash;12k read requests per query</td><td>one 8 KB index descriptor per query</td></tr>
+        <tr><td>Outstanding window</td><td>per-SM MSHR-limited (~4&ndash;5 KB in flight)</td><td>~64-deep queue (&asymp;90+ records / ~61 KB in flight)</td></tr>
+        <tr><td>Latency exposure</td><td>every transaction pays the ~600 ns round trip as a warp stall</td><td>paid once as pipeline fill (~1% of gather time)</td></tr>
+        <tr><td>Row locality</td><td>destroyed (warp-order arrivals; FRFCFS sees a 32-entry window)</td><td>recovered (2048-entry sort before issue)</td></tr>
+        <tr><td>Data at the consumer</td><td>scattered arrivals</td><td>packed slot-ordered staging tiles in HBM</td></tr>
+        <tr><td>Efficiency &rarr; time @b=37</td><td>~50% &rarr; 97 &micro;s</td><td>~80% &rarr; 61 &micro;s</td></tr>
+      </table></div>
+      <p><b>Coalescing &mdash; what is merged.</b> The engine sees all 2048 indices <i>before issuing
+        anything</i>, so it sorts them numerically. Latents are stored in sequence order and DSA&rsquo;s
+        selections cluster (Parts I&ndash;III locality), so sorted indices become adjacent addresses:
+        indices 5000/5001/5003 land in one or two 2 KB DRAM rows &rarr; <b>one ACTIVATE serves all three</b>
+        (row-hit grouping, ~1&times; tRC instead of 3&times;), and physically contiguous records merge into
+        a single longer burst (half the UCIe packet overhead). The GPU path cannot do this even in
+        principle: warp-order arrivals shred sequence locality before the controller&rsquo;s small FRFCFS
+        window can re-find it. The asymmetry is a 2048-entry <i>future</i> vs a 32-entry <i>past</i>.</p>
+      <p><b>The return path &mdash; building a packed tile.</b> Reads complete out of order (banks and
+        rows finish at different times), but the attend wants <code class="k">latents[q][0..2047]</code>
+        dense and slot-ordered. The engine tags every request at issue with (query, slot); a returning
+        record is scattered <i>by its tag</i> into a fixed SRAM tile (128 slots &times; 656 B = 82 KB;
+        the ~256 KB buffer holds ~3 tiles in flight); a 128-bit scoreboard marks arrivals; when full, the
+        tile &mdash; now slot-ordered by construction &mdash; is DMA-written to HBM staging as <b>one
+        sequential burst</b>, and a per-tile flag lets the attend start on tile 0 while later tiles are
+        still gathering. Packing is defragmentation in flight: random arrivals in, streaming layout out.</p>
+      <p><b>Latency hiding &mdash; the Little&rsquo;s-law number.</b> Pipelining never makes one read
+        faster: a round trip is still ~600 ns. Issued serially that caps a stream at 656 B / 600 ns
+        &asymp; 1.1 GB/s. To keep the 102.4 GB/s effective link busy you must hold
+        <b>B&times;L &asymp; 61 KB &asymp; 94 records in flight</b> &mdash; exactly what the deep queue
+        provides &mdash; after which a record completes every ~6.4 ns and the 600 ns is paid once as fill
+        (~1% of the 61 &micro;s gather). The GPU&rsquo;s MSHR budget (~4&ndash;5 KB in flight per SM,
+        ~8 GB/s each) cannot legally hold enough bytes in flight &mdash; the whole S1/S1.5 fight is about
+        queue depth, not bandwidth.</p>
+
       <p><b>The keys-spill stress point &mdash; where the base-die compute becomes the difference.</b>
         Past b&nbsp;&asymp;&nbsp;37/GPU at 128K (or ~4&ndash;5 sessions at 1M), the keys themselves outgrow
         HBM and every design must stream them from LPDDR. At b=128/GPU (16 sessions/cube, 806 GB KV/GPU) the
