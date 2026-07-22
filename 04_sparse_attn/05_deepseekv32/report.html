@@ -1377,7 +1377,7 @@
       <div class="callout win"><b>The capacity result.</b> Stock 8&times;H200 cannot serve B=128 at 128K at
         all &mdash; it tops out near B=64 (~1.7k tok/s). This architecture serves B=128 at <b>2.9&ndash;3.5k tok/s
         (1.7&ndash;2.1&times; vs stock, depending on base-die TOPS; see the tables below)</b> using 8% of its LPDDR, and scales keys-resident to <b>b&nbsp;=&nbsp;37/GPU
-        (B&nbsp;&asymp;&nbsp;296, sim-validated 5,650 tok/s)</b> before the indexer keys themselves outgrow HBM
+        (B&nbsp;&asymp;&nbsp;296, sim-validated 5,650&ndash;6,333 tok/s depending on the offload design)</b> before the indexer keys themselves outgrow HBM
         &mdash; the full batch-capability ladder is tabulated below.
         The batch-to-cube mapping is clean: sessions are DP-independent, so each cube&rsquo;s base die scans
         only its own 2 sessions&rsquo; keys and gathers only from its own LPDDR &mdash; no cross-cube traffic.</div>
@@ -1388,7 +1388,7 @@
       <div class="scroll"><table>
         <tr><th>Tier @128K</th><th>Binding resource</th><th class="num">Sessions/GPU</th><th class="num">Cluster B</th><th class="num">LPDDR used</th><th class="num">TPOT (ms)</th><th class="num">cluster tok/s</th><th class="num">vs stock</th></tr>
         <tr><td><b>B0 &mdash; stock all-HBM</b></td><td>HBM after weights: 39.4 GB &divide; 6.3 GB/session (keys+latents)</td><td class="num">8</td><td class="num">64</td><td class="num">&mdash;</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.0&times;</td></tr>
-        <tr><td><b>Ours, full-speed</b> (keys HBM, latents LPDDR)</td><td>HBM keys: 39.4 GB &divide; 1.06 GB/session</td><td class="num"><b>37</b> (4.6&times;)</td><td class="num">296</td><td class="num">19% (194 GB)</td><td class="num"><b>52.4 (sim-validated)</b></td><td class="num"><b>5,650</b></td><td class="num"><b>3.3&times;</b></td></tr>
+        <tr><td><b>Ours, full-speed</b> (keys HBM, latents LPDDR)</td><td>HBM keys: 39.4 GB &divide; 1.06 GB/session</td><td class="num"><b>37</b> (4.6&times;)</td><td class="num">296</td><td class="num">19% (194 GB)</td><td class="num"><b>46.7&ndash;52.4 (sim-validated)</b></td><td class="num"><b>5,650&ndash;6,333</b></td><td class="num"><b>3.3&ndash;3.7&times;</b></td></tr>
         <tr><td><b>Ours, max-capacity</b> (keys spill to LPDDR too)</td><td>LPDDR: 1,024 GB &divide; 6.3 GB/session</td><td class="num">162 (20&times;)</td><td class="num">~1,300</td><td class="num">100%</td><td class="num">~228 (est.)</td><td class="num">~5,690</td><td class="num">3.3&times;</td></tr>
       </table></div>
       <div class="callout"><b>Reading the ladder.</b> The full-speed tier is the operating point: 4.6&times;
@@ -1478,7 +1478,9 @@
         <tr><th>Design @ (128K, b=37/GPU, B=296)</th><th class="num">attn block (&micro;s)</th><th class="num">TPOT (ms)</th><th class="num">cluster tok/s</th><th class="num">vs B0</th></tr>
         <tr><td><b>B0 &mdash; stock 8&times;H200 (caps at b=8)</b></td><td class="num">223 (b=8)</td><td class="num">37.6</td><td class="num">1,702</td><td class="num">1.00&times;</td></tr>
         <tr><td>S1 &mdash; no NPU: GPU scans (keys in HBM) + GPU-driven UCIe gather</td><td class="num">470</td><td class="num">53.7</td><td class="num">5,515</td><td class="num">3.24&times;</td></tr>
-        <tr><td><b>S1.5 &mdash; gather-engine NPU: GPU scans, base die gathers</b></td><td class="num">433</td><td class="num">51.4</td><td class="num">5,756</td><td class="num"><b>3.38&times;</b></td></tr>
+        <tr><td>S1.5 &mdash; gather-engine NPU: GPU scans, base die gathers</td><td class="num">433</td><td class="num">51.4</td><td class="num">5,756</td><td class="num">3.38&times;</td></tr>
+        <tr><td><b>S1.75 &mdash; + base-die top-k (see partial-offload section)</b></td><td class="num">393</td><td class="num">48.9</td><td class="num">6,051</td><td class="num"><b>3.56&times;</b></td></tr>
+        <tr><td><b>S1.75 + co-scan @200 TOPS</b></td><td class="num">349</td><td class="num">46.3</td><td class="num">6,399</td><td class="num"><b>3.76&times;</b></td></tr>
         <tr><td>S2 &mdash; full NPU scans, 100 TOPS/GPU</td><td class="num">1,004</td><td class="num">86.7</td><td class="num">3,415</td><td class="num">2.01&times;</td></tr>
         <tr><td>S2 &mdash; full NPU scans, 200 TOPS/GPU</td><td class="num">607</td><td class="num">62.2</td><td class="num">4,761</td><td class="num">2.80&times;</td></tr>
         <tr><td>S2 &mdash; full NPU scans, 400 TOPS/GPU</td><td class="num">409</td><td class="num">49.9</td><td class="num">5,928</td><td class="num">3.48&times;</td></tr>
@@ -1603,8 +1605,9 @@
         <tr><td>S2 &mdash; base-die NPU, 600 TOPS/GPU</td><td class="num">458</td><td class="num">982</td><td class="num">548</td><td class="num">1.46&times;</td></tr>
       </table></div>
       <div class="callout win"><b>Verdict, quantified.</b> Size the base die at <b>~25 TOPS/cube (200/GPU,
-        ~10 W)</b>: run the scan <i>adaptively</i>: GPU-scan + base-die gather while keys are HBM-resident
-        (<b>3.38&times; over stock at the b=37 full-speed tier</b> &mdash; the capacity does the winning),
+        ~10 W)</b>: split the indexer by arithmetic intensity and place adaptively: top-k + gather always on the
+        die, the scan shared while keys are HBM-resident (<b>3.51&ndash;3.72&times; over stock at the b=37
+        full-speed tier, sim-validated</b> &mdash; the capacity does most of the winning),
         base-die scan once keys spill or when &ge;~360 TOPS/GPU is affordable (3.5&ndash;3.8&times; at
         400&ndash;600 TOPS; 1.18&times; over the passive variant in the spill regime), growing with every TOPS added (break-even at 127 TOPS/GPU =
         124 FLOP/B &times; the 1.024 TB/s UCIe aggregate). Part&nbsp;VII quantifies what the freed capacity
