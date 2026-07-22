@@ -72,7 +72,7 @@
     <a href="#h200b200">12 &middot; H200 &harr; B200, kernel by kernel</a>
     <a href="#surprises">13 &middot; The five unexpected differences</a>
     <a href="#studies">14 &middot; What to study next: derived analyses</a>
-    <a href="#nmp">15 &middot; Near-memory: what changes on B200</a>
+    <a href="#nmp">15 &middot; Near-memory on B200: the case recomputed</a>
     <a href="#method">16 &middot; Method &amp; caveats</a>
   </nav>
 
@@ -1218,7 +1218,7 @@
         124-intensity streaming reduction leaves an even larger fraction of the chip idle than on the
         H200. You don&rsquo;t need 4500&nbsp;TFLOP/s to rank KV tokens &mdash; you need bandwidth next
         to the KV. The near-memory case (Part&nbsp;VI &sect;12) strengthens with every
-        compute-heavy generation; &sect;15 summarizes what changes.</div>
+        compute-heavy generation; &sect;15 re-derives the full case on B200 numbers.</div>
     </section>
 
     <section class="card" id="h200b200">
@@ -1372,27 +1372,113 @@
     </section>
 
     <section class="card" id="nmp">
-      <h2><span class="num">15</span>Near-memory: what changes on B200</h2>
-      <p class="lead">Part&nbsp;VI&rsquo;s &sect;12 makes the full base-die/NMP case on H200 numbers;
-        it is deliberately not duplicated here.</p>
-      <p>Read the architecture note in
-        <a href="../05_deepseekv32/report.html#nmp">Part&nbsp;VI &sect;12 &mdash; the indexer on an HBM
-        base die</a>. What the B200 measurements change, in five lines:</p>
+      <h2><span class="num">15</span>Near-memory on B200: the base-die case, recomputed</h2>
+      <p class="lead"><a href="../05_deepseekv32/report.html#nmp">Part&nbsp;VI &sect;12</a> made the
+        full architecture argument on H200 numbers: run the lightning indexer on the HBM base die of a
+        capacity-expanded stack, tier keys (HBM) apart from latents (LPDDR), and let the die that
+        computes the index also drive the fetch. This section re-derives every number in that case
+        from the B200 measurements &mdash; and the B200 data moves the conclusion in <i>both</i>
+        directions at once.</p>
+      <div class="fig">
+        <div class="cap">The proposal, unchanged in shape: indexer keys stay in HBM, the base die
+          scans them and selects the top-2048, then fetches only those latents from LPDDR over UCIe.</div>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Near-memory indexer dataflow: GPU, HBM base die, LPDDR">
+        <rect x="30" y="90" width="200" height="120" rx="10" fill="#eaf2ff" stroke="#1f6feb" stroke-width="2"/>
+        <text x="130.0" y="112" text-anchor="middle" font-size="13" font-weight="800" fill="#1f6feb">GPU</text>
+        <text x="130.0" y="134" text-anchor="middle" font-size="11" fill="#43506a">QKV / q_b projections</text>
+        <text x="130.0" y="151" text-anchor="middle" font-size="11" fill="#43506a">MLA attend + MoE</text>
+        <text x="130.0" y="168" text-anchor="middle" font-size="11" fill="#43506a">sends indexer query</text>
+        <text x="130.0" y="185" text-anchor="middle" font-size="11" fill="#43506a">gets gathered latents</text>
+        <rect x="345" y="60" width="230" height="180" rx="10" fill="#f3eefe" stroke="#8250df" stroke-width="2"/>
+        <text x="460.0" y="82" text-anchor="middle" font-size="13" font-weight="800" fill="#8250df">Custom HBM + base die</text>
+        <text x="460.0" y="104" text-anchor="middle" font-size="11" fill="#43506a">indexer KEYS (132 B/tok)</text>
+        <text x="460.0" y="121" text-anchor="middle" font-size="11" fill="#43506a">&mdash; live in HBM &mdash;</text>
+        <text x="460.0" y="138" text-anchor="middle" font-size="11" fill="#43506a">base die: scan &rarr; top-2048</text>
+        <text x="460.0" y="155" text-anchor="middle" font-size="11" fill="#43506a">drives LPDDR fetch (UCIe)</text>
+        <rect x="690" y="90" width="190" height="120" rx="10" fill="#e7f5ec" stroke="#1a7f37" stroke-width="2"/>
+        <text x="785.0" y="112" text-anchor="middle" font-size="13" font-weight="800" fill="#1a7f37">LPDDR (via UCIe)</text>
+        <text x="785.0" y="134" text-anchor="middle" font-size="11" fill="#43506a">main LATENTS (656 B/tok)</text>
+        <text x="785.0" y="151" text-anchor="middle" font-size="11" fill="#43506a">&mdash; capacity tier &mdash;</text>
+        <text x="785.0" y="168" text-anchor="middle" font-size="11" fill="#43506a">sparse 2048 fetched</text>
+        <text x="785.0" y="185" text-anchor="middle" font-size="11" fill="#43506a">per step</text>
+        <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#647083"/></marker></defs>
+        <line x1="230" y1="130" x2="343" y2="110" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="286.5" y="114.0" text-anchor="middle" font-size="10" fill="#647083">query</text>
+        <line x1="343" y1="190" x2="230" y2="175" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="286.5" y="196.5" text-anchor="middle" font-size="10" fill="#647083">latents / result</text>
+        <line x1="575" y1="120" x2="688" y2="120" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="631.5" y="114.0" text-anchor="middle" font-size="10" fill="#647083">index &rarr; fetch</text>
+        <line x1="688" y1="175" x2="577" y2="190" stroke="#647083" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="632.5" y="196.5" text-anchor="middle" font-size="10" fill="#647083">2048 latents</text>
+        </svg>
+      </div>
+
+      <h3>What the B200 numbers keep, and sharpen</h3>
       <ul class="notes">
-        <li>The GPU&rsquo;s 8&nbsp;TB/s roughly <b>halves the scan&rsquo;s wall-clock</b> vs H200 &mdash;
-          but the scan stays strictly bandwidth-bound (&sect;11), so the NMP argument is unchanged in kind.</li>
-        <li>Scan-parity on-die throughput doubles: matching the PHY now needs
-          <b>~124&nbsp;FLOP/B&nbsp;&times;&nbsp;8&nbsp;TB/s &asymp; 1,000 aggregate TOPS</b> across the
-          stack&rsquo;s base dies (H200-parity was ~600).</li>
-        <li>The fp8 ridge moves 412&nbsp;&rarr;&nbsp;~562&nbsp;FLOP/byte, so <b>AI-425 dense attend is
-          itself memory-bound on B200</b> &mdash; every generation of compute-heavier GPUs widens the
-          class of kernels that would rather live next to the memory.</li>
-        <li>The idle-compute waste grows: the scan leaves &gt;80% of a 4,500-TFLOP/s engine unused
-          (&sect;11), vs ~75% of 1,979 on H200.</li>
-        <li>Capacity pressure is unchanged: 192&nbsp;GB admits the same six infeasible
-          (batch, context) corners as 141&nbsp;GB did (&sect;2) &mdash; the LPDDR capacity tier
-          Part&nbsp;VI argues for is still the binding constraint at DP-scale batches.</li>
+        <li><b>The indexer still owns long-context attention.</b> Its share of the decode
+          attention block is <b>64%</b> at 128K and <b>92%</b> at 1M on
+          B200 (H200: 71% / 94%) &mdash; a 1.49&times; faster scan only
+          dips the share a few points, because the scan is the one term that scales with context.
+          The op worth offloading is unchanged; what grew instead is the <i>gather floor&rsquo;s</i>
+          share of the remainder (&sect;14.2), which reshapes the argument below.</li>
+        <li><b>The key/latent tiering split is unchanged</b> (it is a property of the model, not the
+          GPU): 132&nbsp;B/token of scan-hot keys (17% of KV) vs 656&nbsp;B/token of gather-cold
+          latents (83%) &mdash; LPDDR takes 83% of capacity while HBM keeps the context-scaling
+          bandwidth.</li>
+        <li><b>The scan-bandwidth wall is unchanged in kind, halved in time.</b> At batch&nbsp;64 / 1M
+          the scan reads ~540&nbsp;GB/step across layers: <b>~68&nbsp;ms
+          at the B200&rsquo;s 8&nbsp;TB/s</b> (H200: ~113&nbsp;ms) but still
+          <b>~1.1&nbsp;s at an LPDDR-class 500&nbsp;GB/s</b> &mdash; a 16&times; cliff.
+          Keys must stay in HBM (or near-DRAM the base die can stream); only the compute placement is
+          negotiable.</li>
+        <li><b>The key-capacity crossover grows with the 192&nbsp;GB stack:</b> the measured
+          142.5&nbsp;GiB KV pool holds all-layer keys up to
+          <b>batch&times;context &asymp; 19&nbsp;M token-seqs</b> (H200: ~12&nbsp;M)
+          &mdash; batch&nbsp;64 to ~290K context, batch&nbsp;128 to
+          ~145K. Beyond that the keys themselves spill and the crossover model of
+          Part&nbsp;VI &sect;12 becomes the binding study.</li>
       </ul>
+
+      <h3>What the B200 numbers change</h3>
+      <p><b>1&nbsp;&middot; The parity budget doubles.</b> The scan&rsquo;s intensity is fixed at
+        124&nbsp;FLOP/byte (64 index heads &times; 128 dims,
+        16,384&nbsp;fp8&nbsp;ops per query&ndash;token), so the TOPS to keep pace scale
+        with bandwidth: <b>~650&nbsp;TOPS</b> to match what the B200 scan actually streams
+        (5.24&nbsp;TB/s measured), <b>~993&nbsp;TOPS to feed the full 8&nbsp;TB/s PHY</b> —
+        double the H200-parity figure. Aggregate across a stack&rsquo;s base dies, this is the
+        ~1,000-TOPS class.</p>
+      <p><b>2&nbsp;&middot; The overlap window shrank &mdash; the TRT-LLM effect cuts against the base
+        die.</b> Part&nbsp;VI&rsquo;s cheapest lever was hiding the indexer behind a neighbour
+        microbatch&rsquo;s MoE. But on B200 the MoE got disproportionately faster (&sect;13.3), so the
+        window the indexer must fit inside is smaller while the indexer&rsquo;s ops are unchanged.
+        Recomputed from the B200 layer data (batch&nbsp;64):</p>
+      <div class="scroll"><table><thead><tr><th class="num">context</th><th class="num">indexer % of layer</th><th class="num">base-die TOPS to hide it</th></tr></thead><tbody><tr><td class="num">128K</td><td class="num">31%</td><td class="num">231 TOPS</td></tr><tr><td class="num">512K</td><td class="num">60%</td><td class="num">927 TOPS</td></tr><tr><td class="num">1M</td><td class="num">74%</td><td class="num">1825 TOPS</td></tr></tbody></table></div>
+      <div class="callout warn"><b>The hide-it-behind-MoE envelope contracts on B200.</b> The same
+        ~100&ndash;200&nbsp;TOPS thermal budget that hid the indexer to ~256&ndash;512K on H200 covers
+        visibly less context here &mdash; the required TOPS at every context row is higher than the
+        H200 page&rsquo;s equivalent table. Each generation that accelerates the surrounding ops
+        (without touching the indexer&rsquo;s intensity) makes base-die parity <i>harder</i>, not
+        easier.</div>
+      <p><b>3&nbsp;&middot; But the frozen gather floor strengthens the co-location half of the
+        argument.</b> &sect;14.2 shows the 2048-record gather floor is generation-invariant
+        (154.7&nbsp;&rarr;&nbsp;154.6&nbsp;&micro;s) and latency-bound: it gains nothing from HBM
+        bandwidth and is on track to be ~70% of decode attention within a generation. That is exactly
+        the term co-location attacks &mdash; the base die computes the indices <i>and issues the
+        LPDDR fetch</i>, deleting the GPU&rarr;scores&rarr;GPU&rarr;fetch round trip that makes the
+        gather latency-bound in the first place. On H200 the NMP case was mostly about scan bandwidth
+        partitioning; <b>on B200 its strongest term is gather latency</b>.</p>
+      <p>Thermal budget for the compute (unchanged &mdash; process- not GPU-dependent):</p>
+      <div class="scroll"><table><thead><tr><th class="num">fp8 throughput</th><th class="num">power @0.05 pJ/op</th><th>base-die budget</th></tr></thead><tbody><tr><td class="num">50 TOPS</td><td class="num">~2 W</td><td>feasible</td></tr><tr><td class="num">100 TOPS</td><td class="num">~5 W</td><td>feasible</td></tr><tr><td class="num">200 TOPS</td><td class="num">~10 W</td><td>feasible</td></tr><tr><td class="num">500 TOPS</td><td class="num">~25 W</td><td>over budget</td></tr></tbody></table></div>
+
+      <div class="callout win"><b>Verdict, updated for Blackwell.</b> Still the right op to offload
+        &mdash; a memory-bound reduction that generates its own fetch addresses, now
+        92% of long-context attention. What changed: single-request scan parity doubled
+        to ~993&nbsp;TOPS (aggregate ~1,000-class) and the MoE-overlap window tightened
+        &mdash; so a B200-era base die should be sized against the <b>gather-latency</b> and
+        <b>capacity</b> wins first, with scan offload as the stretch goal, inverting the H200-era
+        priority. Quantifying that trade &mdash; UCIe latency vs the frozen 155&nbsp;&micro;s floor,
+        and the 19&nbsp;M-token-seq key crossover &mdash; is answerable from the two
+        committed bundles.</div>
     </section>
 
         <section class="card" id="method">
