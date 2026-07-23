@@ -1471,6 +1471,56 @@
         one stack&rsquo;s 1&nbsp;TB/s (8&times; slower single-stream); striping keys across stacks
         keeps every die working on every request and preserves single-request bandwidth &mdash; the
         per-die parity number is identical either way.</p>
+      <h3>Kernel by kernel: the TOPS one base die must supply (worked derivation)</h3>
+      <div class="callout"><b>Assumptions.</b> 8-GPU EP8 cluster at cluster batch 256 &rarr; 32
+        sequences per GPU &rarr; <b>4 sequences per base die</b> (8 dies/GPU, sessions cube-local);
+        context <b>L = 131,072</b>; decode = 1 new token per sequence per step; all numbers per layer.
+        The 8 dies run concurrently with the GPU, so a die is &ldquo;fast enough&rdquo; when it
+        finishes its 4-sequence slice <i>within the GPU&rsquo;s measured kernel time for the whole
+        b=32 batch</i>. Power figures assume a dedicated fp8 array at 0.05 pJ/op.</div>
+
+      <p><b>Step 1 &mdash; FLOPs of each lightning-indexer kernel as a function of (B, L).</b></p>
+      <div class="scroll"><table>
+        <tr><th>Kernel</th><th>FLOP formula</th><th class="num">@ die slice (B=4, L=128K)</th><th>Precision</th></tr>
+        <tr><td>Indexer projections (<code class="k">wq_b</code> 1536&rarr;64&times;128, <code class="k">wk</code> 7168&rarr;128, <code class="k">weights_proj</code> 7168&rarr;64)</td><td>2&middot;B&middot;(1536&middot;8192 + 7168&middot;128 + 7168&middot;64) &asymp; <b>27.9M &middot; B</b> &mdash; <i>L-independent</i> (touches only the new tokens)</td><td class="num">111.7 MFLOP</td><td>fp8 GEMM</td></tr>
+        <tr><td><b>Indexer scan</b> (<code class="k">fp8_paged_mqa_logits</code>)</td><td>64 heads &times; 128 dims &times; 2 per (query, token) = <b>16,384 &middot; B &middot; L</b> (+ ~130&middot;B&middot;L for ReLU/gate/sum)</td><td class="num"><b>8.59 GFLOP</b></td><td>fp8 MAC, fp32 acc</td></tr>
+        <tr><td>Top-2048 select</td><td>compare-class, not MACs: <b>&asymp; 2 &middot; B &middot; L</b> (threshold filter + candidate pass)</td><td class="num">~1.05 Mops</td><td>fp16 cmp, u32 idx</td></tr>
+      </table></div>
+
+      <p><b>Step 2 &mdash; the measured GPU times the die must match</b> (b=32/GPU at 128K,
+        interpolated from the committed sweep&rsquo;s b=8 and b=64 rows): B200 projections
+        <b>34.9 &micro;s</b>, scan <b>90.2 &micro;s</b>, top-k <b>40.7 &micro;s</b>
+        (H200: 30.2 / 138.3 / 40.7 &micro;s &mdash; note top-k did not improve).</p>
+
+      <p><b>Step 3 &mdash; required per-die throughput = slice FLOPs &divide; GPU time.</b></p>
+      <div class="scroll"><table>
+        <tr><th>Kernel</th><th class="num">to match B200</th><th class="num">to match H200</th></tr>
+        <tr><td>Projections</td><td class="num">111.7 MFLOP / 34.9 &micro;s = <b>3.2 TOPS</b></td><td class="num">3.7 TOPS</td></tr>
+        <tr><td><b>Scan</b></td><td class="num">8.59 GFLOP / 90.2 &micro;s = <b>95 TOPS</b> (&asymp;4.8 W)</td><td class="num"><b>62 TOPS</b> (&asymp;3.1 W)</td></tr>
+        <tr><td>Top-k</td><td class="num">1.05 Mops / 40.7 &micro;s = <b>26 GOPS</b> (0.026 TOPS)</td><td class="num">26 GOPS</td></tr>
+      </table></div>
+
+      <p><b>Step 4 &mdash; cross-check against the roofline law.</b> The die&rsquo;s slice streams
+        4 &times; 131,072 &times; 132 B = 69.2 MB of keys; in 90.2 &micro;s that is <b>767 GB/s</b>,
+        and 767 GB/s &times; AI 124 = <b>95 TOPS</b> &#10003; (H200: 69.2 MB / 138.3 &micro;s =
+        500 GB/s &times; 124 = 62 TOPS &#10003;). Both are under the die&rsquo;s ~1 TB/s TSV share
+        &mdash; <b>compute binds, never bandwidth</b>. Relation to the rate-parity table above: its
+        124 TOPS/die is the ceiling target (keep pace with the die&rsquo;s own 1 TB/s TSV peak);
+        the 95 here is the match-the-GPU target (the GPU&rsquo;s measured b=32 rate is 767 GB/s per
+        die-slice). Same law &mdash; TOPS = 124 &times; stream rate &mdash; two operating points.</p>
+
+      <div class="callout win"><b>Step 5 &mdash; what the derivation decides.</b> (1) <b>The scan is
+        the entire compute budget</b>: 95 TOPS/die (&asymp;4.8 W) to match B200, up from 62
+        (&asymp;3.1 W) to match H200 &mdash; the bar rises each generation the GPU&rsquo;s scan gets
+        faster. (2) <b>Top-k is six orders of magnitude cheaper</b> (26 GOPS &mdash; effectively free
+        comparator silicon), and since its GPU time did <i>not</i> improve on B200, moving it on-die
+        saves more relative time each generation: it belongs on the die unconditionally.
+        (3) <b>The projections need only ~3 TOPS but belong on the GPU anyway</b>: they are
+        L-independent weight-GEMMs over the 4 new tokens with no memory-side data to exploit.
+        (4) A die below the scan budget <b>degrades gracefully via co-scan</b>: a 25 TOPS/die array
+        covers ~26% of the B200 scan (~40% of H200&rsquo;s) with the GPU carrying the rest &mdash;
+        a thermal dial, not a cliff.</div>
+
       <p><b>2&nbsp;&middot; The overlap window shrank &mdash; the TRT-LLM effect cuts against the base
         die.</b> Part&nbsp;VI&rsquo;s cheapest lever was hiding the indexer behind a neighbour
         microbatch&rsquo;s MoE. But on B200 the MoE got disproportionately faster (&sect;13.3), so the
