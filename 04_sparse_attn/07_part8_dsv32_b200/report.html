@@ -1521,6 +1521,39 @@
         covers ~26% of the B200 scan (~40% of H200&rsquo;s) with the GPU carrying the rest &mdash;
         a thermal dial, not a cliff.</div>
 
+      <h3>The bandwidth-parity caveat: matching latency &ne; speedup</h3>
+      <p>A die that meets the scan&rsquo;s TOPS budget does <b>not</b> automatically speed the layer
+        up &mdash; because the scan is bandwidth-bound and the bytes come out of the <i>same DRAM
+        banks</i> whether they exit through the PHY to the GPU or stop at the base die. If the
+        stack&rsquo;s internal (bank/TSV) bandwidth equals its PHY-rated bandwidth, the die reads
+        keys exactly as fast as the GPU does: latency-parity compute = same scan time,
+        <b>&Delta; = 0</b>. The same logic constrains co-scan: splitting the key stream between GPU
+        and die adds bandwidth <i>only if the custom HBM provisions internal bandwidth above the
+        PHY rate</i> &mdash; both readers drain the same banks. We name that design knob
+        <b>h = internal BW &divide; external BW</b>; extra bank-group/TSV parallelism buys h &gt; 1
+        at silicon cost. With it named, the decoder-layer arithmetic at (b=32/GPU, 128K, B200
+        measured: layer 493.6 &micro;s = attention 332.8 + MoE 155.8 + norms 5):</p>
+      <div class="scroll"><table>
+        <tr><th>Scenario</th><th>What moves</th><th class="num">scan &micro;s</th><th class="num">layer &micro;s</th><th class="num">speedup</th></tr>
+        <tr><td>A &mdash; parity scan on die, keys+latents HBM, h=1</td><td>scan &Delta;=0; top-k fuses into the logit stream (40.7 &rarr; ~5 &micro;s)</td><td class="num">90.2</td><td class="num">457.9</td><td class="num">1.08&times;</td></tr>
+        <tr><td>B &mdash; + latents in LPDDR (the capacity design)</td><td>gather 26.5 &rarr; 52.5 &micro;s over UCIe</td><td class="num">90.2</td><td class="num">483.9</td><td class="num">1.02&times;</td></tr>
+        <tr><td rowspan="3">C &mdash; internal-BW headroom (keys+latents HBM)</td><td>h = 1.25</td><td class="num">72.2</td><td class="num">439.9</td><td class="num">1.12&times;</td></tr>
+        <tr><td>h = 1.5</td><td class="num">60.1</td><td class="num">427.8</td><td class="num">1.15&times;</td></tr>
+        <tr><td>h = 2.0</td><td class="num">45.1</td><td class="num">412.8</td><td class="num">1.20&times;</td></tr>
+        <tr><td>D &mdash; keys spilled past HBM capacity</td><td>GPU&rsquo;s alternative is a ~1 TB/s UCIe-streamed scan; die reads its local tier</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">1.2&ndash;1.5&times; on the block (see Part VI &sect;12)</td></tr>
+      </table></div>
+      <div class="callout warn"><b>The honest decomposition.</b> At parity and h=1, the scan
+        migration itself is worth <b>0%</b>; Scenario A&rsquo;s ~8% comes entirely from the
+        selection-chain fusion (on-die top-k + the deleted GPU&rarr;scores&rarr;GPU&rarr;fetch round
+        trip) &mdash; overhead elimination, not bandwidth. What parity migration <i>does</i> buy at
+        zero speedup: <b>PHY I/O energy</b> &mdash; the scan&rsquo;s ~554 MB/layer stops crossing the
+        interface (~1&ndash;1.5 pJ/bit &rarr; roughly 40&ndash;70 W during scan windows, ~7&ndash;13 W
+        layer-averaged) &mdash; plus freed GPU SMs (worthless in sequential decode). Real latency
+        leverage requires one of: <b>h &gt; 1</b> (a custom-HBM design choice that must be stated),
+        the <b>keys-spill regime</b> (locality becomes a genuine bandwidth advantage), or larger
+        batch/context growing the fused top-k/gather savings. Any co-scan speedup quoted on these
+        pages implicitly assumes h &gt; 1 &mdash; this section makes that assumption explicit.</div>
+
       <p><b>2&nbsp;&middot; The overlap window shrank &mdash; the TRT-LLM effect cuts against the base
         die.</b> Part&nbsp;VI&rsquo;s cheapest lever was hiding the indexer behind a neighbour
         microbatch&rsquo;s MoE. But on B200 the MoE got disproportionately faster (&sect;13.3), so the

@@ -1700,6 +1700,15 @@
         ~1.15&ndash;1.25&times; from the base-die pipeline &mdash; with co-scan, not full offload, as
         the winning configuration at any thermal budget.</b></div>
 
+      <div class="callout warn"><b>Bandwidth-parity caveat (added after the B200 study).</b> The
+        co-scan and on-die-scan gains above implicitly assume the stack&rsquo;s internal (bank/TSV)
+        bandwidth exceeds its PHY-rated bandwidth &mdash; both readers drain the same DRAM banks, so
+        at 1&times; internal:external headroom an on-die scan at latency parity is <b>&Delta;=0</b>
+        and co-scan adds nothing. The knob is named and the decoder-layer arithmetic worked out in
+        <a href="../07_part8_dsv32_b200/report.html">Part VIII &sect;15</a> (&ldquo;The
+        bandwidth-parity caveat&rdquo;): at h=1 the layer gain reduces to the selection-chain fusion
+        (~8%) plus PHY energy; h &gt; 1 is a custom-HBM design choice with silicon cost.</div>
+
       <h3>Inside the gather engine &mdash; coalescing, packing, latency hiding</h3>
       <p>The S1-vs-S1.5 gap is entirely a datapath story. Geometry: 656 B latent records at
         <code class="k">base + index &times; 656</code>, LPDDR row buffer 2 KB (~3 records), each cube
