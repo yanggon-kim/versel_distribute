@@ -1554,6 +1554,48 @@
         batch/context growing the fused top-k/gather savings. Any co-scan speedup quoted on these
         pages implicitly assumes h &gt; 1 &mdash; this section makes that assumption explicit.</div>
 
+      <h3>The G-ladder: what to fuse around the gather (all latents in LPDDR)</h3>
+      <p>Given the parity caveat above, the base die&rsquo;s defensible latency territory is the
+        <b>selection chain</b> &mdash; top-k and the gather &mdash; because both are
+        latency/protocol-bound, not bandwidth-bound, so they need queues and proximity rather than
+        TOPS or bandwidth headroom. Standing assumption for every row below: <b>the 656 B latent
+        entries live in LPDDR</b> (the capacity design&rsquo;s whole point; 167.8 GB at b=32 &mdash;
+        16% of the tier); only the 132 B indexer keys stay in HBM, scanned by the GPU. Operating
+        point: b=32/GPU, L=128K, B200 measured; EP8 layer components attn 332.8 / MoE 155.8 /
+        norms 5 &micro;s.</p>
+      <p><b>Why the gather is latency-bound, in one line of evidence each:</b> its effective
+        bandwidth collapses with concurrency (112 GB/s at b=1 &mdash; 1.4% of peak &mdash; vs
+        2.0 TB/s at b=64, 3.0 at b=1024); the naive-gather microbenchmark gained only 1.05&times;
+        from B200&rsquo;s 1.67&times; bandwidth while the TMA-batched in-kernel gather gained
+        2.5&times; (concurrency engineering, not bytes); and the surrounding metadata/launch floor
+        (95.4 &micro;s at b=32) did not move across the generation. Requests-in-flight decide its
+        time; bytes do not.</p>
+      <p><b>The baselines matter.</b> With latents in LPDDR, the honest all-GPU baseline is GPU
+        top-k (40.7 &micro;s) + GPU-driven UCIe gather: 43.0 MB &divide; (1.024 TB/s &times; 0.5
+        efficiency) = 84.0 &micro;s &mdash; cacheline-fragmented, uncached, MSHR-limited &mdash;
+        giving a 551.1 &micro;s layer. The hypothetical all-HBM machine (493.6 &micro;s) is kept as
+        a reference column: it is what the capacity design is usually assumed to sacrifice.</p>
+      <div class="scroll"><table>
+        <tr><th>Combination (latents in LPDDR throughout)</th><th>Path change (&micro;s)</th><th class="num">layer &micro;s</th><th class="num">vs LPDDR baseline</th><th class="num">vs all-HBM reference</th><th>Die capability needed</th></tr>
+        <tr><td>Baseline &mdash; GPU top-k + GPU-driven UCIe gather</td><td>&mdash;</td><td class="num">551.1</td><td class="num">1.00&times;</td><td class="num">0.90&times;</td><td>none (passive bridge)</td></tr>
+        <tr><td>G0 &mdash; die gather engine only (GPU keeps top-k; 262 KB index downlink + ~3 &micro;s sync)</td><td>&minus;84.0 +3 +52.5</td><td class="num">519.6</td><td class="num">1.06&times;</td><td class="num">0.95&times;</td><td>DMA + AGU + ~256 KB reorder SRAM + UCIe ctrl; <b>0 TOPS</b></td></tr>
+        <tr><td><b>G1 &mdash; die top-k + gather fused</b> (die consumes logits from the scan stream; indices never visit the GPU)</td><td>&minus;84.0 &minus;40.7 +5 +52.5</td><td class="num"><b>481.4</b></td><td class="num"><b>1.145&times;</b></td><td class="num"><b>1.025&times;</b></td><td>+ ~6 GOPS comparators (5.8 Glogit/s/die), 48 KB top-k SRAM; still 0 TOPS</td></tr>
+        <tr><td>G2 &mdash; G1 + fp8&rarr;bf16 dequant / attend-ready packing</td><td>&plusmn;0 ~ +5 (uplink doubles to 86 MB, partly hidden)</td><td class="num">~476&ndash;481</td><td class="num">~1.15&times;</td><td class="num">~1.03&times;</td><td>+ ~0.2 TOPS converters &mdash; optional</td></tr>
+        <tr><td>G3 &mdash; + attend on the die</td><td>18.3 GFLOP must fit the 95.4 &micro;s window</td><td class="num">&mdash;</td><td class="num" colspan="2">rejected</td><td>&ge;192 TOPS bf16 + softmax state; AI&asymp;400 = compute-bound, zero memory-side advantage</td></tr>
+      </table></div>
+      <div class="callout win"><b>The G1 result &mdash; capacity stops costing performance and starts
+        paying.</b> The top-k fusion saves 35.7 &micro;s, which more than covers the LPDDR gather
+        premium (52.5 &minus; 26.5 = 26.0 &micro;s): at b=32, G1 makes the LPDDR-resident design
+        <b>2.5% faster than the hypothetical all-HBM GPU</b> and 14.5% faster than the honest
+        all-GPU LPDDR baseline &mdash; with <b>zero MACs, no bandwidth-headroom (h) assumption</b>,
+        just queues, comparators, and a few hundred KB of SRAM. And the gain scales with batch: at
+        b=1024 the selection chain is 23% of the layer, GPU-driven UCIe gather balloons to
+        2,687 &micro;s, and G1 delivers <b>1.30&times;</b> over the LPDDR baseline (5,278 vs
+        6,861 &micro;s) &mdash; though there the fixed UCIe aggregate (8&times;128 GB/s, 0.82 TB/s
+        effective) becomes the gather ceiling while in-HBM gathering reaches 3.0 TB/s, so the
+        all-HBM gap reopens to 0.88&times;. <b>Design knob: UCIe lane count is what sets the
+        latents-in-LPDDR scaling limit at large batch.</b></div>
+
       <p><b>2&nbsp;&middot; The overlap window shrank &mdash; the TRT-LLM effect cuts against the base
         die.</b> Part&nbsp;VI&rsquo;s cheapest lever was hiding the indexer behind a neighbour
         microbatch&rsquo;s MoE. But on B200 the MoE got disproportionately faster (&sect;13.3), so the
