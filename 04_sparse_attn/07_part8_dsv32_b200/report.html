@@ -1596,6 +1596,58 @@
         all-HBM gap reopens to 0.88&times;. <b>Design knob: UCIe lane count is what sets the
         latents-in-LPDDR scaling limit at large batch.</b></div>
 
+      <h3>Worked example: how the G1 numbers are built (b=256, 128K) &mdash; and the batch sweep</h3>
+      <p><b>Where each input comes from</b> (the honesty ledger for the table below):</p>
+      <ul class="notes">
+        <li><b>Scan and top-k are direct kernel measurements</b> &mdash; they are separate launches
+          (<code class="k">fp8_paged_mqa_logits</code>, <code class="k">FilteredTopKUnifiedKernel</code>),
+          timed per-kernel by the gather probe. At b=256/128K: scan 661.3, top-k 134.6 &micro;s.</li>
+        <li><b>The gather is measured by index replay</b>: it lives inside the fused flash kernel, so
+          the probe captures the real top-k indices and times a <i>load-only replay</i> of exactly that
+          access pattern (same page tables, same 656 B records): 139.6 &micro;s. A measured proxy of the
+          memory phase, not a subtimer.</li>
+        <li><b>&ldquo;Sparse attend&rdquo; is a residual</b>: attend+metadata = attend_block (379.5)
+          &minus; replayed gather (139.6) = 239.9 &micro;s. Caveat: loads and compute overlap inside the
+          fused kernel, so this is an accounting split. Consequence: when the die delivers a packed
+          staging buffer, the GPU must still <i>read</i> it sequentially (344 MB &divide; ~5.5 TB/s
+          &asymp; 62 &micro;s) &mdash; carried below as an explicit hidden&hellip;exposed range rather
+          than assumed free.</li>
+        <li><b>Die-side approximations</b>: on-die top-k = ~5 &micro;s visible tail (streaming
+          threshold filter consuming logits as the scan emits them; requirement: &ge;6.3 Glogit/s and
+          384 KB of top-k SRAM per die at this batch). Die gather = bytes &divide; (1.024 TB/s
+          &times; &eta;=0.8) &mdash; deep-queue coalesced DMA. GPU-driven baseline &eta;=0.5 &mdash;
+          Grace-C2C-class uncached, cacheline-fragmented access.</li>
+      </ul>
+      <p><b>The b=256 arithmetic, end to end</b> (bytes = 256&times;2048&times;656 = 344 MB):</p>
+      <div class="scroll"><table>
+        <tr><th>Quantity</th><th>Construction</th><th class="num">&micro;s</th></tr>
+        <tr><td>all-HBM reference layer</td><td>attn 1301.1 + MoE 654.5 + norms 5</td><td class="num">1,960.6</td></tr>
+        <tr><td>GPU-driven UCIe gather</td><td>344 MB &divide; (1.024 &times; 0.5) TB/s</td><td class="num">671.7</td></tr>
+        <tr><td>LPDDR baseline layer</td><td>attn &minus; 139.6 + 671.7 + MoE + 5</td><td class="num">2,492.8</td></tr>
+        <tr><td>die gather</td><td>344 MB &divide; (1.024 &times; 0.8) TB/s</td><td class="num">419.8</td></tr>
+        <tr><td><b>G1 layer</b></td><td>attn &minus; 139.6 (gather out) &minus; 134.6 (top-k out) + 5 (tail) + 419.8 (+0&hellip;62.5 staged read)</td><td class="num"><b>2,111&ndash;2,174</b></td></tr>
+      </table></div>
+      <p><b>The batch sweep</b> (B200 measured rows; b=32 components interpolated from the b=8/64
+        sweep rows; ranges span staged-read hidden&hellip;exposed):</p>
+      <div class="scroll"><table>
+        <tr><th class="num">b/GPU @128K</th><th class="num">all-HBM ref &micro;s</th><th class="num">LPDDR baseline &micro;s</th><th class="num">G1 &micro;s</th><th class="num">G1 vs LPDDR baseline</th><th class="num">G1 vs all-HBM ref</th></tr>
+        <tr><td class="num">32</td><td class="num">494</td><td class="num">551</td><td class="num">484&ndash;492</td><td class="num">1.12&ndash;1.14&times;</td><td class="num"><b>1.00&ndash;1.02&times;</b></td></tr>
+        <tr><td class="num">64</td><td class="num">853</td><td class="num">978</td><td class="num">855&ndash;870</td><td class="num">1.12&ndash;1.14&times;</td><td class="num">0.98&ndash;1.00&times;</td></tr>
+        <tr><td class="num">256</td><td class="num">1,961</td><td class="num">2,493</td><td class="num">2,111&ndash;2,174</td><td class="num">1.15&ndash;1.18&times;</td><td class="num">0.90&ndash;0.93&times;</td></tr>
+        <tr><td class="num">1024</td><td class="num">5,414</td><td class="num">7,637</td><td class="num">6,171&ndash;6,421</td><td class="num"><b>1.19&ndash;1.24&times;</b></td><td class="num">0.84&ndash;0.88&times;</td></tr>
+      </table></div>
+      <div class="callout"><b>Reading the sweep.</b> Against the baseline that actually exists in the
+        capacity design (all-GPU with LPDDR latents), G1&rsquo;s gain <b>grows with batch,
+        1.12&rarr;1.24&times;</b> &mdash; the selection chain&rsquo;s share of the layer grows and the
+        GPU-driven UCIe gather degrades fastest. Against the hypothetical all-HBM reference the
+        crossover flips between b=32 and b=64: the fixed UCIe aggregate (0.82 TB/s effective) cannot
+        follow the in-HBM gather (which reaches 3.0 TB/s at b=1024), so the premium reopens to
+        0.84&times; &mdash; <b>UCIe lane count is the knob</b> (at 2&times;256 GB/s per stack, b=256
+        returns to ~1.03&times; vs all-HBM). Capacity honesty: with keys HBM-resident the deployable
+        ceiling is b&asymp;85/GPU on 192 GB, so read b=256/1024 rows as cluster batches on DP
+        shards (b=32/GPU &times; 8 GPUs = 256) or as kernel-level arithmetic for the key-spill
+        regime.</div>
+
       <p><b>2&nbsp;&middot; The overlap window shrank &mdash; the TRT-LLM effect cuts against the base
         die.</b> Part&nbsp;VI&rsquo;s cheapest lever was hiding the indexer behind a neighbour
         microbatch&rsquo;s MoE. But on B200 the MoE got disproportionately faster (&sect;13.3), so the
