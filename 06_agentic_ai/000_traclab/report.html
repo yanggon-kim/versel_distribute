@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TraceLab — Reproducing Coding-Agent Workload Traces for KV-Cache Analysis</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  h4{font-size:.96rem;margin:16px 0 6px;color:#33415c;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  pre.cmd{background:var(--code);color:#e6edf7;border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.83rem;line-height:1.5;margin:12px 0;}
+  pre.cmd .c{color:#7d8aa5;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .ok{color:var(--good);font-weight:700;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .steps{counter-reset:step;list-style:none;padding-left:0;margin:8px 0;}
+  .steps>li{position:relative;padding:10px 0 10px 42px;border-bottom:1px solid var(--border);}
+  .steps>li:last-child{border-bottom:0;}
+  .steps>li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:10px;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;font-size:.85rem;display:flex;align-items:center;justify-content:center;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#overview">Overview</a>
+    <a href="#what">1 · What TraceLab is</a>
+    <a href="#pipeline">2 · What I ran (6 phases)</a>
+    <a href="#repro">3 · Reproduction cross-check</a>
+    <a href="#q1">4 · Tool-latency heavy tail</a>
+    <a href="#q2">5 · Eviction / storage ratio</a>
+    <a href="#q3">6 · Human-idle cache miss</a>
+    <a href="#q4">7 · Prefix/append bimodality</a>
+    <a href="#takeaways">8 · Takeaways</a>
+    <a href="#notes">9 · Reproducibility notes</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>TraceLab — Reproducing Coding-Agent Workload Traces for KV-Cache Analysis</h1>
+      <p class="sub">A hands-on reproduction of UW&nbsp;SyFI's <b>TraceLab</b> dataset (4,265 anonymized Claude&nbsp;Code / Codex sessions), read through the lens of <b>KV-cache pressure in agentic AI</b>: long per-session prefixes, heavy-tailed tool latency, decode-dominant short appends, and human-wait cache eviction.</p>
+      <div class="tags">
+        <span class="tag live">Reproduced end-to-end</span>
+        <span class="tag">DuckDB + Python (CPU-only)</span>
+        <span class="tag">357,161 LLM rounds</span>
+        <span class="tag">432,510 tool calls</span>
+        <span class="tag">checksums verified</span>
+      </div>
+    </header>
+
+    <section class="card" id="overview">
+      <h2>Overview</h2>
+      <p class="lead">TraceLab is a normalized, anonymized dataset of real coding-agent sessions — numeric metadata only (per-step token counts, tool latencies, human wait times); no conversation or code content. It ships a GPU-free Python + DuckDB analysis pipeline (one folder per question) plus an Astro web app. This page documents what I downloaded, verified, and reproduced, and the four cache-focused questions I pulled out of it.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">4,265</div><div class="l">sessions (43 users)</div></div>
+        <div class="kpi"><div class="v">357,161</div><div class="l">LLM rounds</div></div>
+        <div class="kpi"><div class="v">432,510</div><div class="l">tool calls</div></div>
+        <div class="kpi"><div class="v">293.7&nbsp;:&nbsp;1</div><div class="l">input : output tokens</div></div>
+        <div class="kpi"><div class="v">118,656</div><div class="l">median prefix tokens</div></div>
+      </div>
+      <div class="callout"><b>Source.</b> Repo <a href="https://github.com/uw-syfi/TraceLab">github.com/uw-syfi/TraceLab</a> · demo <a href="https://tracelab.cs.washington.edu/">tracelab.cs.washington.edu</a> · paper <i>TraceLab: Characterizing Coding Agent Workloads for LLM Serving</i>. Dataset is CC&nbsp;BY&nbsp;4.0 and already anonymized; no re-identification was attempted.</p></div>
+    </section>
+
+    <section class="card" id="what">
+      <h2><span class="num">1</span>What TraceLab is</h2>
+      <p>Each session is a sequence of <b>LLM rounds</b>. A round is either <b>user-initiated</b> (a human typed something) or <b>tool-result-started</b> (the agent continued after a tool returned). Every round records its input tokens split into a cached <b>prefix</b> and a freshly-appended part, its output/reasoning tokens, generation timing, and the latency of any tool calls it issued. That structure is exactly what you need to reason about prefix-cache reuse and eviction — which is why it maps so cleanly onto KV-cache questions.</p>
+      <ul class="notes">
+        <li><b>Long context.</b> Mean total input is ~154k tokens/round; the prefix (cached-read) is the overwhelming majority of it.</li>
+        <li><b>Decode-dominant.</b> Aggregate input-to-output token ratio is ~294:1 — appends are tiny relative to the carried context.</li>
+        <li><b>Two round types behave very differently</b> on cache hit rate, which turns out to be the crux of where misses come from.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="pipeline">
+      <h2><span class="num">2</span>What I ran — the 6-phase pipeline</h2>
+      <ol class="steps">
+        <li><b>Environment check.</b> Linux x86_64, <code class="k">uv 0.10.1</code>, git, curl; 17&nbsp;TB free. <code class="k">uv</code> auto-provisioned Python&nbsp;3.14 for the venv (repo requires ≥3.11).</li>
+        <li><b>Clone.</b> <code class="k">git clone uw-syfi/TraceLab</code>; structure matched the README (<code class="k">artifacts/</code>, <code class="k">validators/</code>, <code class="k">scripts/</code>, <code class="k">web/</code>).</li>
+        <li><b>Download + verify.</b> Pulled both release <code class="k">v0.0.1</code> assets and confirmed <b>both SHA-256 checksums match</b> the README. The JSONL decompresses to 647&nbsp;MB = exactly 357,161 lines.</li>
+        <li><b>Setup + baseline + full suite.</b> <code class="k">uv sync</code>, then the overview summary, all validators (<b>4/4 pass</b>), and the full experiment suite (<b>43/46 pass</b>).</li>
+        <li><b>Deep dives.</b> Four cache-focused experiments (§4–§7 below).</li>
+        <li><b>Web app.</b> Optional — skipped; available via <code class="k">./launch.sh</code>.</li>
+      </ol>
+      <pre class="cmd"><span class="c"># verify data, then reproduce headline numbers + run everything</span>
+sha256sum trace/syfi_coding_trace.duckdb trace/syfi_coding_trace.jsonl.gz
+uv run python artifacts/trace_facts/overview_summary/analyze.py --db trace/syfi_coding_trace.duckdb
+uv run python validators/run_all.py --db trace/syfi_coding_trace.duckdb    <span class="c"># 4/4 pass</span>
+uv run python artifacts/run_all.py                                         <span class="c"># 43/46 pass</span></pre>
+      <div class="callout warn"><b>The 3 non-passing experiments</b> are all in one group — <code class="k">tool_calls/bash_command_breakdown/*</code> — and fail at the <i>plotting</i> step (matplotlib&nbsp;3.10 boxplot strictness under Python&nbsp;3.14, and one empty-data <code class="k">max()</code>). Their data computes fine; the group is about which shell commands agents run, orthogonal to KV cache. All four cache experiments below passed.</div>
+    </section>
+
+    <section class="card" id="repro">
+      <h2><span class="num">3</span>Reproduction cross-check</h2>
+      <p class="lead">Headline numbers from <code class="k">overview_summary</code> vs the published paper targets. Everything lands on target.</p>
+      <table>
+        <thead><tr><th>Metric</th><th class="num">Reproduced</th><th class="num">Paper target</th><th>Match</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Sessions</td><td class="num">4,265</td><td class="num">~4,300</td><td class="ok">✓</td></tr>
+          <tr><td class="rowlabel">LLM rounds</td><td class="num">357,161</td><td class="num">~357K</td><td class="ok">✓</td></tr>
+          <tr><td class="rowlabel">Tool calls</td><td class="num">432,510</td><td class="num">~432K</td><td class="ok">✓</td></tr>
+          <tr><td class="rowlabel">Distinct users</td><td class="num">43</td><td class="num">43</td><td class="ok">✓</td></tr>
+          <tr><td class="rowlabel">Input : output token ratio</td><td class="num">293.7 : 1</td><td class="num">~294 : 1</td><td class="ok">✓</td></tr>
+          <tr><td class="rowlabel">Median prefix tokens</td><td class="num">118,656</td><td class="num">~120K</td><td class="ok">✓</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="q1">
+      <h2><span class="num">4</span>Q1 · Tool-latency heavy tail</h2>
+      <p class="lead">Is tool time dominated by a few very long calls (so a KV round-trip could hide under tool waits)? Yes — extremely.</p>
+      <table>
+        <thead><tr><th>Latency bucket</th><th class="num">Share of tool calls</th><th class="num">Share of tool <i>time</i></th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">&lt; 1 s</td><td class="num">63.5%</td><td class="num">~0.6%</td></tr>
+          <tr><td class="rowlabel">1 s – 1 min</td><td class="num">35.2%</td><td class="num">14.8%</td></tr>
+          <tr><td class="rowlabel">1 min – 1 h</td><td class="num">3.9%</td><td class="num">42.8%</td></tr>
+          <tr><td class="rowlabel">&ge; 1 h</td><td class="num">0.03%</td><td class="num">41.8%</td></tr>
+        </tbody>
+      </table>
+      <div class="callout win"><b>The top 0.03% of calls (&ge;1 h) hold 41.8% of all tool time; calls &ge;1 min (0.26% of calls) hold 84.8%.</b> Sub-second calls are ~63% of calls but only ~0.6% of the time budget.</div>
+      <p>Fraction of calls <i>below</i> a transfer-time threshold, by provider: <b>&lt;0.1 s</b> → Claude 44.3% / Codex 27.6%; <b>&lt;0.6 s</b> → Claude 66.8% / Codex 49.2%. So a ~0.1–0.6 s KV round-trip is hidden under roughly half of all tool waits by count — but the aggregate tool-<i>time</i> budget is set almost entirely by a few multi-minute outliers.</p>
+      <figure>
+        <img src="assets/tool_latency_weighted_bins.png" alt="Tool-call latency weighted by total time per bucket, showing time concentrated in the multi-minute and >=1h buckets">
+        <figcaption class="cap">Tool-call latency, weighted by the total time each bucket contributes (<code class="k">tool_latency_distribution</code>).</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="q2">
+      <h2><span class="num">5</span>Q2 · Eviction timeout &rarr; storage ratio</h2>
+      <p class="lead">If you keep an idle request's KV resident until an eviction timeout <code class="k">&tau;</code>, how much suspended KV must you provision per unit of active KV? Reproduced the paper's sweep essentially exactly.</p>
+      <table>
+        <thead><tr><th>Eviction timeout &tau;</th><th class="num">Storage ratio (suspended / active)</th><th class="num">Paper</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">1 min</td><td class="num">0.74</td><td class="num">0.74 <span class="ok">✓</span></td></tr>
+          <tr><td class="rowlabel">5 min</td><td class="num">1.90</td><td class="num">—</td></tr>
+          <tr><td class="rowlabel">30 min</td><td class="num">3.92</td><td class="num">—</td></tr>
+          <tr><td class="rowlabel">1 hour</td><td class="num">5.07</td><td class="num">5.07 <span class="ok">✓</span></td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><b>Design mapping.</b> A 1×–5× KV oversubscription budget corresponds to eviction timeouts of roughly <b>~5 min (ratio 1.9) up to ~1 h (ratio 5.1)</b> — idle time dwarfs generation time, so suspended KV dominates as &tau; grows.</div>
+      <figure>
+        <img src="assets/eviction_tradeoff.png" alt="Storage ratio rising with eviction timeout, from 0.74 at 1 minute to 5.07 at 1 hour">
+        <figcaption class="cap">Suspended/active KV storage ratio vs eviction timeout (<code class="k">prefix_cache/eviction_tradeoff</code>).</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="q3">
+      <h2><span class="num">6</span>Q3 · Where do cache misses come from — human wait or tool wait?</h2>
+      <p class="lead">Overwhelmingly <b>human wait</b>. The two round types have very different prefix-hit rates, and the counterfactual quantifies exactly what a cache surviving the human-idle gap would save.</p>
+      <table>
+        <thead><tr><th>Round type</th><th class="num">Prefix hit rate</th><th class="num">Avg new-append tokens</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Tool-result-started</td><td class="num">0.976</td><td class="num">3,644</td></tr>
+          <tr><td class="rowlabel">User-initiated (human wait)</td><td class="num">0.844</td><td class="num">30,712</td></tr>
+        </tbody>
+      </table>
+      <div class="callout win"><b>If the prefix cache survived the human-idle gap, 95.1% of user-initiated append tokens (1.07 B tokens; 45.9% of all appends; ~12.8% of total cost) would be avoided.</b> The idle gaps driving these misses are large: median ~113 s, p90 ~31 min — well past any few-minute eviction window.</div>
+      <p>Tool-result rounds barely miss (0.976 hit rate) because they follow immediately on a tool return, keeping the prefix warm. The cache pressure that matters for agentic serving is concentrated on the human-in-the-loop boundary, not the tool loop.</p>
+    </section>
+
+    <section class="card" id="q4">
+      <h2><span class="num">7</span>Q4 · Prefix / append bimodality</h2>
+      <p class="lead">Do a short prefix + large append and a long prefix + small append separate into two regimes? Clearly yes — the two effectively trade off.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">78.4K</div><div class="l">median append when prefix &lt; 1k</div></div>
+        <div class="kpi"><div class="v">796</div><div class="l">median append when prefix &gt; 64k</div></div>
+        <div class="kpi"><div class="v">128–256k</div><div class="l">busiest prefix bin (91,598 steps)</div></div>
+      </div>
+      <p>That is a ~100× inversion in append size across the prefix range. The prefix and append marginals sit roughly two orders of magnitude apart, and the joint scatter shows a small-prefix group carrying comparatively huge appends while the large-reused-prefix mass carries tiny appends. A large reused prefix does <i>not</i> imply a large append.</p>
+      <figure>
+        <img src="assets/prefix_vs_append.png" alt="Scatter of prefix tokens vs newly-appended tokens per round, showing two separated regimes">
+        <figcaption class="cap">Per-round prefix vs newly-appended tokens (<code class="k">llm_generation/prefix_append_distribution</code>).</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/prefix_append_cdf.png" alt="CDFs of prefix and append token lengths, about two orders of magnitude apart">
+        <figcaption class="cap">Prefix and append length CDFs — the two curves are ~2 orders of magnitude apart.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="takeaways">
+      <h2><span class="num">8</span>Takeaways for KV-cache research</h2>
+      <ul class="notes">
+        <li><b>Prefix is the cost.</b> ~294:1 input:output and ~119k median prefix confirm a decode-dominant, prefix-heavy workload — reuse of the prefix cache is where the money is.</li>
+        <li><b>Tool gaps are cheap to hide but expensive in aggregate.</b> A 0.1–0.6 s KV transfer hides under ~half of tool waits, yet a handful of multi-minute/hour tool calls own ~85% of tool time — provisioning must plan for that tail, not the median.</li>
+        <li><b>Human idle is the real eviction driver.</b> Tool-result rounds keep 97.6% prefix hit; user turns drop to 84.4%, and surviving the human-idle gap would remove 95% of user-append re-prefill. The interesting "when does the gap matter" condition lives at the human boundary.</li>
+        <li><b>Storage vs eviction is a concrete knob.</b> 1×–5× oversubscription ≈ 5 min–1 h eviction timeout — a directly usable range for a serving-capacity study.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="notes">
+      <h2><span class="num">9</span>Reproducibility notes</h2>
+      <ul class="notes">
+        <li><b>Data integrity.</b> DuckDB SHA-256 <code class="k">9771…5619</code> and JSONL <code class="k">9d26…4e6b</code> both matched the README; JSONL line count = 357,161 rounds.</li>
+        <li><b>Doc vs repo.</b> The repo README recommends <code class="k">--db …duckdb</code> (the analyze scripts also accept <code class="k">-i …jsonl</code>), and requires <code class="k">uv sync</code>; I followed the repo where it diverged from my working notes.</li>
+        <li><b>Environment.</b> <code class="k">uv</code> built the venv on Python&nbsp;3.14 with matplotlib&nbsp;3.10.9 / numpy&nbsp;2.4.6 — the sole cause of the 3 cosmetic plotting failures in the bash-command-breakdown group.</li>
+        <li><b>Figures on this page</b> are the actual PNGs generated by the pipeline, copied into <code class="k">assets/</code>.</li>
+      </ul>
+    </section>
+
+    <footer class="footer">
+      <p>author : yang-gon kim &nbsp;·&nbsp; email : yanggon@g.ucla.edu</p>
+      <p>data &amp; code : <a href="https://github.com/uw-syfi/TraceLab">uw-syfi/TraceLab</a> (CC BY 4.0 dataset, Apache-2.0 code) &nbsp;·&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
