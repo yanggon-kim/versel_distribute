@@ -367,6 +367,57 @@
 </tbody>
 </table>
 </div>
+<h3>The window at a glance: W = fusedk_B (&micro;s), by batch and context</h3>
+<p>This is the <strong>maximum gather time that can overlap</strong> inside the fused kernel. If your tier's <code>t_gather = a + N/b</code> is below the cell value, the gather can (at best) hide entirely; anything above it is additive.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>L \ B</th>
+<th>16</th>
+<th>32</th>
+<th>64</th>
+<th>128</th>
+<th>192</th>
+<th>256</th>
+<th>512</th>
+<th>1024</th>
+</tr></thead>
+<tbody>
+<tr><td>32K</td><td>17.9</td><td>25.9</td><td>41.5</td><td>70.4</td><td>106.0</td><td>138.8</td><td>259.2</td><td>454.7</td></tr>
+<tr><td>64K</td><td>17.9</td><td>25.9</td><td>41.4</td><td>70.2</td><td>105.7</td><td>138.7</td><td>258.0</td><td>454.1</td></tr>
+<tr><td>128K</td><td>17.9</td><td>26.0</td><td>41.3</td><td>69.7</td><td>105.2</td><td>137.7</td><td>258.0</td><td>453.8</td></tr>
+<tr><td>512K</td><td>17.9</td><td>25.8</td><td>40.8</td><td>68.6</td><td>104.6</td><td>137.8</td><td>masked</td><td>masked</td></tr>
+<tr><td>1024K</td><td>17.8</td><td>25.6</td><td>40.7</td><td>68.6</td><td>masked</td><td>masked</td><td>masked</td><td>masked</td></tr>
+</tbody>
+</table>
+</div>
+<h3>Break-even tier bandwidth b* = N / W (GB/s)</h3>
+<p>The shortcut for the hidden-or-additive judgement: with a &asymp; 0, a tier hides the gather completely only if its <em>achieved</em> scattered-656 B bandwidth is at least <code>b* = N / fusedk_B</code>. Below b*, the exposed remainder is <code>N/b &minus; W</code> per layer.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>L \ B</th>
+<th>16</th>
+<th>32</th>
+<th>64</th>
+<th>128</th>
+<th>192</th>
+<th>256</th>
+<th>512</th>
+<th>1024</th>
+</tr></thead>
+<tbody>
+<tr><td>32K</td><td>1200</td><td>1658</td><td>2072</td><td>2443</td><td>2433</td><td>2478</td><td>2654</td><td>3025</td></tr>
+<tr><td>64K</td><td>1201</td><td>1658</td><td>2079</td><td>2450</td><td>2441</td><td>2479</td><td>2666</td><td>3029</td></tr>
+<tr><td>128K</td><td>1201</td><td>1654</td><td>2081</td><td>2466</td><td>2452</td><td>2498</td><td>2666</td><td>3032</td></tr>
+<tr><td>512K</td><td>1200</td><td>1666</td><td>2106</td><td>2507</td><td>2465</td><td>2496</td><td>masked</td><td>masked</td></tr>
+<tr><td>1024K</td><td>1205</td><td>1676</td><td>2114</td><td>2507</td><td>masked</td><td>masked</td><td>masked</td><td>masked</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout warn">
+<p><strong>Read the b* table before assuming anything can hide.</strong> Break-even sits at roughly 2&ndash;3 TB/s of <em>achieved scatter</em> bandwidth across the whole grid &mdash; approximately the fused kernel's own ingestion rate, which is no coincidence: the window is set by that same pipeline. HBM (&asymp;2.8 TB/s achieved on 656 B records, 8 TB/s pin) clears it; <em>no</em> LPDDR-, CXL-, DDR- or PCIe-class tier comes close (400, ~200, 219, 36 GB/s), so for every far tier essentially the whole N/b term lands on the layer. The judgement is usually not &ldquo;how much hides&rdquo; but &ldquo;accept N/b, or widen the window architecturally&rdquo; (previous-step prefetch, above).</p>
+</div>
 <h3>Worked examples at (B=192, L=128K) &mdash; a planned per-rank operating point</h3>
 <p>layer_B = 1580.4 &micro;s, W = fusedk_B = 105.21 &micro;s, N = 257.9 MB:</p>
 <div class="scroll">
