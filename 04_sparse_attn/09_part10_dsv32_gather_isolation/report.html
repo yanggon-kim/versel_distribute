@@ -225,9 +225,32 @@
 </div>
 <h3>Reading it per GPU count</h3>
 <p>Under the serving layout each rank runs attention for its own per-rank batch <code>b = B_cluster / N</code>, and gather time is a function of (b, L) only. So the batch axis <em>is</em> the GPU-count axis: fewer GPUs means larger b per rank and proportionally more gather. The planned comparison's per-rank operating points (137, 163, 172, 176) all fall inside 128&ndash;512, where the exposed gather runs 2.05&nbsp;&rarr;&nbsp;8.06&nbsp;&micro;s &mdash; though the b=256 dip noted above sits inside that interval.</p>
+<h2>Co-run interference (D6, partial)</h2>
+<p>Both sides must share one CUDA context or they time-slice instead of overlapping, so the co-runner runs on a second stream inside the same worker process. It is a torch gather (HBM) or a pinned-host stream (PCIe), <em>not</em> the TMA kernel &mdash; so the absolute gather times are not comparable to the microbench, but the interference is exactly what we want.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>gather source</th>
+<th>gather solo</th>
+<th>gather co-run</th>
+<th>partner solo</th>
+<th>partner co-run</th>
+<th>partner &amp;Delta; %</th>
+<th>makespan</th>
+</tr></thead>
+<tbody>
+<tr><td>hbm</td><td>76.2</td><td>90.5</td><td>8275.9</td><td>8246.5</td><td>-0.4</td><td>8302.3</td></tr>
+<tr><td>pcie</td><td>74773.9</td><td>74529.2</td><td>8303.0</td><td>75911.8</td><td>814.3</td><td>75977.5</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout warn">
+<p><strong>Both results contradict the expectation we set out with.</strong> The HBM co-run does <em>not</em> slow the partner (&minus;0.4&nbsp;%, within noise); the gather absorbs the interference instead, slowing ~19&nbsp;%. The prediction was that both sides would fight for HBM bandwidth and that overlap would prove partly illusory. Measurement says the layer forward is not bandwidth-saturated, which is consistent with the headline: there is spare bandwidth precisely because the attend phase leaves it unused. Conversely the PCIe co-run slows the partner badly (+814&nbsp;%) &mdash; the forward needs PCIe for input staging, so a saturated link stalls it.</p>
+<p>Only 1 of the 6 subset cells completed: the run died with a CUDA device-side assert at b=192, undiagnosed within the rental window, and the surviving rows were recovered from the committed run log. The PCIe co-runner is also a 4&nbsp;GB sequential copy, roughly 10&times; the partner duration, so its magnitude reflects that size mismatch rather than a matched comparison.</p>
+</div>
 <h2>Honesty box</h2>
 <ul>
-<li><strong>D6 (co-run overlap) was not measured.</strong> It needs the gather kernel and a vLLM forward in the <em>same</em> CUDA context, since separate processes time-slice rather than overlap. So the interference-adjusted window <code>W_eff</code> is unknown and the measured-overlap bound does not exist; only the serial and overlap-credited bounds ship. The stretch goal (a FlashMLA consumer-stub fork) was not attempted.</li>
+<li><strong>D6 is partial &mdash; 1 of 6 subset cells.</strong> The run died with an undiagnosed CUDA device-side assert at b=192, and its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench. The stretch goal (a FlashMLA consumer-stub fork) was not attempted.</li>
 <li><strong>Six masked cells</strong>, recorded rather than skipped: (512, 512K), (1024, 512K), (192, 1M), (256, 1M), (512, 1M), (1024, 1M) &mdash; each exceeds the 193.6&nbsp;M-token KV budget.</li>
 <li><strong>Dummy weights.</strong> The indexer's natural top-k comes from random weights, so its <em>distribution</em> is not a real workload's. That is exactly why Set (A) is index-controlled, and the uncontrolled selections are recorded separately.</li>
 <li><strong>delta_layer is noise-dominated</strong> (&le;0 in 19/34 cells); the kernel-level estimator is used throughout.</li>
