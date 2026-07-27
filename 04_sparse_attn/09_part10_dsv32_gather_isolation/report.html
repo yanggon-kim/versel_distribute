@@ -70,8 +70,8 @@
 <table>
 <thead><tr>
 <th>cell</th>
-<th>expected &amp;micro;s</th>
-<th>measured &amp;micro;s</th>
+<th>expected &micro;s</th>
+<th>measured &micro;s</th>
 <th>deviation</th>
 <th>verdict</th>
 </tr></thead>
@@ -91,7 +91,7 @@
 <p><strong>How we know the override really reaches the kernel</strong>, given that the fused time barely moves. Three independent checks, not timing: path instrumentation shows the translation function, the fp8 decode path and the fused-kernel wrapper each called exactly once per forward; index validity is 100.00&nbsp;% (0 of 524,288 translated slots are &minus;1, so nothing is skipped); and the distinct-page count differs 10,361&times;. The small latency delta is the physics, not a failed override.</p>
 </div>
 <h2>Results: exposed gather (D2)</h2>
-<p><code>delta_kernel</code> in microseconds. It depends on batch but essentially not on context length &mdash; the expected signature, since gather bytes are <code>b &times; 2048 &times; 656</code> regardless of L.</p>
+<p><code>delta_kernel</code> in microseconds, <strong>per launch</strong> (the split-KV kernel runs twice per decode step, so per-step exposure is 2&times; these values). It depends on batch but essentially not on context length &mdash; the expected signature, since gather bytes are <code>b &times; 2048 &times; 656</code> regardless of L.</p>
 <div class="scroll">
 <table>
 <thead><tr>
@@ -129,7 +129,7 @@
 <th>GB/s</th>
 <th>naive_read</th>
 <th>naive_copy</th>
-<th>D2 &amp;delta;_kernel</th>
+<th>D2 &delta;_kernel</th>
 </tr></thead>
 <tbody>
 <tr><td>b=16, L=32K</td><td>177.29</td><td>121</td><td>11.96</td><td>1798</td><td>347.27</td><td>18.74</td><td>0.49</td></tr>
@@ -155,7 +155,7 @@
 </tr></thead>
 <tbody>
 <tr><td>mapped</td><td>68</td><td>23.00</td><td>37.18</td><td>headline PCIe tier; feeds the fits</td></tr>
-<tr><td>fault_warm</td><td>40</td><td>60.71</td><td>458.78</td><td>post-migration, HBM speed &amp;mdash; as expected</td></tr>
+<tr><td>fault_warm</td><td>40</td><td>60.71</td><td>458.78</td><td>post-migration, HBM speed &mdash; as expected</td></tr>
 <tr><td>fault_cold</td><td>40</td><td>0.12</td><td>410.57</td><td>NOT trustworthy on this box (see honesty box)</td></tr>
 </tbody>
 </table>
@@ -184,18 +184,18 @@
 <table>
 <thead><tr>
 <th>tier</th>
-<th>a (&amp;micro;s)</th>
+<th>a (&micro;s)</th>
 <th>b (GB/s)</th>
 <th>resid p50 %</th>
 <th>note</th>
 </tr></thead>
 <tbody>
-<tr><td>hbm_tma_copy</td><td>3.9 &amp;ndash; 5.8</td><td>2645 &amp;ndash; 2817</td><td>1.1 &amp;ndash; 6.0</td><td>best-behaved tier; used as the standalone-gather curve</td></tr>
-<tr><td>hbm_naive</td><td>284.4 &amp;ndash; 331.9</td><td>1164 &amp;ndash; 1986</td><td>1.2 &amp;ndash; 7.2</td><td>LDG baseline, consistent with anchor 2</td></tr>
-<tr><td>hbm_tma_read</td><td>237.1 &amp;ndash; 297.1</td><td>1087 &amp;ndash; 3817</td><td>7.4 &amp;ndash; 20.1</td><td>large constant term = the unexplained small-batch anomaly</td></tr>
-<tr><td>pcie_uvm_mapped</td><td>-326.4 &amp;ndash; 26.9</td><td>34 &amp;ndash; 37</td><td>0.1 &amp;ndash; 4.7</td><td>far-tier anchor</td></tr>
-<tr><td>cpu_ddr_mlp</td><td>2.2 &amp;ndash; 28.7</td><td>202 &amp;ndash; 219</td><td>0.2 &amp;ndash; 10.4</td><td>LOWER BOUND (MLP-limited, 23-core quota)</td></tr>
-<tr><td>hbm_exposed</td><td>-1.2 &amp;ndash; 0.7</td><td>47456 &amp;ndash; 130278</td><td>5.2 &amp;ndash; 110.5</td><td>NOT usable &amp;mdash; delta_layer is noise-dominated</td></tr>
+<tr><td>hbm_tma_copy</td><td>3.9 &ndash; 5.8</td><td>2645 &ndash; 2817</td><td>1.1 &ndash; 6.0</td><td>best-behaved tier; used as the standalone-gather curve</td></tr>
+<tr><td>hbm_naive</td><td>284.4 &ndash; 331.9</td><td>1164 &ndash; 1986</td><td>1.2 &ndash; 7.2</td><td>LDG baseline, consistent with anchor 2</td></tr>
+<tr><td>hbm_tma_read</td><td>237.1 &ndash; 297.1</td><td>1087 &ndash; 3817</td><td>7.4 &ndash; 20.1</td><td>large constant term = the unexplained small-batch anomaly</td></tr>
+<tr><td>pcie_uvm_mapped</td><td>-326.4 &ndash; 26.9</td><td>34 &ndash; 37</td><td>0.1 &ndash; 4.7</td><td>far-tier anchor</td></tr>
+<tr><td>cpu_ddr_mlp</td><td>2.2 &ndash; 28.7</td><td>202 &ndash; 219</td><td>0.2 &ndash; 10.4</td><td>LOWER BOUND (MLP-limited, 23-core quota)</td></tr>
+<tr><td>hbm_exposed</td><td>-1.2 &ndash; 0.7</td><td>47456 &ndash; 130278</td><td>5.2 &ndash; 110.5</td><td>NOT usable &mdash; delta_layer is noise-dominated</td></tr>
 </tbody>
 </table>
 </div>
@@ -205,12 +205,12 @@
 <table>
 <thead><tr>
 <th>cell</th>
-<th>total &amp;micro;s</th>
-<th>exposed &amp;micro;s</th>
-<th>other &amp;micro;s</th>
+<th>total &micro;s</th>
+<th>exposed &micro;s</th>
+<th>other &micro;s</th>
 <th>exposed %</th>
 <th>other %</th>
-<th>hidden &amp;micro;s</th>
+<th>hidden &micro;s</th>
 <th>hidden % of total</th>
 </tr></thead>
 <tbody>
@@ -221,7 +221,7 @@
 </table>
 </div>
 <div class="callout">
-<p><code>exposed + other = 100&nbsp;%</code> by construction. <strong>Hidden gather rides <em>under</em> &ldquo;other&rdquo; concurrently and must never be added into that split.</strong> The negative exposed value at (128,&nbsp;512K) is layer-level noise rather than a negative gather; with the kernel-level estimator that cell is +2.28&nbsp;&micro;s.</p>
+<p><code>exposed + other = 100&nbsp;%</code> by construction. <strong>Hidden gather rides <em>under</em> &ldquo;other&rdquo; concurrently and must never be added into that split.</strong> The negative exposed value at (128,&nbsp;512K) is layer-level noise rather than a negative gather; with the kernel-level estimator that cell is +2.28&nbsp;&micro;s per launch (+4.6&nbsp;&micro;s per step).</p>
 </div>
 <h3>Reading it per GPU count</h3>
 <p>Under the serving layout each rank runs attention for its own per-rank batch <code>b = B_cluster / N</code>, and gather time is a function of (b, L) only. So the batch axis <em>is</em> the GPU-count axis: fewer GPUs means larger b per rank and proportionally more gather. The planned comparison's per-rank operating points (137, 163, 172, 176) all fall inside 128&ndash;512, where the exposed gather runs 2.05&nbsp;&rarr;&nbsp;8.06&nbsp;&micro;s &mdash; though the b=256 dip noted above sits inside that interval.</p>
@@ -236,7 +236,7 @@
 <th>gather co-run</th>
 <th>partner solo</th>
 <th>partner co-run</th>
-<th>partner &amp;Delta; %</th>
+<th>partner &Delta; %</th>
 </tr></thead>
 <tbody>
 <tr><td>b=64, L=128K</td><td>hbm</td><td>76.2</td><td>90.5</td><td>8275.9</td><td>8246.5</td><td>-0.4</td></tr>
@@ -265,10 +265,10 @@
 <table>
 <thead><tr>
 <th>cell</th>
-<th>baseline &amp;micro;s</th>
-<th>stub &amp;micro;s</th>
+<th>baseline &micro;s</th>
+<th>stub &micro;s</th>
 <th>stub / baseline</th>
-<th>removed math &amp;micro;s</th>
+<th>removed math &micro;s</th>
 </tr></thead>
 <tbody>
 <tr><td>b=16, L=32K</td><td>64.4</td><td>57.7</td><td>0.89</td><td>6.8</td></tr>
@@ -316,7 +316,7 @@
 <li>Read <code>layer_B</code> and <code>fusedk_B</code> for that cell from the lookup table below (or from <code>d2_gather_ab.csv</code>).</li>
 <li>Compute <code>N = B &times; 2048 &times; 656</code> bytes.</li>
 <li>Compute the tier's <code>t_gather = a + N/b</code> &mdash; with <strong>measured</strong> a and b for scattered 656 B reads (see caveat 1), like the tier fits above.</li>
-<li>Bound the layer: serial = <code>layer_B + t_gather</code>; window-credited = <code>layer_B + max(0, t_gather &minus; fusedk_B)</code>. Quote both; the truth is between, near serial for slow tiers.</li>
+<li>Bound the layer: serial = <code>layer_B + t_gather</code>; window-credited = <code>layer_B + max(0, t_gather &minus; 2&middot;fusedk_B)</code>. Quote both; the truth is between, near serial for slow tiers.</li>
 <li>Model-level: multiply the per-layer delta by the layer count (61) and add to the decode-step time; TPOT then follows from the serving stack as usual.</li>
 </ol>
 <h3>Lookup table (measured, all 34 feasible cells)</h3>
@@ -325,8 +325,8 @@
 <thead><tr>
 <th>B (batch)</th>
 <th>L (context)</th>
-<th>layer_B &amp;micro;s</th>
-<th>fusedk_B &amp;micro;s (= W)</th>
+<th>layer_B &micro;s</th>
+<th>fusedk_B &micro;s (per launch; W = 2&times;)</th>
 <th>N (MB)</th>
 </tr></thead>
 <tbody>
@@ -425,16 +425,16 @@
 <thead><tr>
 <th>tier</th>
 <th>b (GB/s)</th>
-<th>t_gather &amp;micro;s</th>
-<th>serial layer &amp;micro;s</th>
-<th>window-credited &amp;micro;s</th>
+<th>t_gather &micro;s</th>
+<th>serial layer &micro;s</th>
+<th>window-credited &micro;s</th>
 <th>vs window</th>
 </tr></thead>
 <tbody>
 <tr><td>HBM (self-check)</td><td>2810</td><td>97.4</td><td>1677.8</td><td>1580.4</td><td>hidden</td></tr>
-<tr><td>custom LPDDR tier (example)</td><td>400</td><td>646.9</td><td>2227.3</td><td>2016.9</td><td>+436 &amp;micro;s exposed</td></tr>
-<tr><td>CPU DDR (measured lower bound)</td><td>219</td><td>1197.9</td><td>2778.3</td><td>2567.8</td><td>+987 &amp;micro;s exposed</td></tr>
-<tr><td>PCIe mapped UVM (measured)</td><td>36</td><td>7192.3</td><td>8772.7</td><td>8562.3</td><td>+6982 &amp;micro;s exposed</td></tr>
+<tr><td>custom LPDDR tier (example)</td><td>400</td><td>646.9</td><td>2227.3</td><td>2016.9</td><td>+436 &micro;s exposed</td></tr>
+<tr><td>CPU DDR (measured lower bound)</td><td>219</td><td>1197.9</td><td>2778.3</td><td>2567.8</td><td>+987 &micro;s exposed</td></tr>
+<tr><td>PCIe mapped UVM (measured)</td><td>36</td><td>7192.3</td><td>8772.7</td><td>8562.3</td><td>+6982 &micro;s exposed</td></tr>
 </tbody>
 </table>
 </div>
@@ -452,8 +452,8 @@
 <table>
 <thead><tr>
 <th>cell</th>
-<th>fusedk per launch &amp;micro;s</th>
-<th>HBM per launch &amp;micro;s</th>
+<th>fusedk per launch &micro;s</th>
+<th>HBM per launch &micro;s</th>
 <th>ratio</th>
 <th>implied b (per-step)</th>
 </tr></thead>
