@@ -82,8 +82,9 @@
 <a href="#window">13 &middot; Max-overlap window</a>
 <a href="#insitu">14 &middot; In-situ PCIe</a>
 <a href="#calculator">15 &middot; Tier calculator</a>
-<a href="#honesty">16 &middot; Honesty box</a>
-<a href="#related">17 &middot; Related</a>
+<a href="#multigpu">16 &middot; Multi-GPU trade study</a>
+<a href="#honesty">17 &middot; Honesty box</a>
+<a href="#related">18 &middot; Related</a>
 </nav>
 <main>
 <header class="page">
@@ -798,8 +799,18 @@ tierRecalc();
 </div>
 <p>All eight cells agree to 0.03&ndash;0.28&nbsp;% &mdash; this is the substitution identity that licenses Table B's arithmetic. Note it validates the <em>window-credited</em> bound; the serial bound (not subtracting W) overshoots by exactly W, a 1&ndash;3&nbsp;% error at far-tier magnitudes.</p>
 </section>
+<section class="card" id="multigpu">
+<h2><span class="num">16</span>Using it: the 8-GPU-stock vs 6-GPU-custom trade study</h2>
+<p>The concrete downstream question this series serves: does a 6-GPU cluster whose GPUs carry a large-capacity custom memory tier beat an 8-GPU stock-B200 cluster, once the custom tier's gather is charged honestly? The whole machinery above collapses into a one-file change to the simulator's profile database.</p>
+<div class="callout">
+<p><strong>The rule:</strong> patch only the pure-decode rows of <code>attention.csv</code>: <code>t_att(tier, n, kv) = t_att_HBM(n, kv) + max( floor(N), a + N/b &minus; W(n) ) &minus; exposed_HBM(n)</code> &mdash; the window-credited exposed gather added as a <em>difference</em>, so HBM's own exposure is not double-counted. Everything else in the layer (scan, top-k, projections, MoE) is tier-invariant &mdash; that is exactly what the in-situ substitution identity validated to 0.28%.</p>
+</div>
+<p><strong>Why the GPU count itself needs no patch:</strong> the simulator looks attention up at the <em>per-rank</em> batch, n = B<sub>cluster</sub> / N<sub>gpu</sub>, so an 8&rarr;6-GPU move simply lands on larger-n rows of the same table (measured to n=1024). The patch models only the tier's access cost. Sanity built in: a tier with truly HBM-equal achieved (a, b) patches to &asymp;0, and the 6-GPU case then differs only through capacity and batch.</p>
+<p>What the patch does at a=5&nbsp;&micro;s, b=400&nbsp;GB/s (per decode attention row, per layer): n=8: +1.4&nbsp;&micro;s &middot; n=16: +21.8&nbsp;&micro;s &middot; n=32: +59.3&nbsp;&micro;s &middot; n=64: +134.6&nbsp;&micro;s &middot; n=176: +397.3&nbsp;&micro;s &mdash; small batches fit under the window, large ones pay the overflow; n=176 is the EP8 per-rank operating point from the capacity study.</p>
+<p><strong>Recipe:</strong> (1) <code class="k">patch_attention_csv.py --a &lt;&micro;s&gt; --b &lt;GB/s&gt; --tag &lt;t&gt;</code> emits a full profile variant (example committed: <code class="k">bf16-kvfp8-lpddr400</code>). (2) 8-GPU stock: EP8Rank model slice + default variant; 6-GPU custom: EP6Rank + enlarged npu_mem capacity + <code class="k">--variant bf16-kvfp8-&lt;t&gt;</code>. (3) Run <code class="k">python -m serving</code> per config and compare TPOT at equal cluster batch. Scope caveats: decode rows only (prefill sparse attention unpatched), and the 132&nbsp;B/token indexer cache is assumed to stay in HBM, matching the in-situ experiment.</p>
+</section>
 <section class="card" id="honesty">
-<h2><span class="num">16</span>Honesty box</h2>
+<h2><span class="num">17</span>Honesty box</h2>
 <ul>
 <li><strong>D6 is complete on the subset grid</strong>, but its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench, and the (64,128K) PCIe row from the first attempt is superseded (unmatched copy size).</li>
 <li><strong>D7 (consumer-stub fork) done</strong>; its standalone harness runs ~2.5&times; slower in absolute terms than the in-situ kernel, so quote its ratio/difference, not its absolute latencies.</li>
@@ -815,7 +826,7 @@ tierRecalc();
 </ul>
 </section>
 <section class="card" id="related">
-<h2><span class="num">17</span>Related</h2>
+<h2><span class="num">18</span>Related</h2>
 <ul>
 <li><a href="../07_part8_dsv32_b200/report.html">Part VIII &mdash; one decoder layer vs batch and context on Blackwell</a></li>
 <li><a href="../08_part9_dsv32_capacity_eval/report.html">Part IX &mdash; custom-HBM capacity design evaluation</a></li>
