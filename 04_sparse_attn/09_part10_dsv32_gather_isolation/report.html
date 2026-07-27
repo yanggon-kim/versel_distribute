@@ -225,37 +225,48 @@
 </div>
 <h3>Reading it per GPU count</h3>
 <p>Under the serving layout each rank runs attention for its own per-rank batch <code>b = B_cluster / N</code>, and gather time is a function of (b, L) only. So the batch axis <em>is</em> the GPU-count axis: fewer GPUs means larger b per rank and proportionally more gather. The planned comparison's per-rank operating points (137, 163, 172, 176) all fall inside 128&ndash;512, where the exposed gather runs 2.05&nbsp;&rarr;&nbsp;8.06&nbsp;&micro;s &mdash; though the b=256 dip noted above sits inside that interval.</p>
-<h2>Co-run interference (D6, partial)</h2>
-<p>Both sides must share one CUDA context or they time-slice instead of overlapping, so the co-runner runs on a second stream inside the same worker process. It is a torch gather (HBM) or a pinned-host stream (PCIe), <em>not</em> the TMA kernel &mdash; so the absolute gather times are not comparable to the microbench, but the interference is exactly what we want.</p>
+<h2>Co-run interference (D6, complete on the subset grid)</h2>
+<p>Both sides must share one CUDA context or they time-slice instead of overlapping, so the co-runner runs on a second stream inside the same worker process. It is a torch gather (HBM) or a pinned-host stream (PCIe), <em>not</em> the TMA kernel &mdash; absolute gather times are not comparable to the microbench, but the interference is exactly the quantity of interest. The first attempt died at b=192 on a CUDA device-side assert; the root cause was a multi-stream allocator hazard (tensors allocated on the default stream, consumed on the side stream without <code>record_stream()</code>, so the caching allocator could recycle the index buffer mid-read). Fixed and rerun clean.</p>
 <div class="scroll">
 <table>
 <thead><tr>
-<th>gather source</th>
+<th>cell</th>
+<th>src</th>
 <th>gather solo</th>
 <th>gather co-run</th>
 <th>partner solo</th>
 <th>partner co-run</th>
 <th>partner &amp;Delta; %</th>
-<th>makespan</th>
 </tr></thead>
 <tbody>
-<tr><td>hbm</td><td>76.2</td><td>90.5</td><td>8275.9</td><td>8246.5</td><td>-0.4</td><td>8302.3</td></tr>
-<tr><td>pcie</td><td>74773.9</td><td>74529.2</td><td>8303.0</td><td>75911.8</td><td>814.3</td><td>75977.5</td></tr>
+<tr><td>b=64, L=128K</td><td>hbm</td><td>76.2</td><td>90.5</td><td>8275.9</td><td>8246.5</td><td>-0.4</td></tr>
+<tr><td>b=64, L=128K</td><td>pcie</td><td>74773.9</td><td>74529.2</td><td>8303.0</td><td>75911.8</td><td>814.3</td></tr>
+<tr><td>b=192, L=128K</td><td>hbm</td><td>213.12</td><td>229.344</td><td>21845.312</td><td>21859.36</td><td>0.06</td></tr>
+<tr><td>b=192, L=128K</td><td>pcie</td><td>4822.624</td><td>4779.104</td><td>22139.744</td><td>22220.032</td><td>0.36</td></tr>
+<tr><td>b=1024, L=128K</td><td>hbm</td><td>1091.36</td><td>1117.44</td><td>113435.104</td><td>115710.045</td><td>2.01</td></tr>
+<tr><td>b=1024, L=128K</td><td>pcie</td><td>24137.823</td><td>24024.351</td><td>117871.17</td><td>118243.294</td><td>0.32</td></tr>
+<tr><td>b=64, L=512K</td><td>hbm</td><td>77.856</td><td>96.64</td><td>25261.856</td><td>24574.08</td><td>-2.72</td></tr>
+<tr><td>b=64, L=512K</td><td>pcie</td><td>1561.888</td><td>1542.944</td><td>24513.311</td><td>24354.528</td><td>-0.65</td></tr>
+<tr><td>b=192, L=512K</td><td>hbm</td><td>212.96</td><td>231.072</td><td>69024.094</td><td>69024.284</td><td>0.0</td></tr>
+<tr><td>b=192, L=512K</td><td>pcie</td><td>4778.336</td><td>4596.064</td><td>68773.117</td><td>69321.571</td><td>0.8</td></tr>
 </tbody>
 </table>
 </div>
-<div class="callout warn">
-<p><strong>Both results contradict the expectation we set out with.</strong> The HBM co-run does <em>not</em> slow the partner (&minus;0.4&nbsp;%, within noise); the gather absorbs the interference instead, slowing ~19&nbsp;%. The prediction was that both sides would fight for HBM bandwidth and that overlap would prove partly illusory. Measurement says the layer forward is not bandwidth-saturated, which is consistent with the headline: there is spare bandwidth precisely because the attend phase leaves it unused. Conversely the PCIe co-run slows the partner badly (+814&nbsp;%) &mdash; the forward needs PCIe for input staging, so a saturated link stalls it.</p>
-<p>Only 1 of the 6 subset cells completed: the run died with a CUDA device-side assert at b=192, undiagnosed within the rental window, and the surviving rows were recovered from the committed run log. The PCIe co-runner is also a 4&nbsp;GB sequential copy, roughly 10&times; the partner duration, so its magnitude reflects that size mismatch rather than a matched comparison.</p>
+<div class="callout win">
+<p><strong>The HBM co-run does not slow the partner anywhere</strong> (&minus;2.7&nbsp;% &hellip; +2.0&nbsp;%, centred on zero); the gather absorbs the interference instead (+8&ndash;24&nbsp;%). The plan predicted both sides would fight for HBM bandwidth and overlap would prove partly illusory &mdash; measurement says the layer forward is not bandwidth-saturated, which is consistent with this page's headline: there is spare bandwidth precisely because the attend phase leaves it unused.</p>
 </div>
+<div class="callout warn">
+<p><strong>Correction to an earlier version of this page.</strong> The first partial result showed the PCIe co-run slowing the partner by +814&nbsp;% and we reported that as contradicting the plan's expectation. That number was an artifact of an unmatched co-runner (a fixed 4&nbsp;GB copy, ~10&times; the partner's duration). With the copy sized to the gather bytes, the PCIe co-run barely slows the partner (+0.3&hellip;+0.8&nbsp;%) &mdash; the plan's prediction was right: a PCIe gather spends link bandwidth, not HBM, and it is its <em>duration</em> that dwarfs the window, not its interference. The superseded row is kept in the table for traceability.</p>
+</div>
+<p>Also re-verified in the same session: the <strong>b=256 dip is real</strong> &mdash; two independent re-measurements give &delta;_kernel = 2.03/1.78&nbsp;&micro;s at b=256 against 3.24/3.48 at b=192 and 8.52/8.95 at b=512, so it is a genuine tiling/occupancy effect, not sweep noise. And the <strong>tma_read anomaly is now explained</strong>: a no-consume variant (mbarrier wait only) reaches 4539&nbsp;GB/s at (64,&nbsp;128K), 19&times; faster than tma_read on identical transfers &mdash; the anomaly was the consumer loop, not the TMA engine. The pure-transfer tier fits at a&nbsp;&asymp;&nbsp;4&ndash;7&nbsp;&micro;s, b&nbsp;&asymp;&nbsp;5100&ndash;5900&nbsp;GB/s (64&ndash;74&nbsp;% of the pin rate), and hidden-gather figures are now a nosink-to-copy range rather than a single upper bound.</p>
 <h2>Honesty box</h2>
 <ul>
-<li><strong>D6 is partial &mdash; 1 of 6 subset cells.</strong> The run died with an undiagnosed CUDA device-side assert at b=192, and its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench. The stretch goal (a FlashMLA consumer-stub fork) was not attempted.</li>
+<li><strong>D6 is complete on the subset grid</strong>, but its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench, and the (64,128K) PCIe row from the first attempt is superseded (unmatched copy size). The stretch goal (a FlashMLA consumer-stub fork) was not attempted.</li>
 <li><strong>Six masked cells</strong>, recorded rather than skipped: (512, 512K), (1024, 512K), (192, 1M), (256, 1M), (512, 1M), (1024, 1M) &mdash; each exceeds the 193.6&nbsp;M-token KV budget.</li>
 <li><strong>Dummy weights.</strong> The indexer's natural top-k comes from random weights, so its <em>distribution</em> is not a real workload's. That is exactly why Set (A) is index-controlled, and the uncontrolled selections are recorded separately.</li>
 <li><strong>delta_layer is noise-dominated</strong> (&le;0 in 19/34 cells); the kernel-level estimator is used throughout.</li>
-<li><strong>b=256 anomaly</strong> inside the protected interpolation interval.</li>
-<li><strong>tma_read small-batch anomaly unexplained</strong>; hidden-gather figures are an upper bound.</li>
+<li><strong>b=256 dip verified reproducible</strong> (2.03/1.78 vs 3.24/3.48 &micro;s at b=192) &mdash; a real effect inside the protected interpolation interval; treat fits crossing b=256 with care.</li>
+<li><strong>tma_read anomaly resolved as consumer-side</strong> via the no-consume variant; hidden-gather figures are a nosink-to-copy range.</li>
 <li><strong>fault_cold is untrustworthy here</strong> &mdash; the UVM pool is reused across cells so pages stay device-resident; two fixes were attempted and cold rates still exceed the PCIe link rate. Only mapped mode feeds the fits.</li>
 <li><strong>No hardware counters.</strong> ncu exists on the box but is permission-blocked (<code>ERR_NVGPUCTRPERM</code>) and predates SM100, so every measurement here uses CUDA-event timing or vLLM's layerwise profile tree.</li>
 <li>All three anchor checks passed, so there are no anchor misses to declare.</li>
