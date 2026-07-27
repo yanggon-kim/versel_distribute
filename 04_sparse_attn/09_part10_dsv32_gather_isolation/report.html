@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V3.2 on B200 &mdash; Part X: Isolating the Top-2048 Gather (Exposed vs Hidden, and Four Memory Tiers)</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:#eef5ff;font-weight:700;}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  section.card h3{margin:22px 0 6px;font-size:1.05rem;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0 6px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .scroll{overflow-x:auto;}
+  .fig{margin:16px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .fig .cap{color:var(--muted);font-size:.85rem;margin:2px 2px 8px;}
+  code.k{background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.86em;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<main>
+<h1>DeepSeek-V3.2 on B200 &mdash; Part X: Isolating the Top-2048 Gather (Exposed vs Hidden, and Four Memory Tiers)</h1>
+<p class="muted">Measured on a rented single NVIDIA B200 (SM100, 179 GiB exposed, driver 580.126.20 / CUDA 13.0), vLLM 0.25.1, DeepSeek-V3.2-Exp with dummy weights. Container allocation: 28 vCPU, 283 GB RAM, 50 GB disk &mdash; enforced as 23.8 cores of CFS quota and a 263.6 GiB memory limit. All figures on this page are generated from the committed CSVs in <code>agent/analysis-b200-gather/</code>.</p>
+<div class="headline">
+<h2>The fused kernel already hides almost all of the gather</h2>
+<p>Two runs with <strong>identical work and identical FLOPs</strong>, differing only in where the 2048 indices point, produce a DRAM footprint difference of four orders of magnitude &mdash; 331,539 distinct 64-token pages versus exactly 32 &mdash; yet the fused kernel time changes by only 1.2&ndash;1.7&nbsp;% at b=256. At b=1024 the gather moves 1.376&nbsp;GB, about <strong>172&nbsp;&micro;s</strong> of ideal 8&nbsp;TB/s DRAM time, of which only <strong>11.1&ndash;11.8&nbsp;&micro;s</strong> is exposed &mdash; roughly <strong>93&nbsp;% is hidden</strong> behind the attend compute.</p>
+<p>For a custom HBM whose base die fronts an LPDDR extension this is the load-bearing result: because the HBM-tier gather is nearly free <em>as currently overlapped</em>, a slower tier's cost is almost entirely <strong>additive</strong>. The pessimistic serial bound is close to the truth for far tiers, and the optimistic bound can credit at most ~1&ndash;12&nbsp;&micro;s of hiding.</p>
+</div>
+<h2>Why this run existed</h2>
+<p>The previous rental measured the DSA attention only at <em>fused-kernel granularity</em>. Its <code>gather</code> column was the whole <code>flash_fwd_splitkv_mla_fp8_sparse</code> kernel &mdash; the top-2048 gather <em>and</em> the sparse attention over those entries. At b=1 the math is under a microsecond so 12&nbsp;&micro;s was close to a true gather floor, but at b&ge;256 a large share of the fused time is attend compute, so there was no gather-only latency from the production path and every quoted &ldquo;gather bandwidth&rdquo; was bytes &divide; fused latency &mdash; a mixed lower bound.</p>
+<h2>Anchor checks first</h2>
+<p>No new cell is trustworthy until the box reproduces the previous rental. Three independent checks, all passed:</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>expected &amp;micro;s</th>
+<th>measured &amp;micro;s</th>
+<th>deviation</th>
+<th>verdict</th>
+</tr></thead>
+<tbody>
+<tr><td>b=64, L=128K</td><td>42.581</td><td>42.605</td><td>0.06 %</td><td>PASS</td></tr>
+<tr><td>b=64, L=512K</td><td>41.979</td><td>41.981</td><td>0.0 %</td><td>PASS</td></tr>
+</tbody>
+</table>
+</div>
+<p>Plus the naive LDG microbench at b=64: <strong>928.8 GB/s</strong> against 925.3 expected (+0.4&nbsp;%), and the engine reporting a KV cache of exactly <strong>193,600,704 tokens</strong> &mdash; the figure the feasibility mask is derived from.</p>
+<h2>Method: index-controlled A/B</h2>
+<p>The fused kernel gathers whatever the int32 index buffer holds; it has no opinion about where those slots point. Run (A) scatters them across the whole context (a real DRAM gather); run (B) confines them to 32 L2-resident pages (~1.34&nbsp;MB). Both execute identical work otherwise &mdash; same 2048 indices per token, same 128-head attend over 2048 entries, same launches, softmax and output writes, and an identical scan/top-k/projection prologue. In <code>t(A) &minus; t(B)</code> everything common cancels and what survives is the cost of fetching 656-B records from scattered DRAM instead of from L2. <code>t(B)</code> is itself the measured <code>t_layer_no_gather</code>.</p>
+<div class="callout warn">
+<p><strong>Set (B) cannot be built the obvious way.</strong> The natural reading is to overwrite the index buffer before slot translation, using request-local positions <code>[0, 2048)</code>. But every request owns <em>disjoint</em> KV blocks, so request-local <code>[0,2048)</code> lands on a different 32 pages per request &mdash; B&nbsp;&times;&nbsp;1.34&nbsp;MB, not 1.34&nbsp;MB: 21&nbsp;MB at b=16 but 344&nbsp;MB at b=256 and 1.37&nbsp;GB at b=1024. Set (B) would then be doing its own full DRAM gather at large batch, and <code>t(A)&minus;t(B)</code> would <em>understate</em> the exposed gather, with the error growing in batch &mdash; worst exactly where the downstream GPU-count study needs tight interpolation. So Set (A) is applied before translation (real block-table indirection, the production pattern) and Set (B) is applied to the translation <em>output</em>, giving one shared hot set. Measured: Set (B) touches <strong>exactly 32 pages</strong>, independent of batch.</p>
+</div>
+<div class="callout">
+<p><strong>How we know the override really reaches the kernel</strong>, given that the fused time barely moves. Three independent checks, not timing: path instrumentation shows the translation function, the fp8 decode path and the fused-kernel wrapper each called exactly once per forward; index validity is 100.00&nbsp;% (0 of 524,288 translated slots are &minus;1, so nothing is skipped); and the distinct-page count differs 10,361&times;. The small latency delta is the physics, not a failed override.</p>
+</div>
+<h2>Results: exposed gather (D2)</h2>
+<p><code>delta_kernel</code> in microseconds. It depends on batch but essentially not on context length &mdash; the expected signature, since gather bytes are <code>b &times; 2048 &times; 656</code> regardless of L.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>context</th>
+<th>b=16</th>
+<th>b=32</th>
+<th>b=64</th>
+<th>b=128</th>
+<th>b=192</th>
+<th>b=256</th>
+<th>b=512</th>
+<th>b=1024</th>
+</tr></thead>
+<tbody>
+<tr><td>32K</td><td>0.49</td><td>0.76</td><td>1.47</td><td>2.25</td><td>3.25</td><td>2.30</td><td>8.06</td><td>11.09</td></tr>
+<tr><td>64K</td><td>0.62</td><td>0.67</td><td>1.51</td><td>2.11</td><td>3.16</td><td>1.78</td><td>9.08</td><td>11.60</td></tr>
+<tr><td>128K</td><td>0.55</td><td>0.77</td><td>1.51</td><td>2.09</td><td>3.34</td><td>1.50</td><td>8.19</td><td>11.82</td></tr>
+<tr><td>512K</td><td>0.51</td><td>0.71</td><td>1.62</td><td>2.28</td><td>3.30</td><td>0.75</td><td>masked</td><td>masked</td></tr>
+<tr><td>1024K</td><td>0.68</td><td>0.78</td><td>1.66</td><td>2.05</td><td>masked</td><td>masked</td><td>masked</td><td>masked</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout warn">
+<p>Two honest caveats. First, <code>delta_layer</code> (the layer-level subtraction) is <strong>noise-dominated</strong>: it is &le;&nbsp;0 in 19 of 34 cells, because it inherits the variance of the whole decoder layer while the signal is only ~1&ndash;12&nbsp;&micro;s. Since the gather lives in a single kernel, <code>delta_kernel</code> is the same quantity measured with far less noise, and it is positive in <strong>34/34</strong> cells. Second, <strong>b=256 dips below b=192</strong> (0.75&ndash;2.30 vs 3.16&ndash;3.34&nbsp;&micro;s). b=256 is a protected interpolation point, so this is flagged rather than smoothed; it looks like a tiling/occupancy effect and the fit near b=256 should be read with care.</p>
+</div>
+<h2>Verification triangle (D3)</h2>
+<p>A TMA microbench using the same <code>cp.async.bulk</code> engine as the real kernel, plus the naive LDG pattern rerun on the identical grid, pool and index set. Latencies in &micro;s, bandwidths in GB/s.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>tma_read</th>
+<th>GB/s</th>
+<th>tma_copy</th>
+<th>GB/s</th>
+<th>naive_read</th>
+<th>naive_copy</th>
+<th>D2 &amp;delta;_kernel</th>
+</tr></thead>
+<tbody>
+<tr><td>b=16, L=32K</td><td>177.29</td><td>121</td><td>11.96</td><td>1798</td><td>347.27</td><td>18.74</td><td>0.49</td></tr>
+<tr><td>b=64, L=128K</td><td>352.70</td><td>244</td><td>38.78</td><td>2217</td><td>372.73</td><td>86.12</td><td>1.51</td></tr>
+<tr><td>b=192, L=128K</td><td>385.02</td><td>670</td><td>98.27</td><td>2625</td><td>472.58</td><td>253.17</td><td>3.34</td></tr>
+<tr><td>b=1024, L=128K</td><td>646.73</td><td>2127</td><td>494.39</td><td>2783</td><td>1497.81</td><td>1456.51</td><td>11.82</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>naive_copy</code> reaching 998&nbsp;GB/s at (64,&nbsp;128K) against the anchor benchmark's 928&nbsp;GB/s on the same 86&nbsp;MB is an independent cross-validation of this binary's pool, index set and grid. TMA beats LDG by about 2.2&times; on the copy variant.</p>
+<div class="callout warn">
+<p><strong>The read-only variants are anomalous at small batch and this is not explained.</strong> At (64,&nbsp;128K) <code>tma_read</code> reports 242&nbsp;GB/s while <code>tma_copy</code> on the <em>identical</em> gather reports 2217&nbsp;GB/s; they converge only by b=1024. Two consumer-side causes were found and fixed (a byte-wise shared-memory reduction and a single serial accumulator chain, which lifted <code>naive_read</code> from 231 to 918&nbsp;GB/s at b=1024) but the small-batch read anomaly survives. The standalone-gather curve therefore comes from <code>tma_copy</code>, which includes a sequential write-back and so <em>over</em>-states a pure gather &mdash; making the hidden-gather figures an <strong>upper bound</strong>.</p>
+</div>
+<h2>Slow tiers: PCIe (D4) and CPU DRAM (D4b)</h2>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>mode</th>
+<th>cells</th>
+<th>min GB/s</th>
+<th>max GB/s</th>
+<th>note</th>
+</tr></thead>
+<tbody>
+<tr><td>mapped</td><td>68</td><td>23.00</td><td>37.18</td><td>headline PCIe tier; feeds the fits</td></tr>
+<tr><td>fault_warm</td><td>40</td><td>60.71</td><td>458.78</td><td>post-migration, HBM speed &amp;mdash; as expected</td></tr>
+<tr><td>fault_cold</td><td>40</td><td>0.12</td><td>410.57</td><td>NOT trustworthy on this box (see honesty box)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Mapped UVM reaches 36.6&nbsp;GB/s at (64,&nbsp;128K), up to 59&nbsp;% of the 63&nbsp;GB/s PCIe Gen5 x16 peak &mdash; right in the neighbourhood of the previous rental's 35.9&nbsp;GB/s pinned-host gather, which is what the plan predicted.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>threads</th>
+<th>scattered read GB/s</th>
+<th>peakread GB/s</th>
+</tr></thead>
+<tbody>
+<tr><td>8</td><td>105.1</td><td>120.7</td></tr>
+<tr><td>16</td><td>151.8</td><td>172.9</td></tr>
+<tr><td>23</td><td>223.5</td><td>248.4</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout warn">
+<p><strong>The CPU-DDR tier is a lower bound, not a DRAM ceiling.</strong> Bandwidth is still rising at 23 threads, which is the container's entire CFS quota, so memory-level parallelism was the limiter rather than DRAM. It calibrates a far-tier model; it does not replace one, and server DDR5 is not LPDDR5X. The utilization denominator (576&nbsp;GB/s per socket, from an assumed DDR5-6000 &times; 12 channels) is also unreachable with 23.8 of that socket's 56 cores, so the matched <code>peakread</code> column is the primary denominator.</p>
+</div>
+<h2>Tier fits (D5)</h2>
+<p><code>t_gather = a + N_bytes / b</code>, fitted over the batch axis at each context length. Ranges span the context values.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>tier</th>
+<th>a (&amp;micro;s)</th>
+<th>b (GB/s)</th>
+<th>resid p50 %</th>
+<th>note</th>
+</tr></thead>
+<tbody>
+<tr><td>hbm_tma_copy</td><td>3.9 &amp;ndash; 5.8</td><td>2645 &amp;ndash; 2817</td><td>1.1 &amp;ndash; 6.0</td><td>best-behaved tier; used as the standalone-gather curve</td></tr>
+<tr><td>hbm_naive</td><td>284.4 &amp;ndash; 331.9</td><td>1164 &amp;ndash; 1986</td><td>1.2 &amp;ndash; 7.2</td><td>LDG baseline, consistent with anchor 2</td></tr>
+<tr><td>hbm_tma_read</td><td>237.1 &amp;ndash; 297.1</td><td>1087 &amp;ndash; 3817</td><td>7.4 &amp;ndash; 20.1</td><td>large constant term = the unexplained small-batch anomaly</td></tr>
+<tr><td>pcie_uvm_mapped</td><td>-326.4 &amp;ndash; 26.9</td><td>34 &amp;ndash; 37</td><td>0.1 &amp;ndash; 4.7</td><td>far-tier anchor</td></tr>
+<tr><td>cpu_ddr_mlp</td><td>2.2 &amp;ndash; 28.7</td><td>202 &amp;ndash; 219</td><td>0.2 &amp;ndash; 10.4</td><td>LOWER BOUND (MLP-limited, 23-core quota)</td></tr>
+<tr><td>hbm_exposed</td><td>-1.2 &amp;ndash; 0.7</td><td>47456 &amp;ndash; 130278</td><td>5.2 &amp;ndash; 110.5</td><td>NOT usable &amp;mdash; delta_layer is noise-dominated</td></tr>
+</tbody>
+</table>
+</div>
+<p>The HBM self-check holds tightly: the HBM row's serial bound reproduces the measured layer total to <strong>p50 0.12&nbsp;%, max 0.62&nbsp;%</strong> across 30 cells.</p>
+<h2>Percentage breakdown</h2>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>total &amp;micro;s</th>
+<th>exposed &amp;micro;s</th>
+<th>other &amp;micro;s</th>
+<th>exposed %</th>
+<th>other %</th>
+<th>hidden &amp;micro;s</th>
+<th>hidden % of total</th>
+</tr></thead>
+<tbody>
+<tr><td>b=64, L=128K</td><td>860.5</td><td>0.20</td><td>860.3</td><td>0.02</td><td>99.98</td><td>37.3</td><td>4.33</td></tr>
+<tr><td>b=192, L=128K</td><td>1588.6</td><td>8.21</td><td>1580.4</td><td>0.52</td><td>99.48</td><td>94.9</td><td>5.98</td></tr>
+<tr><td>b=128, L=512K</td><td>2484.2</td><td>-0.98</td><td>2485.2</td><td>-0.04</td><td>100.04</td><td>66.2</td><td>2.66</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout">
+<p><code>exposed + other = 100&nbsp;%</code> by construction. <strong>Hidden gather rides <em>under</em> &ldquo;other&rdquo; concurrently and must never be added into that split.</strong> The negative exposed value at (128,&nbsp;512K) is layer-level noise rather than a negative gather; with the kernel-level estimator that cell is +2.28&nbsp;&micro;s.</p>
+</div>
+<h3>Reading it per GPU count</h3>
+<p>Under the serving layout each rank runs attention for its own per-rank batch <code>b = B_cluster / N</code>, and gather time is a function of (b, L) only. So the batch axis <em>is</em> the GPU-count axis: fewer GPUs means larger b per rank and proportionally more gather. The planned comparison's per-rank operating points (137, 163, 172, 176) all fall inside 128&ndash;512, where the exposed gather runs 2.05&nbsp;&rarr;&nbsp;8.06&nbsp;&micro;s &mdash; though the b=256 dip noted above sits inside that interval.</p>
+<h2>Honesty box</h2>
+<ul>
+<li><strong>D6 (co-run overlap) was not measured.</strong> It needs the gather kernel and a vLLM forward in the <em>same</em> CUDA context, since separate processes time-slice rather than overlap. So the interference-adjusted window <code>W_eff</code> is unknown and the measured-overlap bound does not exist; only the serial and overlap-credited bounds ship. The stretch goal (a FlashMLA consumer-stub fork) was not attempted.</li>
+<li><strong>Six masked cells</strong>, recorded rather than skipped: (512, 512K), (1024, 512K), (192, 1M), (256, 1M), (512, 1M), (1024, 1M) &mdash; each exceeds the 193.6&nbsp;M-token KV budget.</li>
+<li><strong>Dummy weights.</strong> The indexer's natural top-k comes from random weights, so its <em>distribution</em> is not a real workload's. That is exactly why Set (A) is index-controlled, and the uncontrolled selections are recorded separately.</li>
+<li><strong>delta_layer is noise-dominated</strong> (&le;0 in 19/34 cells); the kernel-level estimator is used throughout.</li>
+<li><strong>b=256 anomaly</strong> inside the protected interpolation interval.</li>
+<li><strong>tma_read small-batch anomaly unexplained</strong>; hidden-gather figures are an upper bound.</li>
+<li><strong>fault_cold is untrustworthy here</strong> &mdash; the UVM pool is reused across cells so pages stay device-resident; two fixes were attempted and cold rates still exceed the PCIe link rate. Only mapped mode feeds the fits.</li>
+<li><strong>No hardware counters.</strong> ncu exists on the box but is permission-blocked (<code>ERR_NVGPUCTRPERM</code>) and predates SM100, so every measurement here uses CUDA-event timing or vLLM's layerwise profile tree.</li>
+<li>All three anchor checks passed, so there are no anchor misses to declare.</li>
+</ul>
+<h2>Related</h2>
+<ul>
+<li><a href="../07_part8_dsv32_b200/report.html">Part VIII &mdash; one decoder layer vs batch and context on Blackwell</a></li>
+<li><a href="../08_part9_dsv32_capacity_eval/report.html">Part IX &mdash; custom-HBM capacity design evaluation</a></li>
+<li><a href="../../index.html">&larr; back to the report index</a></li>
+</ul>
+</main>
+</body>
+</html>
