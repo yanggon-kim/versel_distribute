@@ -470,9 +470,180 @@
 </table>
 </div>
 <div class="callout win">
-<p><strong>The verdict: a + N/b with a = 22&ndash;35&nbsp;&micro;s and b = 10.43&nbsp;GB/s, residual p50 0.02&ndash;0.16&nbsp;%</strong> &mdash; an almost exact latency&ndash;bandwidth law, identical at both contexts. Three signatures prove it is a pure PCIe gather: time depends on batch only, not context; natural &asymp; scatter &asymp; <em>hot</em> within ~2&nbsp;% (over system memory there is no L2 to make a hot set cheap &mdash; predicted before measuring); and the b=256 tiling dip vanishes (bandwidth-bound, not tile-bound). Against the D4 microbench's 23&ndash;37&nbsp;GB/s, the production path achieves <strong>10.4&nbsp;GB/s</strong> &mdash; same tier class, ~2&ndash;3&times; less efficient (shallow in-flight depth at 656&nbsp;B granularity meeting PCIe latency: the Little's-law shortfall the recipe warned about). The earlier conclusion is confirmed and strengthened: a PCIe-resident KV tier is ~100&times; short of the break-even bandwidth, the serial bound is the right model, and microbench-based fits are if anything optimistic for far tiers.</p>
+<p><strong>The verdict: a + N/b with a = 22&ndash;35&nbsp;&micro;s and b = 10.43&nbsp;GB/s, residual p50 0.02&ndash;0.16&nbsp;%</strong> &mdash; an almost exact latency&ndash;bandwidth law, identical at both contexts. Three signatures prove it is a pure PCIe gather: time depends on batch only, not context; natural &asymp; scatter &asymp; <em>hot</em> within ~2&nbsp;% (over system memory there is no L2 to make a hot set cheap &mdash; predicted before measuring); and the b=256 tiling dip vanishes (bandwidth-bound, not tile-bound). Against the D4 microbench's 23&ndash;37&nbsp;GB/s, the production path achieves <strong>10.4&nbsp;GB/s</strong> &mdash; same tier class, ~2&ndash;3&times; less efficient (shallow in-flight depth at 656&nbsp;B granularity meeting PCIe latency: the Little's-law shortfall the recipe warned about). The earlier conclusion is confirmed and strengthened: a PCIe-resident KV tier is ~100&times; short of the break-even bandwidth; the <strong>window-credited bound</strong> is the validated model (the substitution identity below holds to 0.03&ndash;0.28&nbsp;%), with the serial bound overshooting it by only W &mdash; 1&ndash;3&nbsp;% at far-tier magnitudes; and microbench-based fits are if anything optimistic for far tiers.</p>
 </div>
 <p class="muted">Bonus finding with reuse value: tensor-map TMA (<code>tma_gather4</code>) reads host-resident managed memory without faulting on this stack &mdash; and it was this run that exposed the two-launch split-KV convention now applied across the page.</p>
+<h2>Tier calculator: adding a new memory tier's gather from (a, b, N)</h2>
+<p>Everything on this page condenses, for modelling purposes, into the four tables below. All quantities are <strong>per decode step</strong>: the fused kernel runs as two split launches per step, so the kernel columns here are 2&times; the per-launch CSV values.</p>
+<h3>Table A &mdash; where one HBM decoder layer's time goes</h3>
+<p>(a) = whole layer (<code>layer_A</code>); (b) = fused kernel (2&middot;<code>fusedk_A</code>); (c) = exposed gather (2&middot;<code>delta_kernel</code>); (d) = (b) &minus; (c) = the kernel with a free gather (2&middot;<code>fusedk_B</code>) &mdash; which is also the overlap window W. Percentages use (a) as the denominator; (c) + (d) = (b) by construction.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>N (MB)</th>
+<th>(a) layer &micro;s</th>
+<th>(b) fused kernel &micro;s</th>
+<th>(c) exposed gather &micro;s</th>
+<th>(d)=(b)&minus;(c) = W &micro;s</th>
+</tr></thead>
+<tbody>
+<tr><td>b=16, L=32K</td><td>21.5</td><td>403.9 (100%)</td><td>36.79 (9.1%)</td><td>0.97 (0.24%)</td><td>35.82 (8.9%)</td></tr>
+<tr><td>b=32, L=32K</td><td>43.0</td><td>426.5 (100%)</td><td>53.38 (12.5%)</td><td>1.51 (0.35%)</td><td>51.87 (12.2%)</td></tr>
+<tr><td>b=64, L=32K</td><td>86.0</td><td>707.0 (100%)</td><td>85.91 (12.2%)</td><td>2.93 (0.41%)</td><td>82.98 (11.7%)</td></tr>
+<tr><td>b=128, L=32K</td><td>172.0</td><td>1087.5 (100%)</td><td>145.29 (13.4%)</td><td>4.50 (0.41%)</td><td>140.79 (12.9%)</td></tr>
+<tr><td>b=192, L=32K</td><td>257.9</td><td>1165.2 (100%)</td><td>218.56 (18.8%)</td><td>6.50 (0.56%)</td><td>212.06 (18.2%)</td></tr>
+<tr><td>b=256, L=32K</td><td>343.9</td><td>1426.3 (100%)</td><td>282.16 (19.8%)</td><td>4.60 (0.32%)</td><td>277.57 (19.5%)</td></tr>
+<tr><td>b=512, L=32K</td><td>687.9</td><td>2000.9 (100%)</td><td>534.54 (26.7%)</td><td>16.12 (0.81%)</td><td>518.42 (25.9%)</td></tr>
+<tr><td>b=1024, L=32K</td><td>1375.7</td><td>3209.5 (100%)</td><td>931.64 (29.0%)</td><td>22.18 (0.69%)</td><td>909.47 (28.3%)</td></tr>
+<tr><td>b=16, L=64K</td><td>21.5</td><td>419.1 (100%)</td><td>37.04 (8.8%)</td><td>1.25 (0.30%)</td><td>35.79 (8.5%)</td></tr>
+<tr><td>b=32, L=64K</td><td>43.0</td><td>452.1 (100%)</td><td>53.19 (11.8%)</td><td>1.33 (0.29%)</td><td>51.86 (11.5%)</td></tr>
+<tr><td>b=64, L=64K</td><td>86.0</td><td>757.3 (100%)</td><td>85.74 (11.3%)</td><td>3.02 (0.40%)</td><td>82.72 (10.9%)</td></tr>
+<tr><td>b=128, L=64K</td><td>172.0</td><td>1180.4 (100%)</td><td>144.59 (12.2%)</td><td>4.21 (0.36%)</td><td>140.38 (11.9%)</td></tr>
+<tr><td>b=192, L=64K</td><td>257.9</td><td>1306.3 (100%)</td><td>217.68 (16.7%)</td><td>6.32 (0.48%)</td><td>211.36 (16.2%)</td></tr>
+<tr><td>b=256, L=64K</td><td>343.9</td><td>1609.4 (100%)</td><td>281.04 (17.5%)</td><td>3.57 (0.22%)</td><td>277.48 (17.2%)</td></tr>
+<tr><td>b=512, L=64K</td><td>687.9</td><td>2367.2 (100%)</td><td>534.23 (22.6%)</td><td>18.16 (0.77%)</td><td>516.07 (21.8%)</td></tr>
+<tr><td>b=1024, L=64K</td><td>1375.7</td><td>3932.7 (100%)</td><td>931.48 (23.7%)</td><td>23.21 (0.59%)</td><td>908.27 (23.1%)</td></tr>
+<tr><td>b=16, L=128K</td><td>21.5</td><td>445.7 (100%)</td><td>36.90 (8.3%)</td><td>1.11 (0.25%)</td><td>35.79 (8.0%)</td></tr>
+<tr><td>b=32, L=128K</td><td>43.0</td><td>498.6 (100%)</td><td>53.53 (10.7%)</td><td>1.53 (0.31%)</td><td>52.00 (10.4%)</td></tr>
+<tr><td>b=64, L=128K</td><td>86.0</td><td>860.5 (100%)</td><td>85.66 (10.0%)</td><td>3.01 (0.35%)</td><td>82.64 (9.6%)</td></tr>
+<tr><td>b=128, L=128K</td><td>172.0</td><td>1360.9 (100%)</td><td>143.62 (10.6%)</td><td>4.17 (0.31%)</td><td>139.45 (10.2%)</td></tr>
+<tr><td>b=192, L=128K</td><td>257.9</td><td>1588.6 (100%)</td><td>217.10 (13.7%)</td><td>6.69 (0.42%)</td><td>210.41 (13.2%)</td></tr>
+<tr><td>b=256, L=128K</td><td>343.9</td><td>1975.3 (100%)</td><td>278.37 (14.1%)</td><td>3.01 (0.15%)</td><td>275.37 (13.9%)</td></tr>
+<tr><td>b=512, L=128K</td><td>687.9</td><td>3099.4 (100%)</td><td>532.32 (17.2%)</td><td>16.38 (0.53%)</td><td>515.94 (16.6%)</td></tr>
+<tr><td>b=1024, L=128K</td><td>1375.7</td><td>5389.4 (100%)</td><td>931.23 (17.3%)</td><td>23.65 (0.44%)</td><td>907.58 (16.8%)</td></tr>
+<tr><td>b=16, L=512K</td><td>21.5</td><td>597.1 (100%)</td><td>36.85 (6.2%)</td><td>1.03 (0.17%)</td><td>35.83 (6.0%)</td></tr>
+<tr><td>b=32, L=512K</td><td>43.0</td><td>774.8 (100%)</td><td>53.02 (6.8%)</td><td>1.41 (0.18%)</td><td>51.60 (6.7%)</td></tr>
+<tr><td>b=64, L=512K</td><td>86.0</td><td>1495.9 (100%)</td><td>84.87 (5.7%)</td><td>3.23 (0.22%)</td><td>81.64 (5.5%)</td></tr>
+<tr><td>b=128, L=512K</td><td>172.0</td><td>2484.2 (100%)</td><td>141.75 (5.7%)</td><td>4.56 (0.18%)</td><td>137.19 (5.5%)</td></tr>
+<tr><td>b=192, L=512K</td><td>257.9</td><td>3342.4 (100%)</td><td>215.88 (6.5%)</td><td>6.60 (0.20%)</td><td>209.29 (6.3%)</td></tr>
+<tr><td>b=256, L=512K</td><td>343.9</td><td>4219.5 (100%)</td><td>277.13 (6.6%)</td><td>1.50 (0.04%)</td><td>275.63 (6.5%)</td></tr>
+<tr><td>b=16, L=1024K</td><td>21.5</td><td>800.8 (100%)</td><td>37.05 (4.6%)</td><td>1.36 (0.17%)</td><td>35.69 (4.5%)</td></tr>
+<tr><td>b=32, L=1024K</td><td>43.0</td><td>1137.6 (100%)</td><td>52.86 (4.6%)</td><td>1.57 (0.14%)</td><td>51.30 (4.5%)</td></tr>
+<tr><td>b=64, L=1024K</td><td>86.0</td><td>2342.3 (100%)</td><td>84.67 (3.6%)</td><td>3.33 (0.14%)</td><td>81.34 (3.5%)</td></tr>
+<tr><td>b=128, L=1024K</td><td>172.0</td><td>3977.1 (100%)</td><td>141.30 (3.6%)</td><td>4.10 (0.10%)</td><td>137.20 (3.4%)</td></tr>
+</tbody>
+</table>
+</div>
+<h3>The calculation, spelled out (no black box)</h3>
+<ol>
+<li><strong>N</strong> = B &times; 2048 &times; 656 bytes: every query token fetches its top-2048 records of 656 B each; context length L does not enter N.</li>
+<li><strong>Your tier model</strong>: t<sub>gather</sub> = a + N/b, with a = per-step intercept in &micro;s (setup + exposed round-trips: a &asymp; t<sub>setup</sub> + k<sub>eff</sub>&middot;t<sub>RT</sub>, k<sub>eff</sub>=1 for a deep pipeline, ~8&ndash;15 for a shallow one) and b = <em>achieved</em> scattered-656&nbsp;B bandwidth in GB/s (never the pin rate). t<sub>gather</sub>[&micro;s] = a + N[bytes]/(b&middot;10&sup3;).</li>
+<li><strong>Window credit</strong>: the kernel overlaps fetch and compute, so up to W = (d) of the gather hides. Exposed gather on the new tier: <code>(c)<sub>tier</sub> = max( 0.66 + N/44&nbsp;TB/s , t<sub>gather</sub> &minus; W )</code>. The first argument is the fast-tier floor measured on HBM (0.66&nbsp;&micro;s head + a ~2% overlap leak, the fit that reproduces column (c) of Table A); it only matters for tiers within ~2&times; of HBM-class.</li>
+<li><strong>New layer time</strong>: t<sub>layer</sub>(tier) = layer_B + (c)<sub>tier</sub>, where layer_B is the measured layer with a free gather (&asymp; (a) &minus; (c), but measured directly, which also absorbs a small out-of-kernel exposure at large batch).</li>
+<li><strong>LLMServingSim patch rule</strong>: <code>t_att(tier, B, L) = t_att_HBM(B, L) + (c)<sub>tier</sub> &minus; (c)<sub>HBM</sub></code> with (c)<sub>HBM</sub> = column (c) of Table A &mdash; the subtraction removes HBM's own exposed gather so it is not counted twice.</li>
+</ol>
+<div class="callout">
+<p><strong>Fully worked example</strong>, (192, 128K), a hypothetical LPDDR tier with a = 5 &micro;s, b = 400 GB/s: N = 192&times;2048&times;656 = 257,949,696 B = 258.0 MB. t<sub>gather</sub> = 5 + 257949696/(400&times;10&sup3;) = 5 + 644.9 = 649.9 &micro;s. W = 210.4 &micro;s. Floor = 0.66 + 257949696/(44000&times;10&sup3;) = 6.5 &micro;s. (c)<sub>tier</sub> = max(6.5, 649.9 &minus; 210.4) = 439.5 &micro;s. t<sub>layer</sub> = 1580.4 + 439.5 = 2019.9 &micro;s vs 1588.6 on HBM &rarr; +27% per layer.</p>
+</div>
+<h3>Table B &mdash; interactive: type your tier's (a, b)</h3>
+<p>Enter a (&micro;s, per step) and b (GB/s, achieved scatter) &mdash; every row recomputes with the formulas above. Presets load the tiers measured in this series.</p>
+<p>a = <input id="tier_a" type="number" value="28.5" step="0.1" style="width:6em" oninput="tierRecalc()"> &micro;s &nbsp; b = <input id="tier_b" type="number" value="10.43" step="0.01" style="width:6em" oninput="tierRecalc()"> GB/s &nbsp; <button onclick="setTier(28.5,10.43)">PCIe in-situ</button> <button onclick="setTier(22,219)">CPU DDR (D4b)</button> <button onclick="setTier(5,400)">LPDDR example</button> <button onclick="setTier(11,2810)">HBM DMA-engine (tma_copy)</button></p>
+<div class="scroll"><table><thead><tr><th>cell</th><th>layer_B &micro;s (base)</th><th>W &micro;s</th><th>N (MB)</th><th>t_gather &micro;s</th><th>(c)tier exposed &micro;s</th><th>new layer &micro;s</th><th>vs HBM</th></tr></thead><tbody>
+<tr class="tierrow" data-n="21495808" data-w="35.822" data-lb="404.681" data-la="403.905"><td>b=16, L=32K</td><td>404.7</td><td>35.8</td><td>21.5</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="42991616" data-w="51.866" data-lb="427.047" data-la="426.547"><td>b=32, L=32K</td><td>427.0</td><td>51.9</td><td>43.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="85983232" data-w="82.982" data-lb="706.434" data-la="707.042"><td>b=64, L=32K</td><td>706.4</td><td>83.0</td><td>86.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="171966464" data-w="140.794" data-lb="1091.771" data-la="1087.499"><td>b=128, L=32K</td><td>1091.8</td><td>140.8</td><td>172.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="257949696" data-w="212.058" data-lb="1163.470" data-la="1165.216"><td>b=192, L=32K</td><td>1163.5</td><td>212.1</td><td>257.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="343932928" data-w="277.568" data-lb="1427.092" data-la="1426.259"><td>b=256, L=32K</td><td>1427.1</td><td>277.6</td><td>343.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="687865856" data-w="518.420" data-lb="1986.811" data-la="2000.865"><td>b=512, L=32K</td><td>1986.8</td><td>518.4</td><td>687.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="1375731712" data-w="909.466" data-lb="3192.156" data-la="3209.531"><td>b=1024, L=32K</td><td>3192.2</td><td>909.5</td><td>1375.7</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="21495808" data-w="35.788" data-lb="419.449" data-la="419.109"><td>b=16, L=64K</td><td>419.4</td><td>35.8</td><td>21.5</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="42991616" data-w="51.860" data-lb="452.544" data-la="452.129"><td>b=32, L=64K</td><td>452.5</td><td>51.9</td><td>43.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="85983232" data-w="82.720" data-lb="757.383" data-la="757.256"><td>b=64, L=64K</td><td>757.4</td><td>82.7</td><td>86.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="171966464" data-w="140.378" data-lb="1181.439" data-la="1180.403"><td>b=128, L=64K</td><td>1181.4</td><td>140.4</td><td>172.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="257949696" data-w="211.360" data-lb="1302.402" data-la="1306.310"><td>b=192, L=64K</td><td>1302.4</td><td>211.4</td><td>257.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="343932928" data-w="277.478" data-lb="1611.004" data-la="1609.426"><td>b=256, L=64K</td><td>1611.0</td><td>277.5</td><td>343.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="687865856" data-w="516.070" data-lb="2356.266" data-la="2367.240"><td>b=512, L=64K</td><td>2356.3</td><td>516.1</td><td>687.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="1375731712" data-w="908.270" data-lb="3908.144" data-la="3932.699"><td>b=1024, L=64K</td><td>3908.1</td><td>908.3</td><td>1375.7</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="21495808" data-w="35.788" data-lb="446.015" data-la="445.708"><td>b=16, L=128K</td><td>446.0</td><td>35.8</td><td>21.5</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="42991616" data-w="52.000" data-lb="498.887" data-la="498.565"><td>b=32, L=128K</td><td>498.9</td><td>52.0</td><td>43.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="85983232" data-w="82.644" data-lb="860.314" data-la="860.518"><td>b=64, L=128K</td><td>860.3</td><td>82.6</td><td>86.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="171966464" data-w="139.450" data-lb="1361.710" data-la="1360.929"><td>b=128, L=128K</td><td>1361.7</td><td>139.4</td><td>172.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="257949696" data-w="210.414" data-lb="1580.410" data-la="1588.623"><td>b=192, L=128K</td><td>1580.4</td><td>210.4</td><td>257.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="343932928" data-w="275.366" data-lb="1977.516" data-la="1975.336"><td>b=256, L=128K</td><td>1977.5</td><td>275.4</td><td>343.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="687865856" data-w="515.942" data-lb="3083.304" data-la="3099.427"><td>b=512, L=128K</td><td>3083.3</td><td>515.9</td><td>687.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="1375731712" data-w="907.584" data-lb="5360.394" data-la="5389.365"><td>b=1024, L=128K</td><td>5360.4</td><td>907.6</td><td>1375.7</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="21495808" data-w="35.826" data-lb="596.308" data-la="597.064"><td>b=16, L=512K</td><td>596.3</td><td>35.8</td><td>21.5</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="42991616" data-w="51.604" data-lb="773.965" data-la="774.780"><td>b=32, L=512K</td><td>774.0</td><td>51.6</td><td>43.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="85983232" data-w="81.638" data-lb="1494.665" data-la="1495.894"><td>b=64, L=512K</td><td>1494.7</td><td>81.6</td><td>86.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="171966464" data-w="137.190" data-lb="2485.218" data-la="2484.238"><td>b=128, L=512K</td><td>2485.2</td><td>137.2</td><td>172.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="257949696" data-w="209.286" data-lb="3343.655" data-la="3342.432"><td>b=192, L=512K</td><td>3343.7</td><td>209.3</td><td>257.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="343932928" data-w="275.630" data-lb="4220.034" data-la="4219.458"><td>b=256, L=512K</td><td>4220.0</td><td>275.6</td><td>343.9</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="21495808" data-w="35.686" data-lb="798.580" data-la="800.788"><td>b=16, L=1024K</td><td>798.6</td><td>35.7</td><td>21.5</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="42991616" data-w="51.296" data-lb="1138.887" data-la="1137.632"><td>b=32, L=1024K</td><td>1138.9</td><td>51.3</td><td>43.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="85983232" data-w="81.338" data-lb="2346.280" data-la="2342.252"><td>b=64, L=1024K</td><td>2346.3</td><td>81.3</td><td>86.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+<tr class="tierrow" data-n="171966464" data-w="137.196" data-lb="3982.604" data-la="3977.083"><td>b=128, L=1024K</td><td>3982.6</td><td>137.2</td><td>172.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
+</tbody></table></div>
+<script>
+function tierRecalc(){
+  var a = parseFloat(document.getElementById("tier_a").value);
+  var b = parseFloat(document.getElementById("tier_b").value);
+  if (!isFinite(a) || !isFinite(b) || b === 0) { return; }
+  document.querySelectorAll("tr.tierrow").forEach(function(tr){
+    var N = parseFloat(tr.dataset.n), W = parseFloat(tr.dataset.w);
+    var lb = parseFloat(tr.dataset.lb), la = parseFloat(tr.dataset.la);
+    var tg = a + N/(b*1e3);                    // us
+    var floor = 0.66 + N/(44000*1e3);          // HBM-measured fast-tier floor
+    var ex = Math.max(floor, tg - W);
+    var nl = lb + ex;
+    tr.querySelector(".c_tg").textContent = tg.toFixed(1);
+    tr.querySelector(".c_ex").textContent = ex.toFixed(1);
+    tr.querySelector(".c_nl").textContent = nl.toFixed(1);
+    tr.querySelector(".c_sl").textContent = (nl/la).toFixed(2) + "\u00d7";
+  });
+}
+function setTier(a, b){
+  document.getElementById("tier_a").value = a;
+  document.getElementById("tier_b").value = b;
+  tierRecalc();
+}
+tierRecalc();
+</script>
+<h3>Table C &mdash; the two checks that keep this honest</h3>
+<p><strong>C1, HBM self-check:</strong> the floor formula 0.66 + N/44&nbsp;TB/s must reproduce Table A's measured column (c). The fit was made on b &le; 192; b &ge; 512 rows are outside it and shown anyway:</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>predicted (c) &micro;s</th>
+<th>measured (c) &micro;s</th>
+<th>error</th>
+</tr></thead>
+<tbody>
+<tr><td>b=16, L=128K</td><td>1.15</td><td>1.11</td><td>+4%</td></tr>
+<tr><td>b=64, L=128K</td><td>2.61</td><td>3.01</td><td>-13%</td></tr>
+<tr><td>b=192, L=128K</td><td>6.52</td><td>6.69</td><td>-2%</td></tr>
+<tr><td>b=256, L=128K</td><td>8.48</td><td>3.01</td><td>+182% (outside fit range)</td></tr>
+<tr><td>b=512, L=128K</td><td>16.29</td><td>16.38</td><td>-1% (outside fit range)</td></tr>
+<tr><td>b=1024, L=128K</td><td>31.93</td><td>23.65</td><td>+35% (outside fit range)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>C2, far-tier check (measured, not hypothetical):</strong> the in-situ PCIe run gives the same kernel on a real slow tier. Prediction = layer_B + (2&middot;fusedk_PCIe &minus; W) &mdash; i.e. the window-credited formula with the measured PCIe kernel time as t<sub>gather</sub>:</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>t_gather (measured) &micro;s</th>
+<th>exposed &micro;s</th>
+<th>predicted layer &micro;s</th>
+<th>measured layer &micro;s</th>
+<th>error</th>
+</tr></thead>
+<tbody>
+<tr><td>b=16, L=128K</td><td>2085.0</td><td>2049.3</td><td>2495.3</td><td>2488.8</td><td>-0.26%</td></tr>
+<tr><td>b=64, L=128K</td><td>8267.9</td><td>8185.2</td><td>9045.6</td><td>9061.3</td><td>+0.17%</td></tr>
+<tr><td>b=192, L=128K</td><td>24753.0</td><td>24542.6</td><td>26123.0</td><td>26150.7</td><td>+0.11%</td></tr>
+<tr><td>b=256, L=128K</td><td>33007.9</td><td>32732.6</td><td>34710.1</td><td>34732.8</td><td>+0.07%</td></tr>
+<tr><td>b=16, L=512K</td><td>2088.4</td><td>2052.6</td><td>2648.9</td><td>2645.6</td><td>-0.12%</td></tr>
+<tr><td>b=64, L=512K</td><td>8273.7</td><td>8192.1</td><td>9686.7</td><td>9714.1</td><td>+0.28%</td></tr>
+<tr><td>b=192, L=512K</td><td>24804.4</td><td>24595.2</td><td>27938.8</td><td>27948.2</td><td>+0.03%</td></tr>
+<tr><td>b=256, L=512K</td><td>32979.3</td><td>32703.6</td><td>36923.7</td><td>36951.1</td><td>+0.07%</td></tr>
+</tbody>
+</table>
+</div>
+<p>All eight cells agree to 0.03&ndash;0.28&nbsp;% &mdash; this is the substitution identity that licenses Table B's arithmetic. Note it validates the <em>window-credited</em> bound; the serial bound (not subtracting W) overshoots by exactly W, a 1&ndash;3&nbsp;% error at far-tier magnitudes.</p>
 <h2>Honesty box</h2>
 <ul>
 <li><strong>D6 is complete on the subset grid</strong>, but its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench, and the (64,128K) PCIe row from the first attempt is superseded (unmatched copy size).</li>
