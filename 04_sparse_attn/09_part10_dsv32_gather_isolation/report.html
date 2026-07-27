@@ -259,9 +259,35 @@
 <p><strong>Correction to an earlier version of this page.</strong> The first partial result showed the PCIe co-run slowing the partner by +814&nbsp;% and we reported that as contradicting the plan's expectation. That number was an artifact of an unmatched co-runner (a fixed 4&nbsp;GB copy, ~10&times; the partner's duration). With the copy sized to the gather bytes, the PCIe co-run barely slows the partner (+0.3&hellip;+0.8&nbsp;%) &mdash; the plan's prediction was right: a PCIe gather spends link bandwidth, not HBM, and it is its <em>duration</em> that dwarfs the window, not its interference. The superseded row is kept in the table for traceability.</p>
 </div>
 <p>Also re-verified in the same session: the <strong>b=256 dip is real</strong> &mdash; two independent re-measurements give &delta;_kernel = 2.03/1.78&nbsp;&micro;s at b=256 against 3.24/3.48 at b=192 and 8.52/8.95 at b=512, so it is a genuine tiling/occupancy effect, not sweep noise. And the <strong>tma_read anomaly is now explained</strong>: a no-consume variant (mbarrier wait only) reaches 4539&nbsp;GB/s at (64,&nbsp;128K), 19&times; faster than tma_read on identical transfers &mdash; the anomaly was the consumer loop, not the TMA engine. The pure-transfer tier fits at a&nbsp;&asymp;&nbsp;4&ndash;7&nbsp;&micro;s, b&nbsp;&asymp;&nbsp;5100&ndash;5900&nbsp;GB/s (64&ndash;74&nbsp;% of the pin rate), and hidden-gather figures are now a nosink-to-copy range rather than a single upper bound.</p>
+<h2>The consumer-stub fork (stretch goal): what is the kernel actually waiting for?</h2>
+<p>FlashMLA at the pinned commit, built twice: unmodified, and with the consumer warps keeping <em>every</em> barrier arrival but skipping the UMMA issues, the softmax, S writes and O rescale. The producer warps (index transform + the <code>tma_gather4</code> KV fetches) and the fp8&rarr;bf16 dequant stage are untouched, so the stub time is the production KV-ingestion pipeline with the math removed. The stub runs the full grid with no deadlock and returns zeros (math provably gone); the 69-line kernel diff is committed alongside the data.</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>cell</th>
+<th>baseline &amp;micro;s</th>
+<th>stub &amp;micro;s</th>
+<th>stub / baseline</th>
+<th>removed math &amp;micro;s</th>
+</tr></thead>
+<tbody>
+<tr><td>b=16, L=32K</td><td>64.4</td><td>57.7</td><td>0.89</td><td>6.8</td></tr>
+<tr><td>b=64, L=128K</td><td>105.7</td><td>97.9</td><td>0.93</td><td>7.8</td></tr>
+<tr><td>b=192, L=128K</td><td>231.8</td><td>210.0</td><td>0.91</td><td>21.8</td></tr>
+<tr><td>b=256, L=128K</td><td>287.6</td><td>262.0</td><td>0.91</td><td>25.6</td></tr>
+<tr><td>b=1024, L=128K</td><td>914.8</td><td>832.7</td><td>0.91</td><td>82.0</td></tr>
+<tr><td>b=128, L=512K</td><td>152.5</td><td>136.7</td><td>0.90</td><td>15.8</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout win">
+<p><strong>stub/baseline is 0.90 at the median (min 0.83, max 0.96) over all 34 cells.</strong> Combined with the A/B result this completes a triangulation: removing the DRAM <em>locality</em> cost moves the kernel 1&ndash;2&nbsp;%; removing all the <em>math</em> moves it only ~10&nbsp;%. The critical path is the KV ingestion pipeline itself &mdash; TMA issue rate at 656&nbsp;B granularity, dequant staging, and per-64-token-block barrier round-trips &mdash; not DRAM bandwidth and not tensor-core math. What a base-die gather engine must beat is this pipeline's ~1.7&nbsp;TB/s effective ingestion rate, not the 8&nbsp;TB/s pin rate.</p>
+</div>
+<p class="muted">Caveat: the standalone harness's absolute baseline is ~2.5&times; the in-situ vLLM kernel at the same shape (scheduling and combine-kernel differences), so the ratio and the difference are the robust quantities; the stub's absolute time is an upper bound on the in-situ production gather.</p>
 <h2>Honesty box</h2>
 <ul>
-<li><strong>D6 is complete on the subset grid</strong>, but its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench, and the (64,128K) PCIe row from the first attempt is superseded (unmatched copy size). The stretch goal (a FlashMLA consumer-stub fork) was not attempted.</li>
+<li><strong>D6 is complete on the subset grid</strong>, but its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench, and the (64,128K) PCIe row from the first attempt is superseded (unmatched copy size).</li>
+<li><strong>D7 (consumer-stub fork) done</strong>; its standalone harness runs ~2.5&times; slower in absolute terms than the in-situ kernel, so quote its ratio/difference, not its absolute latencies.</li>
 <li><strong>Six masked cells</strong>, recorded rather than skipped: (512, 512K), (1024, 512K), (192, 1M), (256, 1M), (512, 1M), (1024, 1M) &mdash; each exceeds the 193.6&nbsp;M-token KV budget.</li>
 <li><strong>Dummy weights.</strong> The indexer's natural top-k comes from random weights, so its <em>distribution</em> is not a real workload's. That is exactly why Set (A) is index-controlled, and the uncontrolled selections are recorded separately.</li>
 <li><strong>delta_layer is noise-dominated</strong> (&le;0 in 19/34 cells); the kernel-level estimator is used throughout.</li>
