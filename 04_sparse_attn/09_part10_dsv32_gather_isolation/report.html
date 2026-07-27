@@ -52,19 +52,61 @@
   .footer a{text-decoration:none;}
   @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
 </style>
+<style>
+  /* additive components for Part X (calculator + timeline) */
+  .ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 14px}
+  .ctl button{font-size:.78rem;font-weight:700;padding:4px 12px;border-radius:999px;
+    background:#eef2f7;color:#43506a;border:1px solid var(--border);cursor:pointer}
+  .ctl button:hover{background:#eef5ff;color:var(--accent);border-color:var(--accent)}
+  .ctl input{border:1px solid var(--border);border-radius:6px;padding:4px 6px}
+  td.c_tg,td.c_ex,td.c_nl,td.c_sl{font-variant-numeric:tabular-nums;background:#fbfcff}
+</style>
 </head>
 <body>
+<div class="wrap">
+<nav class="toc" id="toc">
+<div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+<a href="#intro">Overview</a>
+<a href="#why">1 &middot; Why this run</a>
+<a href="#anchors">2 &middot; Anchor checks</a>
+<a href="#method">3 &middot; Method: A/B</a>
+<a href="#kernel">4 &middot; Inside the kernel</a>
+<a href="#d2">5 &middot; Exposed gather (D2)</a>
+<a href="#d3">6 &middot; Verification triangle (D3)</a>
+<a href="#tiers">7 &middot; Slow tiers (D4/D4b)</a>
+<a href="#fits">8 &middot; Tier fits (D5)</a>
+<a href="#breakdown">9 &middot; Percentage breakdown</a>
+<a href="#corun">10 &middot; Co-run interference (D6)</a>
+<a href="#stub">11 &middot; Consumer-stub fork (D7)</a>
+<a href="#window">12 &middot; Max-overlap window</a>
+<a href="#insitu">13 &middot; In-situ PCIe</a>
+<a href="#calculator">14 &middot; Tier calculator</a>
+<a href="#honesty">15 &middot; Honesty box</a>
+<a href="#related">16 &middot; Related</a>
+</nav>
 <main>
+<header class="page">
 <h1>DeepSeek-V3.2 on B200 &mdash; Part X: Isolating the Top-2048 Gather (Exposed vs Hidden, and Four Memory Tiers)</h1>
-<p class="muted">Measured on a rented single NVIDIA B200 (SM100, 179 GiB exposed, driver 580.126.20 / CUDA 13.0), vLLM 0.25.1, DeepSeek-V3.2-Exp with dummy weights. Container allocation: 28 vCPU, 283 GB RAM, 50 GB disk &mdash; enforced as 23.8 cores of CFS quota and a 263.6 GiB memory limit. All figures on this page are generated from the committed CSVs in <code>agent/analysis-b200-gather/</code>.</p>
-<div class="headline">
-<h2>The fused kernel already hides almost all of the gather</h2>
-<p>Two runs with <strong>identical work and identical FLOPs</strong>, differing only in where the 2048 indices point, produce a DRAM footprint difference of four orders of magnitude &mdash; 331,539 distinct 64-token pages versus exactly 32 &mdash; yet the fused kernel time changes by only 1.2&ndash;1.7&nbsp;% at b=256. At b=1024 the gather moves 1.376&nbsp;GB, about <strong>172&nbsp;&micro;s</strong> of ideal 8&nbsp;TB/s DRAM time, of which only <strong>11.1&ndash;11.8&nbsp;&micro;s per launch</strong> is exposed &mdash; roughly <strong>86&nbsp;% is hidden</strong> behind the attend compute. (Convention, discovered during the in-situ PCIe run below and applied throughout: the split-KV kernel launches <strong>twice per decode step</strong>, so every per-kernel column on this page is per-launch; per-step kernel time is 2&times; it. Layer-level columns were always per-step.)</p>
-<p>For a custom HBM whose base die fronts an LPDDR extension this is the load-bearing result: because the HBM-tier gather is nearly free <em>as currently overlapped</em>, a slower tier's cost is almost entirely <strong>additive</strong>. The pessimistic serial bound is close to the truth for far tiers, and the optimistic bound can credit at most ~1&ndash;12&nbsp;&micro;s of hiding.</p>
+<p class="sub">Measured on a rented single NVIDIA B200 (SM100, 179 GiB exposed, driver 580.126.20 / CUDA 13.0), vLLM 0.25.1, DeepSeek-V3.2-Exp with dummy weights. Container allocation: 28 vCPU, 283 GB RAM, 50 GB disk &mdash; enforced as 23.8 cores of CFS quota and a 263.6 GiB memory limit. All figures on this page are generated from the committed CSVs in <code>agent/analysis-b200-gather/</code>.</p>
+<div class="tags">
+<span class="tag">DeepSeek-V3.2-Exp &middot; fp8_ds_mla KV &middot; FlashMLA-sparse &middot; tp1</span>
+<span class="tag live">measured on NVIDIA B200 (SM100) &mdash; A/B index-controlled + in-situ PCIe</span>
+<span class="tag">decode batch 16&ndash;1024 &middot; KV 32K&ndash;1M &middot; top-2048 &times; 656 B</span>
+<span class="tag">every number generated from committed CSVs</span>
 </div>
-<h2>Why this run existed</h2>
+</header>
+<section class="card" id="intro">
+<h2><span class="num">&sect;</span>The finding in one minute</h2>
+<div class="headline"><div class="kpi"><div class="v">~86%</div><div class="l">of the gather's DRAM time hides under the attend at b=1024</div></div><div class="kpi"><div class="v">10,361&times;</div><div class="l">DRAM footprint difference that moves the kernel only 0.5&ndash;1.6%</div></div><div class="kpi"><div class="v">10.43 GB/s</div><div class="l">the production kernel's in-situ gather rate over PCIe (a+N/b, resid &le;0.16%)</div></div><div class="kpi"><div class="v">0.28%</div><div class="l">worst error of the tier-substitution identity across all 8 in-situ cells</div></div><div class="kpi"><div class="v">0.6&ndash;1.5 TB/s</div><div class="l">break-even scatter bandwidth b* for full hiding</div></div></div>
+<p>Two runs with <strong>identical work and identical FLOPs</strong>, differing only in where the 2048 indices point, produce a DRAM footprint difference of four orders of magnitude &mdash; 331,539 distinct 64-token pages versus exactly 32 &mdash; yet the fused kernel time changes by only 0.5&ndash;1.6&nbsp;% at b=256. At b=1024 the gather moves 1.376&nbsp;GB, about <strong>172&nbsp;&micro;s</strong> of ideal 8&nbsp;TB/s DRAM time, of which only <strong>11.1&ndash;11.8&nbsp;&micro;s per launch</strong> is exposed &mdash; roughly <strong>86&nbsp;% is hidden</strong> behind the attend compute. (Convention, discovered during the in-situ PCIe run below and applied throughout: the split-KV kernel launches <strong>twice per decode step</strong>, so every per-kernel column on this page is per-launch; per-step kernel time is 2&times; it. Layer-level columns were always per-step.)</p>
+<p>For a custom HBM whose base die fronts an LPDDR extension this is the load-bearing result: because the HBM-tier gather is nearly free <em>as currently overlapped</em>, a slower tier's cost is almost entirely <strong>additive</strong>. The pessimistic serial bound is close to the truth for far tiers, and the optimistic bound can credit at most ~1&ndash;24&nbsp;&micro;s of hiding per step.</p>
+</section>
+<section class="card" id="why">
+<h2><span class="num">1</span>Why this run existed</h2>
 <p>The previous rental measured the DSA attention only at <em>fused-kernel granularity</em>. Its <code>gather</code> column was the whole <code>flash_fwd_splitkv_mla_fp8_sparse</code> kernel &mdash; the top-2048 gather <em>and</em> the sparse attention over those entries. At b=1 the math is under a microsecond so 12&nbsp;&micro;s was close to a true gather floor, but at b&ge;256 a large share of the fused time is attend compute, so there was no gather-only latency from the production path and every quoted &ldquo;gather bandwidth&rdquo; was bytes &divide; fused latency &mdash; a mixed lower bound.</p>
-<h2>Anchor checks first</h2>
+</section>
+<section class="card" id="anchors">
+<h2><span class="num">2</span>Anchor checks first</h2>
 <p>No new cell is trustworthy until the box reproduces the previous rental. Three independent checks, all passed:</p>
 <div class="scroll">
 <table>
@@ -82,7 +124,9 @@
 </table>
 </div>
 <p>Plus the naive LDG microbench at b=64: <strong>928.8 GB/s</strong> against 925.3 expected (+0.4&nbsp;%), and the engine reporting a KV cache of exactly <strong>193,600,704 tokens</strong> &mdash; the figure the feasibility mask is derived from.</p>
-<h2>Method: index-controlled A/B</h2>
+</section>
+<section class="card" id="method">
+<h2><span class="num">3</span>Method: index-controlled A/B</h2>
 <p>The fused kernel gathers whatever the int32 index buffer holds; it has no opinion about where those slots point. Run (A) scatters them across the whole context (a real DRAM gather); run (B) confines them to 32 L2-resident pages (~1.34&nbsp;MB). Both execute identical work otherwise &mdash; same 2048 indices per token, same 128-head attend over 2048 entries, same launches, softmax and output writes, and an identical scan/top-k/projection prologue. In <code>t(A) &minus; t(B)</code> everything common cancels and what survives is the cost of fetching 656-B records from scattered DRAM instead of from L2. <code>t(B)</code> is itself the measured <code>t_layer_no_gather</code>.</p>
 <div class="callout warn">
 <p><strong>Set (B) cannot be built the obvious way.</strong> The natural reading is to overwrite the index buffer before slot translation, using request-local positions <code>[0, 2048)</code>. But every request owns <em>disjoint</em> KV blocks, so request-local <code>[0,2048)</code> lands on a different 32 pages per request &mdash; B&nbsp;&times;&nbsp;1.34&nbsp;MB, not 1.34&nbsp;MB: 21&nbsp;MB at b=16 but 344&nbsp;MB at b=256 and 1.37&nbsp;GB at b=1024. Set (B) would then be doing its own full DRAM gather at large batch, and <code>t(A)&minus;t(B)</code> would <em>understate</em> the exposed gather, with the error growing in batch &mdash; worst exactly where the downstream GPU-count study needs tight interpolation. So Set (A) is applied before translation (real block-table indirection, the production pattern) and Set (B) is applied to the translation <em>output</em>, giving one shared hot set. Measured: Set (B) touches <strong>exactly 32 pages</strong>, independent of batch.</p>
@@ -90,7 +134,86 @@
 <div class="callout">
 <p><strong>How we know the override really reaches the kernel</strong>, given that the fused time barely moves. Three independent checks, not timing: path instrumentation shows the translation function, the fp8 decode path and the fused-kernel wrapper each called exactly once per forward; index validity is 100.00&nbsp;% (0 of 524,288 translated slots are &minus;1, so nothing is skipped); and the distinct-page count differs 10,361&times;. The small latency delta is the physics, not a failed override.</p>
 </div>
-<h2>Results: exposed gather (D2)</h2>
+</section>
+<section class="card" id="kernel">
+<h2><span class="num">4</span>Inside <code>flash_fwd_splitkv_mla_fp8_sparse</code>: why the gather hides</h2>
+<p>Read directly from FlashMLA's sm100 decode kernel (the 69-line diff of our consumer-stub fork proves the reading). The kernel is <strong>warp-specialized</strong>: one CTA per (request, split), and within a CTA the warps hold fixed roles connected by mbarrier-guarded double buffers:</p>
+<div class="scroll">
+<table>
+<thead><tr>
+<th>warp(s)</th>
+<th>role</th>
+<th>what it does per 64-record chunk</th>
+</tr></thead>
+<tbody>
+<tr><td>7</td><td>index transform</td><td>turns 64 top-k token ids into TMA coordinates, e8m0 scale bytes and a validity mask; arrives <code>coord_ready</code></td></tr>
+<tr><td>5</td><td>NoPE gather (producer)</td><td>issues <code>tma_gather4</code> bulk fetches of the 512-B fp8 latents into SMEM; arrives <code>raw_ready</code> with an expected-byte count</td></tr>
+<tr><td>6</td><td>RoPE gather (producer)</td><td>same for the 128-B rope part; arrives <code>rope_ready</code></td></tr>
+<tr><td>dequant warpgroup</td><td>staging (consumer)</td><td>fp8&rarr;bf16 with the e8m0 scales into the MMA-ready buffer; arrives <code>nope_ready</code>, frees <code>raw</code></td></tr>
+<tr><td>4</td><td>MMA</td><td>tcgen05 UMMA: QK over rope then nope; commits <code>qk_done</code>; later SV; commits <code>sv_done</code></td></tr>
+<tr><td>0&ndash;3</td><td>softmax warpgroup</td><td>reads P from tensor memory, row-max, exp<sub>2</sub>, writes S, rescales O; arrives <code>so_ready</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The chunk pipeline: while the consumers (dequant &rarr; MMA &rarr; softmax) process chunk <em>i</em>, warps 5&ndash;7 are already fetching chunk <em>i</em>+1 into the other buffer. Per launch there are 16 chunks (1024 records of the 2048, the other half in the second split launch). The gather is exposed only at the fill (first chunk, nothing to overlap yet) and wherever a chunk's fetch outlasts a chunk's compute.</p>
+<p>Measured ratios at (64,&nbsp;128K), per launch: consumer chunk = fusedk_B/16 = 2.58&nbsp;&micro;s; producer chunk = (N/2/16)&nbsp;/&nbsp;2.81&nbsp;TB/s = 0.96&nbsp;&micro;s &mdash; the fetch takes only 37% of its slot, so it finishes early every time. Exposed: ~0.33&nbsp;&micro;s fill at the head plus residual leaks, totalling the measured 1.51&nbsp;&micro;s. From the consumer-stub fork: the consumer lane is ~90% ingestion/staging and ~10% MMA+softmax.</p>
+<div class="fig">
+<div class="cap">The two-lane chunk pipeline at measured ratios. Top: on HBM the fetch uses ~37% of each slot, so the gather rides invisibly under the compute &mdash; only the fill and per-chunk residuals are exposed. Bottom: in-situ over PCIe the same machinery runs with roles inverted &mdash; each fetch chunk takes ~100 compute-chunks of time, the compute hides completely, and the kernel time becomes the gather time (which is why t<sub>layer</sub> = layer_B + t_gather &minus; W held to 0.28%).</div>
+<svg viewBox="0 0 900 320" role="img" aria-label="Producer and consumer lanes of the fused kernel, HBM vs PCIe, to measured scale">
+<text x="90" y="22" font-size="13" font-weight="bold" fill="#172033">HBM tier &mdash; measured scale, (64, 128K), one launch</text>
+<text x="82" y="55" text-anchor="end" font-size="11" fill="#647083">producer (TMA gather)</text>
+<text x="82" y="89" text-anchor="end" font-size="11" fill="#647083">consumer (dequant+MMA+softmax)</text>
+<rect x="90" y="40" width="11.4" height="22" fill="#e87ba4"/>
+<text x="90" y="36" font-size="10" fill="#b54708">fill 0.33&#181;s (exposed)</text>
+<rect x="101.4" y="40" width="32.5" height="22" fill="#2a78d6" rx="2"/>
+<rect x="133.9" y="40" width="55.3" height="22" fill="#eef2f7" rx="2"/>
+<rect x="101.4" y="74" width="87.8" height="22" fill="#1a7f37" rx="2" opacity="0.75"/>
+<rect x="189.2" y="40" width="32.5" height="22" fill="#2a78d6" rx="2"/>
+<rect x="221.7" y="40" width="55.3" height="22" fill="#eef2f7" rx="2"/>
+<rect x="189.2" y="74" width="87.8" height="22" fill="#1a7f37" rx="2" opacity="0.9"/>
+<rect x="277.0" y="40" width="32.5" height="22" fill="#2a78d6" rx="2"/>
+<rect x="309.5" y="40" width="55.3" height="22" fill="#eef2f7" rx="2"/>
+<rect x="277.0" y="74" width="87.8" height="22" fill="#1a7f37" rx="2" opacity="0.75"/>
+<rect x="364.8" y="40" width="32.5" height="22" fill="#2a78d6" rx="2"/>
+<rect x="397.3" y="40" width="55.3" height="22" fill="#eef2f7" rx="2"/>
+<rect x="364.8" y="74" width="87.8" height="22" fill="#1a7f37" rx="2" opacity="0.9"/>
+<rect x="452.6" y="40" width="32.5" height="22" fill="#2a78d6" rx="2"/>
+<rect x="485.1" y="40" width="55.3" height="22" fill="#eef2f7" rx="2"/>
+<rect x="452.6" y="74" width="87.8" height="22" fill="#1a7f37" rx="2" opacity="0.75"/>
+<rect x="540.4" y="40" width="32.5" height="22" fill="#2a78d6" rx="2"/>
+<rect x="572.9" y="40" width="55.3" height="22" fill="#eef2f7" rx="2"/>
+<rect x="540.4" y="74" width="87.8" height="22" fill="#1a7f37" rx="2" opacity="0.9"/>
+<text x="636.2" y="90" font-size="12" fill="#647083">&#8230; &#215;16 chunks; exposed total = 1.51&#181;s of 42.8&#181;s</text>
+<text x="103.4" y="55" font-size="10" fill="#fff">fetch 0.96&#181;s</text>
+<text x="103.4" y="89" font-size="10" fill="#fff">compute 2.58&#181;s</text>
+<text x="90" y="132" font-size="13" font-weight="bold" fill="#172033">PCIe tier (in-situ, measured) &mdash; note the scale break: one fetch chunk = 258&#181;s = 100&#215; the compute chunk</text>
+<text x="82" y="165" text-anchor="end" font-size="11" fill="#647083">producer (TMA gather)</text>
+<text x="82" y="199" text-anchor="end" font-size="11" fill="#647083">consumer</text>
+<rect x="90.0" y="150" width="116.0" height="22" fill="#2a78d6" rx="2"/>
+<rect x="90.0" y="184" width="2.0" height="22" fill="#1a7f37" rx="2"/>
+<rect x="92.0" y="184" width="114.0" height="22" fill="#eef2f7" rx="2"/>
+<rect x="208.0" y="150" width="116.0" height="22" fill="#2a78d6" rx="2"/>
+<rect x="208.0" y="184" width="2.0" height="22" fill="#1a7f37" rx="2"/>
+<rect x="210.0" y="184" width="114.0" height="22" fill="#eef2f7" rx="2"/>
+<rect x="326.0" y="150" width="116.0" height="22" fill="#2a78d6" rx="2"/>
+<rect x="326.0" y="184" width="2.0" height="22" fill="#1a7f37" rx="2"/>
+<rect x="328.0" y="184" width="114.0" height="22" fill="#eef2f7" rx="2"/>
+<rect x="444.0" y="150" width="116.0" height="22" fill="#2a78d6" rx="2"/>
+<rect x="444.0" y="184" width="2.0" height="22" fill="#1a7f37" rx="2"/>
+<rect x="446.0" y="184" width="114.0" height="22" fill="#eef2f7" rx="2"/>
+<rect x="562.0" y="150" width="116.0" height="22" fill="#2a78d6" rx="2"/>
+<rect x="562.0" y="184" width="2.0" height="22" fill="#1a7f37" rx="2"/>
+<rect x="564.0" y="184" width="114.0" height="22" fill="#eef2f7" rx="2"/>
+<rect x="680.0" y="150" width="116.0" height="22" fill="#2a78d6" rx="2"/>
+<rect x="680.0" y="184" width="2.0" height="22" fill="#1a7f37" rx="2"/>
+<rect x="682.0" y="184" width="114.0" height="22" fill="#eef2f7" rx="2"/>
+<text x="92" y="165" font-size="10" fill="#fff">fetch 258&#181;s per chunk &#8594; the kernel time IS the gather</text>
+<text x="90" y="230" font-size="12" fill="#647083">roles invert: compute (2.58&#181;s) hides under the fetch; exposed = t_gather &#8722; W. Legend: <tspan fill="#2a78d6">&#9632;</tspan> TMA fetch &nbsp; <tspan fill="#1a7f37">&#9632;</tspan> compute &nbsp; <tspan fill="#e87ba4">&#9632;</tspan> exposed &nbsp; <tspan fill="#9aa4b2">&#9632;</tspan> idle</text>
+</svg>
+</div>
+</section>
+<section class="card" id="d2">
+<h2><span class="num">5</span>Results: exposed gather (D2)</h2>
 <p><code>delta_kernel</code> in microseconds, <strong>per launch</strong> (the split-KV kernel runs twice per decode step, so per-step exposure is 2&times; these values). It depends on batch but essentially not on context length &mdash; the expected signature, since gather bytes are <code>b &times; 2048 &times; 656</code> regardless of L.</p>
 <div class="scroll">
 <table>
@@ -117,7 +240,9 @@
 <div class="callout warn">
 <p>Two honest caveats. First, <code>delta_layer</code> (the layer-level subtraction) is <strong>noise-dominated</strong>: it is &le;&nbsp;0 in 19 of 34 cells, because it inherits the variance of the whole decoder layer while the signal is only ~1&ndash;12&nbsp;&micro;s. Since the gather lives in a single kernel, <code>delta_kernel</code> is the same quantity measured with far less noise, and it is positive in <strong>34/34</strong> cells. Second, <strong>b=256 dips below b=192</strong> (0.75&ndash;2.30 vs 3.16&ndash;3.34&nbsp;&micro;s). b=256 is a protected interpolation point, so this is flagged rather than smoothed; it looks like a tiling/occupancy effect and the fit near b=256 should be read with care.</p>
 </div>
-<h2>Verification triangle (D3)</h2>
+</section>
+<section class="card" id="d3">
+<h2><span class="num">6</span>Verification triangle (D3)</h2>
 <p>A TMA microbench using the same <code>cp.async.bulk</code> engine as the real kernel, plus the naive LDG pattern rerun on the identical grid, pool and index set. Latencies in &micro;s, bandwidths in GB/s.</p>
 <div class="scroll">
 <table>
@@ -143,7 +268,9 @@
 <div class="callout warn">
 <p><strong>The read-only variants are anomalous at small batch and this is not explained.</strong> At (64,&nbsp;128K) <code>tma_read</code> reports 242&nbsp;GB/s while <code>tma_copy</code> on the <em>identical</em> gather reports 2217&nbsp;GB/s; they converge only by b=1024. Two consumer-side causes were found and fixed (a byte-wise shared-memory reduction and a single serial accumulator chain, which lifted <code>naive_read</code> from 231 to 918&nbsp;GB/s at b=1024) but the small-batch read anomaly survives. The standalone-gather curve therefore comes from <code>tma_copy</code>, which includes a sequential write-back and so <em>over</em>-states a pure gather &mdash; making the hidden-gather figures an <strong>upper bound</strong>.</p>
 </div>
-<h2>Slow tiers: PCIe (D4) and CPU DRAM (D4b)</h2>
+</section>
+<section class="card" id="tiers">
+<h2><span class="num">7</span>Slow tiers: PCIe (D4) and CPU DRAM (D4b)</h2>
 <div class="scroll">
 <table>
 <thead><tr>
@@ -178,7 +305,9 @@
 <div class="callout warn">
 <p><strong>The CPU-DDR tier is a lower bound, not a DRAM ceiling.</strong> Bandwidth is still rising at 23 threads, which is the container's entire CFS quota, so memory-level parallelism was the limiter rather than DRAM. It calibrates a far-tier model; it does not replace one, and server DDR5 is not LPDDR5X. The utilization denominator (576&nbsp;GB/s per socket, from an assumed DDR5-6000 &times; 12 channels) is also unreachable with 23.8 of that socket's 56 cores, so the matched <code>peakread</code> column is the primary denominator.</p>
 </div>
-<h2>Tier fits (D5)</h2>
+</section>
+<section class="card" id="fits">
+<h2><span class="num">8</span>Tier fits (D5)</h2>
 <p><code>t_gather = a + N_bytes / b</code>, fitted over the batch axis at each context length. Ranges span the context values.</p>
 <div class="scroll">
 <table>
@@ -200,7 +329,9 @@
 </table>
 </div>
 <p>The HBM self-check holds tightly: the HBM row's serial bound reproduces the measured layer total to <strong>p50 0.12&nbsp;%, max 0.62&nbsp;%</strong> across 30 cells.</p>
-<h2>Percentage breakdown</h2>
+</section>
+<section class="card" id="breakdown">
+<h2><span class="num">9</span>Percentage breakdown</h2>
 <div class="scroll">
 <table>
 <thead><tr>
@@ -225,7 +356,9 @@
 </div>
 <h3>Reading it per GPU count</h3>
 <p>Under the serving layout each rank runs attention for its own per-rank batch <code>b = B_cluster / N</code>, and gather time is a function of (b, L) only. So the batch axis <em>is</em> the GPU-count axis: fewer GPUs means larger b per rank and proportionally more gather. The planned comparison's per-rank operating points (137, 163, 172, 176) all fall inside 128&ndash;512, where the exposed gather runs 2.05&nbsp;&rarr;&nbsp;8.06&nbsp;&micro;s &mdash; though the b=256 dip noted above sits inside that interval.</p>
-<h2>Co-run interference (D6, complete on the subset grid)</h2>
+</section>
+<section class="card" id="corun">
+<h2><span class="num">10</span>Co-run interference (D6, complete on the subset grid)</h2>
 <p>Both sides must share one CUDA context or they time-slice instead of overlapping, so the co-runner runs on a second stream inside the same worker process. It is a torch gather (HBM) or a pinned-host stream (PCIe), <em>not</em> the TMA kernel &mdash; absolute gather times are not comparable to the microbench, but the interference is exactly the quantity of interest. The first attempt died at b=192 on a CUDA device-side assert; the root cause was a multi-stream allocator hazard (tensors allocated on the default stream, consumed on the side stream without <code>record_stream()</code>, so the caching allocator could recycle the index buffer mid-read). Fixed and rerun clean.</p>
 <div class="scroll">
 <table>
@@ -259,7 +392,9 @@
 <p><strong>Correction to an earlier version of this page.</strong> The first partial result showed the PCIe co-run slowing the partner by +814&nbsp;% and we reported that as contradicting the plan's expectation. That number was an artifact of an unmatched co-runner (a fixed 4&nbsp;GB copy, ~10&times; the partner's duration). With the copy sized to the gather bytes, the PCIe co-run barely slows the partner (+0.3&hellip;+0.8&nbsp;%) &mdash; the plan's prediction was right: a PCIe gather spends link bandwidth, not HBM, and it is its <em>duration</em> that dwarfs the window, not its interference. The superseded row is kept in the table for traceability.</p>
 </div>
 <p>Also re-verified in the same session: the <strong>b=256 dip is real</strong> &mdash; two independent re-measurements give &delta;_kernel = 2.03/1.78&nbsp;&micro;s at b=256 against 3.24/3.48 at b=192 and 8.52/8.95 at b=512, so it is a genuine tiling/occupancy effect, not sweep noise. And the <strong>tma_read anomaly is now explained</strong>: a no-consume variant (mbarrier wait only) reaches 4539&nbsp;GB/s at (64,&nbsp;128K), 19&times; faster than tma_read on identical transfers &mdash; the anomaly was the consumer loop, not the TMA engine. The pure-transfer tier fits at a&nbsp;&asymp;&nbsp;4&ndash;7&nbsp;&micro;s, b&nbsp;&asymp;&nbsp;5100&ndash;5900&nbsp;GB/s (64&ndash;74&nbsp;% of the pin rate), and hidden-gather figures are now a nosink-to-copy range rather than a single upper bound.</p>
-<h2>The consumer-stub fork (stretch goal): what is the kernel actually waiting for?</h2>
+</section>
+<section class="card" id="stub">
+<h2><span class="num">11</span>The consumer-stub fork (stretch goal): what is the kernel actually waiting for?</h2>
 <p>FlashMLA at the pinned commit, built twice: unmodified, and with the consumer warps keeping <em>every</em> barrier arrival but skipping the UMMA issues, the softmax, S writes and O rescale. The producer warps (index transform + the <code>tma_gather4</code> KV fetches) and the fp8&rarr;bf16 dequant stage are untouched, so the stub time is the production KV-ingestion pipeline with the math removed. The stub runs the full grid with no deadlock and returns zeros (math provably gone); the 69-line kernel diff is committed alongside the data.</p>
 <div class="scroll">
 <table>
@@ -284,7 +419,9 @@
 <p><strong>stub/baseline is 0.90 at the median (min 0.83, max 0.96) over all 34 cells.</strong> Combined with the A/B result this completes a triangulation: removing the DRAM <em>locality</em> cost moves the kernel 1&ndash;2&nbsp;%; removing all the <em>math</em> moves it only ~10&nbsp;%. The critical path is the KV ingestion pipeline itself &mdash; TMA issue rate at 656&nbsp;B granularity, dequant staging, and per-64-token-block barrier round-trips &mdash; not DRAM bandwidth and not tensor-core math. What a base-die gather engine must beat is this pipeline's ~1.7&nbsp;TB/s effective ingestion rate, not the 8&nbsp;TB/s pin rate.</p>
 </div>
 <p class="muted">Caveat: the standalone harness's absolute baseline is ~2.5&times; the in-situ vLLM kernel at the same shape (scheduling and combine-kernel differences), so the ratio and the difference are the robust quantities; the stub's absolute time is an upper bound on the in-situ production gather.</p>
-<h2>How to charge a different memory tier: the max-overlap-window recipe</h2>
+</section>
+<section class="card" id="window">
+<h2><span class="num">12</span>How to charge a different memory tier: the max-overlap-window recipe</h2>
 <p>This section is self-contained: it defines every term, gives the lookup table, and shows how to predict one decoder layer's time when the KV gather is served from some other memory tier (LPDDR behind a base die, CXL, PCIe, host DRAM &hellip;) characterised by just three numbers <code>(a, b, N)</code>.</p>
 <h3>Definitions</h3>
 <div class="scroll"><table><thead><tr><th>term</th><th>meaning</th></tr></thead><tbody>
@@ -416,7 +553,7 @@
 </table>
 </div>
 <div class="callout warn">
-<p><strong>Read the b* table before assuming anything can hide.</strong> Break-even sits at roughly 1&ndash;1.5 TB/s of <em>achieved scatter</em> bandwidth across the whole grid &mdash; approximately the fused kernel's own ingestion rate, which is no coincidence: the window is set by that same pipeline. HBM (&asymp;2.8 TB/s achieved on 656 B records, 8 TB/s pin) clears it; <em>no</em> LPDDR-, CXL-, DDR- or PCIe-class tier comes close (400, ~200, 219, 36 GB/s), so for every far tier essentially the whole N/b term lands on the layer. The judgement is usually not &ldquo;how much hides&rdquo; but &ldquo;accept N/b, or widen the window architecturally&rdquo; (previous-step prefetch, above).</p>
+<p><strong>Read the b* table before assuming anything can hide.</strong> Break-even runs 0.6&ndash;1.5 TB/s of <em>achieved scatter</em> bandwidth across the grid (lowest at small batch, where the per-launch floor dominates the window) &mdash; the same order as the fused kernel's own ~1.7 TB/s ingestion pace, which is no coincidence: the window is set by that same pipeline. HBM (&asymp;2.8 TB/s achieved on 656 B records, 8 TB/s pin) clears it; <em>no</em> LPDDR-, CXL-, DDR- or PCIe-class tier comes close (400, ~200, 219, 36 GB/s), so for every far tier essentially the whole N/b term lands on the layer. The judgement is usually not &ldquo;how much hides&rdquo; but &ldquo;accept N/b, or widen the window architecturally&rdquo; (previous-step prefetch, above).</p>
 </div>
 <h3>Worked examples at (B=192, L=128K) &mdash; a planned per-rank operating point</h3>
 <p>layer_B = 1580.4 &micro;s, W = 2&middot;fusedk_B = 210.41 &micro;s, N = 257.9 MB:</p>
@@ -446,7 +583,9 @@
 <li><strong>The window can be architecturally widened.</strong> Indices exist only after top-k, so today W = fusedk_B. But the co-run measurement above showed the rest of the layer leaves HBM bandwidth essentially idle, so a base die that prefetches on the <em>previous</em> step's indices could stretch the window toward the whole layer (~layer_B) for the recurring-index fraction.</li>
 <li><strong>layer_B is a 1-layer dummy-weight measurement at TP1</strong>; it carries the profiling harness's per-forward overheads. For simulator use, apply the <em>delta</em> (the max-window rule) on top of your calibrated layer time rather than treating layer_B as gospel.</li>
 </ul>
-<h2>Double verification: the production kernel over real PCIe (managed-memory hack)</h2>
+</section>
+<section class="card" id="insitu">
+<h2><span class="num">13</span>Double verification: the production kernel over real PCIe (managed-memory hack)</h2>
 <p>Everything above charged far tiers through microbench analogs. This section is the real thing: vLLM's main 656 B KV cache re-allocated in managed memory (a pluggable allocator spliced into the KV allocation path), advised host-preferred and prefetched to host DRAM &mdash; the indexer cache deliberately left in HBM &mdash; so that <code>flash_fwd_splitkv_mla_fp8_sparse</code> itself gathers over PCIe zero-copy. Five verification gates ran before a single row was recorded (allocator unit test; selective allocation, size ratio 4.97; a physical residency oracle after discovering that nvidia-smi does not track UVM residency at all; TMA-over-host go/no-go; scan selectivity +0.7&nbsp;%; magnitude and repeatability), and the residency oracle re-read the cache at 43.3&nbsp;GB/s after the sweep &mdash; the pages stayed on the host, so the data is valid. Separate dataset: <code>analysis-b200-pcie-insitu/</code>.</p>
 <div class="scroll">
 <table>
@@ -473,7 +612,9 @@
 <p><strong>The verdict: a + N/b with a = 22&ndash;35&nbsp;&micro;s and b = 10.43&nbsp;GB/s, residual p50 0.02&ndash;0.16&nbsp;%</strong> &mdash; an almost exact latency&ndash;bandwidth law, identical at both contexts. Three signatures prove it is a pure PCIe gather: time depends on batch only, not context; natural &asymp; scatter &asymp; <em>hot</em> within ~2&nbsp;% (over system memory there is no L2 to make a hot set cheap &mdash; predicted before measuring); and the b=256 tiling dip vanishes (bandwidth-bound, not tile-bound). Against the D4 microbench's 23&ndash;37&nbsp;GB/s, the production path achieves <strong>10.4&nbsp;GB/s</strong> &mdash; same tier class, ~2&ndash;3&times; less efficient (shallow in-flight depth at 656&nbsp;B granularity meeting PCIe latency: the Little's-law shortfall the recipe warned about). The earlier conclusion is confirmed and strengthened: a PCIe-resident KV tier is ~100&times; short of the break-even bandwidth; the <strong>window-credited bound</strong> is the validated model (the substitution identity below holds to 0.03&ndash;0.28&nbsp;%), with the serial bound overshooting it by only W &mdash; 1&ndash;3&nbsp;% at far-tier magnitudes; and microbench-based fits are if anything optimistic for far tiers.</p>
 </div>
 <p class="muted">Bonus finding with reuse value: tensor-map TMA (<code>tma_gather4</code>) reads host-resident managed memory without faulting on this stack &mdash; and it was this run that exposed the two-launch split-KV convention now applied across the page.</p>
-<h2>Tier calculator: adding a new memory tier's gather from (a, b, N)</h2>
+</section>
+<section class="card" id="calculator">
+<h2><span class="num">14</span>Tier calculator: adding a new memory tier's gather from (a, b, N)</h2>
 <p>Everything on this page condenses, for modelling purposes, into the four tables below. All quantities are <strong>per decode step</strong>: the fused kernel runs as two split launches per step, so the kernel columns here are 2&times; the per-launch CSV values.</p>
 <h3>Table A &mdash; where one HBM decoder layer's time goes</h3>
 <p>(a) = whole layer (<code>layer_A</code>); (b) = fused kernel (2&middot;<code>fusedk_A</code>); (c) = exposed gather (2&middot;<code>delta_kernel</code>); (d) = (b) &minus; (c) = the kernel with a free gather (2&middot;<code>fusedk_B</code>) &mdash; which is also the overlap window W. Percentages use (a) as the denominator; (c) + (d) = (b) by construction.</p>
@@ -529,16 +670,16 @@
 <ol>
 <li><strong>N</strong> = B &times; 2048 &times; 656 bytes: every query token fetches its top-2048 records of 656 B each; context length L does not enter N.</li>
 <li><strong>Your tier model</strong>: t<sub>gather</sub> = a + N/b, with a = per-step intercept in &micro;s (setup + exposed round-trips: a &asymp; t<sub>setup</sub> + k<sub>eff</sub>&middot;t<sub>RT</sub>, k<sub>eff</sub>=1 for a deep pipeline, ~8&ndash;15 for a shallow one) and b = <em>achieved</em> scattered-656&nbsp;B bandwidth in GB/s (never the pin rate). t<sub>gather</sub>[&micro;s] = a + N[bytes]/(b&middot;10&sup3;).</li>
-<li><strong>Window credit</strong>: the kernel overlaps fetch and compute, so up to W = (d) of the gather hides. Exposed gather on the new tier: <code>(c)<sub>tier</sub> = max( 0.66 + N/44&nbsp;TB/s , t<sub>gather</sub> &minus; W )</code>. The first argument is the fast-tier floor measured on HBM (0.66&nbsp;&micro;s head + a ~2% overlap leak, the fit that reproduces column (c) of Table A); it only matters for tiers within ~2&times; of HBM-class.</li>
+<li><strong>Window credit</strong>: the kernel overlaps fetch and compute, so up to W = (d) of the gather hides. Exposed gather on the new tier: <code>(c)<sub>tier</sub> = max( 0.67 + N/44.6&nbsp;TB/s , t<sub>gather</sub> &minus; W )</code>. The first argument is the fast-tier floor fitted on HBM: a 0.67&nbsp;&micro;s head plus a leak of N/44.6&nbsp;TB/s &mdash; about 18% of the bytes' ideal 8-TB/s time, or 2&ndash;3% of the window (state the denominator; an earlier revision ambiguously said &ldquo;~2% leak&rdquo;). It only matters for tiers within ~2&times; of HBM-class.</li>
 <li><strong>New layer time</strong>: t<sub>layer</sub>(tier) = layer_B + (c)<sub>tier</sub>, where layer_B is the measured layer with a free gather (&asymp; (a) &minus; (c), but measured directly, which also absorbs a small out-of-kernel exposure at large batch).</li>
 <li><strong>LLMServingSim patch rule</strong>: <code>t_att(tier, B, L) = t_att_HBM(B, L) + (c)<sub>tier</sub> &minus; (c)<sub>HBM</sub></code> with (c)<sub>HBM</sub> = column (c) of Table A &mdash; the subtraction removes HBM's own exposed gather so it is not counted twice.</li>
 </ol>
 <div class="callout">
-<p><strong>Fully worked example</strong>, (192, 128K), a hypothetical LPDDR tier with a = 5 &micro;s, b = 400 GB/s: N = 192&times;2048&times;656 = 257,949,696 B = 258.0 MB. t<sub>gather</sub> = 5 + 257949696/(400&times;10&sup3;) = 5 + 644.9 = 649.9 &micro;s. W = 210.4 &micro;s. Floor = 0.66 + 257949696/(44000&times;10&sup3;) = 6.5 &micro;s. (c)<sub>tier</sub> = max(6.5, 649.9 &minus; 210.4) = 439.5 &micro;s. t<sub>layer</sub> = 1580.4 + 439.5 = 2019.9 &micro;s vs 1588.6 on HBM &rarr; +27% per layer.</p>
+<p><strong>Fully worked example</strong>, (192, 128K), a hypothetical LPDDR tier with a = 5 &micro;s, b = 400 GB/s: N = 192&times;2048&times;656 = 257,949,696 B = 258.0 MB. t<sub>gather</sub> = 5 + 257949696/(400&times;10&sup3;) = 5 + 644.9 = 649.9 &micro;s. W = 210.4 &micro;s. Floor = 0.67 + 257949696/(44642&times;10&sup3;) = 6.4 &micro;s. (c)<sub>tier</sub> = max(6.4, 649.9 &minus; 210.4) = 439.5 &micro;s. t<sub>layer</sub> = 1580.4 + 439.5 = 2019.9 &micro;s vs 1588.6 on HBM &rarr; +27% per layer.</p>
 </div>
 <h3>Table B &mdash; interactive: type your tier's (a, b)</h3>
 <p>Enter a (&micro;s, per step) and b (GB/s, achieved scatter) &mdash; every row recomputes with the formulas above. Presets load the tiers measured in this series.</p>
-<p>a = <input id="tier_a" type="number" value="28.5" step="0.1" style="width:6em" oninput="tierRecalc()"> &micro;s &nbsp; b = <input id="tier_b" type="number" value="10.43" step="0.01" style="width:6em" oninput="tierRecalc()"> GB/s &nbsp; <button onclick="setTier(28.5,10.43)">PCIe in-situ</button> <button onclick="setTier(22,219)">CPU DDR (D4b)</button> <button onclick="setTier(5,400)">LPDDR example</button> <button onclick="setTier(11,2810)">HBM DMA-engine (tma_copy)</button></p>
+<div class="ctl"><span>a =</span> <input id="tier_a" type="number" value="28.5" step="0.1" style="width:6em" oninput="tierRecalc()"> <span>&micro;s</span> <span>b =</span> <input id="tier_b" type="number" value="10.43" step="0.01" style="width:6em" oninput="tierRecalc()"> <span>GB/s</span> <button onclick="setTier(28.5,10.43)">PCIe in-situ</button><button onclick="setTier(22,219)">CPU DDR (D4b)</button><button onclick="setTier(5,400)">LPDDR example</button><button onclick="setTier(5.5,2810)">HBM DMA-engine (tma_copy)</button></div>
 <div class="scroll"><table><thead><tr><th>cell</th><th>layer_B &micro;s (base)</th><th>W &micro;s</th><th>N (MB)</th><th>t_gather &micro;s</th><th>(c)tier exposed &micro;s</th><th>new layer &micro;s</th><th>vs HBM</th></tr></thead><tbody>
 <tr class="tierrow" data-n="21495808" data-w="35.822" data-lb="404.681" data-la="403.905"><td>b=16, L=32K</td><td>404.7</td><td>35.8</td><td>21.5</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
 <tr class="tierrow" data-n="42991616" data-w="51.866" data-lb="427.047" data-la="426.547"><td>b=32, L=32K</td><td>427.0</td><td>51.9</td><td>43.0</td><td class="c_tg"></td><td class="c_ex"></td><td class="c_nl"></td><td class="c_sl"></td></tr>
@@ -584,7 +725,7 @@ function tierRecalc(){
     var N = parseFloat(tr.dataset.n), W = parseFloat(tr.dataset.w);
     var lb = parseFloat(tr.dataset.lb), la = parseFloat(tr.dataset.la);
     var tg = a + N/(b*1e3);                    // us
-    var floor = 0.66 + N/(44000*1e3);          // HBM-measured fast-tier floor
+    var floor = 0.670 + N/(44642*1e3);  // fitted HBM floor
     var ex = Math.max(floor, tg - W);
     var nl = lb + ex;
     tr.querySelector(".c_tg").textContent = tg.toFixed(1);
@@ -601,7 +742,7 @@ function setTier(a, b){
 tierRecalc();
 </script>
 <h3>Table C &mdash; the two checks that keep this honest</h3>
-<p><strong>C1, HBM self-check:</strong> the floor formula 0.66 + N/44&nbsp;TB/s must reproduce Table A's measured column (c). The fit was made on b &le; 192; b &ge; 512 rows are outside it and shown anyway:</p>
+<p><strong>C1, HBM self-check:</strong> the floor formula 0.67 + N/44.6&nbsp;TB/s must reproduce Table A's measured column (c). The fit was made on b &le; 192; b &ge; 512 rows are outside it and shown anyway:</p>
 <div class="scroll">
 <table>
 <thead><tr>
@@ -612,11 +753,11 @@ tierRecalc();
 </tr></thead>
 <tbody>
 <tr><td>b=16, L=128K</td><td>1.15</td><td>1.11</td><td>+4%</td></tr>
-<tr><td>b=64, L=128K</td><td>2.61</td><td>3.01</td><td>-13%</td></tr>
-<tr><td>b=192, L=128K</td><td>6.52</td><td>6.69</td><td>-2%</td></tr>
-<tr><td>b=256, L=128K</td><td>8.48</td><td>3.01</td><td>+182% (outside fit range)</td></tr>
-<tr><td>b=512, L=128K</td><td>16.29</td><td>16.38</td><td>-1% (outside fit range)</td></tr>
-<tr><td>b=1024, L=128K</td><td>31.93</td><td>23.65</td><td>+35% (outside fit range)</td></tr>
+<tr><td>b=64, L=128K</td><td>2.60</td><td>3.01</td><td>-14%</td></tr>
+<tr><td>b=192, L=128K</td><td>6.45</td><td>6.69</td><td>-4%</td></tr>
+<tr><td>b=256, L=128K</td><td>8.37</td><td>3.01</td><td>+178% (outside fit range)</td></tr>
+<tr><td>b=512, L=128K</td><td>16.08</td><td>16.38</td><td>-2% (outside fit range)</td></tr>
+<tr><td>b=1024, L=128K</td><td>31.49</td><td>23.65</td><td>+33% (outside fit range)</td></tr>
 </tbody>
 </table>
 </div>
@@ -644,7 +785,9 @@ tierRecalc();
 </table>
 </div>
 <p>All eight cells agree to 0.03&ndash;0.28&nbsp;% &mdash; this is the substitution identity that licenses Table B's arithmetic. Note it validates the <em>window-credited</em> bound; the serial bound (not subtracting W) overshoots by exactly W, a 1&ndash;3&nbsp;% error at far-tier magnitudes.</p>
-<h2>Honesty box</h2>
+</section>
+<section class="card" id="honesty">
+<h2><span class="num">15</span>Honesty box</h2>
 <ul>
 <li><strong>D6 is complete on the subset grid</strong>, but its co-runner is a torch gather rather than the TMA kernel, so absolute gather times are not comparable to the microbench, and the (64,128K) PCIe row from the first attempt is superseded (unmatched copy size).</li>
 <li><strong>D7 (consumer-stub fork) done</strong>; its standalone harness runs ~2.5&times; slower in absolute terms than the in-situ kernel, so quote its ratio/difference, not its absolute latencies.</li>
@@ -658,12 +801,30 @@ tierRecalc();
 <li><strong>Per-launch convention:</strong> the split-KV kernel launches twice per decode step; every per-kernel column here (and in the prior rental's data) is per-launch. Discovered during the in-situ PCIe run, verified with torch.profiler, and applied to the headline (93&rarr;86&nbsp;%), the window (W = 2&middot;fusedk_B) and the break-even table (values halved). All deltas, ratios and anchors are unaffected &mdash; both rentals used the identical estimator.</li>
 <li>All three anchor checks passed, so there are no anchor misses to declare.</li>
 </ul>
-<h2>Related</h2>
+</section>
+<section class="card" id="related">
+<h2><span class="num">16</span>Related</h2>
 <ul>
 <li><a href="../07_part8_dsv32_b200/report.html">Part VIII &mdash; one decoder layer vs batch and context on Blackwell</a></li>
 <li><a href="../08_part9_dsv32_capacity_eval/report.html">Part IX &mdash; custom-HBM capacity design evaluation</a></li>
 <li><a href="../../index.html">&larr; back to the report index</a></li>
 </ul>
+</section>
+<div class="footer">
+<p>Yang-gon Kim &middot; data: <code class="k">agent/analysis-b200-gather</code> + <code class="k">analysis-b200-pcie-insitu</code> &middot; model: <code class="k">tier_model.py</code> &middot; <a href="../../index.html">Report Archive</a></p>
+</div>
 </main>
+</div>
+<script>
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ links.forEach(function(a){a.classList.remove('active');});
+        if (map[e.target.id]) map[e.target.id].classList.add('active'); }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.card[id]').forEach(function(s){ obs.observe(s); });
+</script>
 </body>
 </html>
