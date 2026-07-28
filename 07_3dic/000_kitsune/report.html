@@ -106,10 +106,19 @@
       A four-simulator pilot study of L2-cache / on-chip-network contention in GPU
       producer&ndash;consumer pipelines, and a fair comparison of 3D-stacked queue hardware
       against strong planar (2D) alternatives.
-      &nbsp;<span class="badge b-blue">15 experiments</span>
-      <span class="badge b-blue">&asymp;350 simulation runs</span>
+      &nbsp;<span class="badge b-blue">30 experiments (2 batteries)</span>
+      <span class="badge b-blue">&asymp;800 simulation runs</span>
       <span class="badge b-blue">4 platforms</span>
-      <span class="badge b-amber">Verdict: Conditional support (Conclusion&nbsp;B)</span>
+      <span class="badge b-green">v2: rebuilt on measured GPU behavior</span>
+      <span class="badge b-amber">Verdict: Conditional support, strengthened</span>
+    </p>
+    <p class="subtitle">
+      <strong>Version 2.</strong> After the first study (Parts 1&ndash;5 below), every simulator
+      was rebuilt around real-silicon measurements of NVIDIA's L2 and interconnect
+      (MICRO'24 / validated-model literature) and the whole experiment battery was rerun.
+      Section&nbsp;12 describes the rebuild; several v1 findings did <em>not</em> survive it and
+      are explicitly superseded there — that reversal is itself one of the study's main
+      results.
     </p>
     <p class="subtitle">
       Every number on this page is <strong>simulated or calculated</strong> on a scaled model
@@ -134,9 +143,10 @@
         <li><a href="#r-planar">Results 3 — can planar tricks fix it?</a></li>
         <li><a href="#r-3d">Results 4 — the 3D design space</a></li>
         <li><a href="#r-region">Results 5 — the benefit-region map</a></li>
+        <li><a href="#upgrade"><b>Realism upgrade (v2)</b> — rebuilt on measured GPU behavior</a></li>
         <li><a href="#validation">Cross-simulator validation</a></li>
         <li><a href="#negative">Negative results (kept on purpose)</a></li>
-        <li><a href="#conclusion">Final verdict &amp; region table</a></li>
+        <li><a href="#conclusion">Final verdict &amp; region table (v2)</a></li>
         <li><a href="#limits">Limitations &amp; reproducibility</a></li>
       </ol>
     </nav>
@@ -154,27 +164,30 @@
       queue hardware the right fix &mdash; or would cheaper 2D ("planar") tricks do?</em>
     </p>
     <div class="callout good">
-      <strong>What we found, in five lines.</strong>
-      (1)&nbsp;At Kitsune-like operating points the queue system costs a moderate
-      10&ndash;33% versus an ideal free queue, and it barely disturbs normal memory traffic
-      &mdash; consistent with Kitsune's own published data.
-      (2)&nbsp;The cost becomes severe (up to 271%) only in specific regions: queue traffic
-      concentrated on a few L2 slices, queue storage overflowing the L2, or very
-      fine-grained synchronization-heavy queues.
-      (3)&nbsp;Quality-of-service tricks (virtual channels, priorities) recover
-      essentially <em>zero</em> of the loss.
-      (4)&nbsp;Strong planar hardware (dedicated queue SRAM + a dedicated planar network)
-      recovers 37&ndash;75% of the loss; a per-SM 3D-stacked queue tier recovers
-      55&ndash;87% and cuts communication energy &asymp;27%, with its edge coming from
-      shorter physical paths, not bandwidth.
-      (5)&nbsp;So the 3D fabric earns only a <em>conditional</em> "yes": it is justified for
-      the hotspot / overflow / fine-grained regions, not as a general-purpose addition.
+      <strong>What we found — final (v2, realistic model), in five lines.</strong>
+      (1)&nbsp;On a fabric matching measured GPU behavior, the queue tax is <b>larger,
+      flatter, and latency-driven</b>: &asymp;37% versus an ideal queue <em>everywhere</em>
+      (64% when queue storage overflows the L2), because every queue operation pays a real
+      208&ndash;357-cycle L2 round trip that bandwidth headroom cannot remove.
+      (2)&nbsp;The v1 "hotspot collapse" (271%) <b>did not survive realism</b> — real GPU
+      fabrics provide uniform bandwidth, and concentration costs only 6&ndash;10%; its place
+      is taken by a mechanism the v1 model couldn't see: <b>crossing the die partition</b>
+      (31% of the queue-heavy gap).
+      (3)&nbsp;QoS tricks and cache policies still recover &asymp;0.
+      (4)&nbsp;The strongest planar remedy now recovers only &asymp;42% (its queue SRAM still
+      sits across the full-latency fabric), while a per-SM 3D tier recovers 92&ndash;98% —
+      a uniform <b>1.16&ndash;1.18&times;</b> over the best planar design with &asymp;16% less
+      communication energy.
+      (5)&nbsp;Verdict: <b>conditional support, strengthened</b> — broad-based rather than
+      corner-case, but bounded by one unmodeled planar competitor (SM-side/DSM-class queue
+      storage) and by the pilot's synthetic, uncalibrated nature.
     </div>
     <p>
-      Two honest negative results are preserved: a naive 3-stage Kitsune pipeline was
-      <em>slower than the plain GPU baseline</em> (0.82&times;), and a "global" stacked queue
-      tier (one shared vertical access point) was <em>worse than doing nothing</em> under
-      load. Both matter for anyone building on this idea.
+      The most instructive result is methodological: rebuilding the simulators to match
+      real-GPU measurements <em>reversed several v1 conclusions</em> (§12&ndash;§14) —
+      a live demonstration of the published warning that under-provisioned simulated NoCs
+      systematically overstate network effects. All superseded findings are kept and
+      labeled, not deleted.
     </p>
   </section>
 
@@ -232,6 +245,51 @@
       <dd>The wire bundle connecting a point on the GPU die to the stacked die. We call the
         GPU-side attachment point a <em>portal</em>. Designs differ in how many portals exist
         and where (one per SM, per SM-cluster, per L2 slice, or one global).</dd>
+    </dl>
+    <h3>Terms added by the v2 realism upgrade (§12)</h3>
+    <dl class="gloss">
+      <dt>Sector</dt>
+      <dd>A 32-byte quarter of a 128-byte cache line. Real NVIDIA L1/L2 track validity and
+        dirtiness per sector; the memory coalescer issues 32-B sector requests, so filling a
+        line takes four sector transactions. Simulators that ignore this get request counts
+        4&times; wrong.</dd>
+      <dt>TPC / GPC</dt>
+      <dd>Texture Processing Cluster = 2 SMs sharing one network port through a multiplexer;
+        Graphics Processing Cluster = a group of TPCs. The GPU interconnect is organized
+        around these levels, not as a flat grid.</dd>
+      <dt>Hierarchical crossbar</dt>
+      <dd>The real topology of the SM&harr;L2 interconnect (per MICRO'24 measurements): traffic
+        concentrates up through SM&rarr;TPC&rarr;GPC ports into a central switch and fans out
+        to memory partitions — not a multi-hop 2D mesh.</dd>
+      <dt>Input speedup</dt>
+      <dd>Excess injection bandwidth provided at a sharing point. TPC level has speedup 2
+        (both SMs get full read bandwidth); GPC level is deliberately under-provisioned
+        (~50&ndash;85% of full) — a measured property our v2 fabric reproduces.</dd>
+      <dt>Die partition / near &amp; far</dt>
+      <dd>Large GPUs (A100/H100/B200) split the die into halves (quarters on B200); an SM
+        accessing an L2 slice on the other half pays a measured ~149-cycle penalty
+        ("far hit" ~357 vs "near hit" ~208 cycles on A100).</dd>
+      <dt>Partition camping</dt>
+      <dd>Pathological address patterns that concentrate traffic on few memory
+        channels/slices; the reason GPUs hash addresses across slices.</dd>
+      <dt>Network wall</dt>
+      <dd>A simulator mis-configuration where the modeled NoC&harr;memory interface is
+        narrower than memory bandwidth, capping DRAM utilisation at ~20% where real GPUs
+        sustain &gt;85% — and silently inflating the apparent value of any NoC optimization.
+        Our v2 model asserts against it at construction.</dd>
+      <dt>Lazy fetch-on-read</dt>
+      <dd>NVIDIA's measured L2 write-miss policy: write the bytes into the sector with a
+        write mask and do <em>not</em> fetch from DRAM; only a later read of a partially
+        written sector triggers the fetch-and-merge. Eliminates the huge phantom DRAM-read
+        counts naive write-allocate models produce.</dd>
+      <dt>P-chase (pointer chase)</dt>
+      <dd>The microbenchmark technique behind all the latency numbers used here: a chain of
+        dependent loads timed one by one, so each access's true latency is exposed.</dd>
+      <dt>Posted enqueue</dt>
+      <dd>Producer-side software pipelining: the producer claims a slot, fires the payload
+        writes and release, and continues immediately (bounded window of 2 in flight).
+        Mandatory in v2 — with realistic ~300-cycle round trips, an unpipelined enqueue
+        would dominate item time in a way real double-buffered producers avoid.</dd>
     </dl>
     <h3>The execution model</h3>
     <dl class="gloss">
@@ -673,6 +731,12 @@
 
   <section aria-labelledby="r1-h" id="r-problem">
     <h2 id="r1-h">7&nbsp;&middot;&nbsp;Results 1 — how big is the problem?</h2>
+    <div class="callout warn">
+      <strong>Version note.</strong> Sections 7&ndash;11 report the <em>v1 (mesh-model)</em>
+      battery, kept in full for methodology transparency. The rebuilt, more realistic model
+      (§12) confirms some of these findings, revises others, and <b>overturns two</b> —
+      each case is labeled where it occurs, and §12/§14 carry the final numbers.
+    </div>
     <h3>7.1&nbsp;&nbsp;Kitsune wins; its queue costs a moderate tax</h3>
     <p>
       Sweeping payload size (which sets the <em>queue intensity</em> B<sub>Q</sub>/B<sub>D</sub>,
@@ -923,8 +987,153 @@
     </div>
   </section>
 
+  <section aria-labelledby="up-h" id="upgrade">
+    <h2 id="up-h">12&nbsp;&middot;&nbsp;Realism upgrade (v2) — rebuilding on measured GPU behavior</h2>
+    <p>
+      A source-tagged reference compiled from real-silicon measurement papers —
+      <em>Uncovering Real GPU NoC Characteristics</em> (MICRO&nbsp;2024), the validated GPU
+      memory-system model of Khairy&nbsp;et&nbsp;al. (the basis of Accel-Sim), the Hopper/A100
+      partitioned-L2 microbenchmark study (Luo&nbsp;et&nbsp;al.), and classic dissection papers —
+      showed that the v1 simulators committed several of the field's <em>known modeling
+      pitfalls</em>. Key claims were spot-verified against the public papers/repos before
+      rebuilding. The full gap analysis and parameter provenance live in the research repo's
+      <code>UPGRADE_PLAN.md</code>; the essentials:
+    </p>
+    <table>
+      <tr><th style="text-align:left">v1 model</th><th style="text-align:left">Measured reality (source)</th><th style="text-align:left">Why it matters</th></tr>
+      <tr><td style="text-align:left">4&times;4 2D mesh, hop-by-hop routing</td><td style="text-align:left">Hierarchical crossbar SM&rarr;TPC&rarr;GPC&rarr;partition&rarr;MP&rarr;slice with per-level input speedup; <b>uniform bandwidth</b>, non-uniform latency (JIN24)</td><td style="text-align:left">meshes create hotspot links real fabrics don't have</td></tr>
+      <tr><td style="text-align:left">uniform ~40&ndash;60-cycle latency</td><td style="text-align:left">additive placement latency: 175&ndash;248-cycle round trips + ~149-cycle far-partition penalty (JIN24/LUO25/ALP26)</td><td style="text-align:left">queue ops are 5&ndash;8&times; more expensive than v1 assumed</td></tr>
+      <tr><td style="text-align:left">128-B line-granular requests</td><td style="text-align:left">32-B sectors; line fill = 4 sector transactions (KHA18)</td><td style="text-align:left">request counts and bandwidth shape 4&times; off</td></tr>
+      <tr><td style="text-align:left">naive write-allocate</td><td style="text-align:left"><code>lazy fetch-on-read</code> write policy (KHA18)</td><td style="text-align:left">removes phantom DRAM reads on writes</td></tr>
+      <tr><td style="text-align:left">no die partitions</td><td style="text-align:left">A100-style 2 partitions with near/far classes (LUO25)</td><td style="text-align:left">an entire cost mechanism was missing</td></tr>
+      <tr><td style="text-align:left">no acceptance gates</td><td style="text-align:left">"network wall" asserts + 7 measured-anchor tests (JIN24 Impl.#4)</td><td style="text-align:left">a model that can't stream &gt;85% DRAM overstates every NoC effect</td></tr>
+    </table>
+
+    <h3>12.1&nbsp;&nbsp;The v2 fabric</h3>
+    <div class="diagram" role="img" aria-label="Hierarchical crossbar fabric diagram">
+      <svg viewBox="0 0 980 360" width="980" height="360" font-family="Arial" font-size="12">
+        <text x="490" y="20" text-anchor="middle" font-weight="bold" font-size="14">v2: hierarchical crossbar (a100like scaled: 16 SMs, 4 GPCs, 2 die partitions, 16 slices)</text>
+        <g text-anchor="middle">
+          <!-- SMs -->
+          <g>
+            <rect x="20" y="40" width="440" height="34" rx="6" fill="#eef5ff" stroke="#1f6feb"/>
+            <text x="240" y="61">SM0&hellip;SM7 (left partition) — 24 B/cyc injection ports each</text>
+            <rect x="520" y="40" width="440" height="34" rx="6" fill="#eef5ff" stroke="#1f6feb"/>
+            <text x="740" y="61">SM8&hellip;SM15 (right partition)</text>
+          </g>
+          <!-- TPC -->
+          <rect x="60" y="98" width="360" height="30" rx="6" fill="#fff" stroke="#172033"/>
+          <text x="240" y="118">TPC muxes &times;4 — 2 SMs/port, read speedup 2</text>
+          <rect x="560" y="98" width="360" height="30" rx="6" fill="#fff" stroke="#172033"/>
+          <text x="740" y="118">TPC muxes &times;4</text>
+          <!-- GPC -->
+          <rect x="100" y="152" width="280" height="30" rx="6" fill="#fff" stroke="#172033"/>
+          <text x="240" y="172">GPC ports &times;2 — speedup 0.7 (measured deficit)</text>
+          <rect x="600" y="152" width="280" height="30" rx="6" fill="#fff" stroke="#172033"/>
+          <text x="740" y="172">GPC ports &times;2</text>
+          <!-- trunk -->
+          <rect x="330" y="206" width="320" height="32" rx="6" fill="#fdeef0" stroke="#cf222e"/>
+          <text x="490" y="227">inter-partition trunk — crossing costs +149 cycles</text>
+          <!-- MP + slices -->
+          <rect x="20" y="262" width="440" height="34" rx="6" fill="#fff8e5" stroke="#9a6700"/>
+          <text x="240" y="283">MP0,MP1: 8 L2 slices (96 B/cyc each) + 2 MCs</text>
+          <rect x="520" y="262" width="440" height="34" rx="6" fill="#fff8e5" stroke="#9a6700"/>
+          <text x="740" y="283">MP2,MP3: 8 L2 slices + 2 MCs</text>
+          <rect x="220" y="318" width="540" height="30" rx="6" fill="#fff" stroke="#172033"/>
+          <text x="490" y="338">HBM: 4 channels &times; 128 B/cyc = 512 B/cyc &middot; L2 fabric = 3.0&times; DRAM (measured ratio 2.4&ndash;3.5&times;)</text>
+        </g>
+        <g stroke="#172033" stroke-width="2">
+          <path d="M240,74 L240,96" marker-end="url(#arr)"/><path d="M740,74 L740,96" marker-end="url(#arr)"/>
+          <path d="M240,128 L240,150" marker-end="url(#arr)"/><path d="M740,128 L740,150" marker-end="url(#arr)"/>
+          <path d="M240,182 L240,260" marker-end="url(#arr)"/><path d="M740,182 L740,260" marker-end="url(#arr)"/>
+        </g>
+        <path d="M380,170 C450,190 450,205 460,210" stroke="#cf222e" stroke-width="2" fill="none" marker-end="url(#arrR)"/>
+        <path d="M600,170 C530,190 530,205 520,210" stroke="#cf222e" stroke-width="2" fill="none" marker-end="url(#arrR)"/>
+        <path d="M420,238 L280,262" stroke="#cf222e" stroke-width="2" fill="none" marker-end="url(#arrR)"/>
+        <path d="M560,238 L700,262" stroke="#cf222e" stroke-width="2" fill="none" marker-end="url(#arrR)"/>
+        <path d="M330,296 L400,318" stroke="#9a6700" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <path d="M650,296 L580,318" stroke="#9a6700" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+      </svg>
+    </div>
+    <p class="small">
+      Every level is a bandwidth server with a finite queue; request and reply directions are
+      separate (the data-carrying reply path is sized 2.5&times; — our own first streaming runs
+      reproduced the classic "reply network is the bottleneck" failure until it was). Wire
+      latency uses the additive placement model <code>RT = base + a[SM] + b[GPC,slice] + 149&times;cross</code>,
+      calibrated to the measured anchors (mean 212 / min 175 / max 248; far&minus;near &asymp; 149).
+      L2 becomes sectored with per-sector valid/dirty state and lazy fetch-on-read. Seven
+      validation gates (including a unit test reproducing the published write-then-read
+      sector experiment, a &gt;85% streaming-DRAM-utilisation regression, and the latency
+      correlation-structure signature) must pass before any experiment runs.
+    </p>
+
+    <h3>12.2&nbsp;&nbsp;What the realistic battery shows (exp101&ndash;115, ~420 runs)</h3>
+    <table>
+      <tr><th>Payload (B)</th><th>B2 thr</th><th>B3 thr</th><th>P<sub>C</sub> (v2)</th><th>P<sub>C</sub> (v1)</th></tr>
+      <tr><td>64</td><td>0.0116</td><td>0.0159</td><td class="num-bad">37.0%</td><td>15.1%</td></tr>
+      <tr><td>512</td><td>0.0115</td><td>0.0159</td><td class="num-bad">38.3%</td><td>16.7%</td></tr>
+      <tr><td>1024</td><td>0.0114</td><td>0.0159</td><td class="num-bad">39.3%</td><td>18.1%</td></tr>
+      <tr><td>4096</td><td>0.0105</td><td>0.0159</td><td class="num-bad">51.0%</td><td>25.6%</td></tr>
+    </table>
+    <p class="small">exp103 vs exp003 (throughputs in items/cycle). The gap doubled because queue
+      operations now pay measured latencies; it is nearly flat versus concurrency (8&ndash;96
+      CTAs at P<sub>C</sub> &asymp; 38%, exp105) — a latency floor, not congestion.</p>
+    <div class="fig-row">
+      <figure>
+        <img src="assets_r/02_throughput_vs_intensity.png" alt="v2 throughput vs intensity">
+        <figcaption><b>v2 throughput vs queue intensity.</b> B2 is nearly flat — the realistic
+          fabric has bandwidth headroom (uniform provisioning); the cost is per-operation
+          latency. Bulk (B0) collapses hard: two serialized memory phases at real latencies.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets_r/11b_placement_scenarios.png" alt="v2 placement scenarios">
+        <figcaption><b>The overturned finding.</b> Concentrating queues on 2 slices or using a
+          camping-prone hash costs only 6&ndash;10% on the provisioned fabric (v1: collapse).
+          The worst placement is now <em>cross-partition</em> (queues homed on the far die
+          half). Dashed line = ideal-queue throughput.</figcaption>
+      </figure>
+    </div>
+    <h4>Cause attribution (exp109, queue-heavy, gap recovered by idealizing one thing)</h4>
+    <table>
+      <tr><th style="text-align:left">Idealized mechanism</th><th>v2 recovery</th><th>v1 recovery</th></tr>
+      <tr><td style="text-align:left">Payload transport free (A5)</td><td class="num-good">47%</td><td>49%</td></tr>
+      <tr><td style="text-align:left"><b>Partition penalty removed (A12 — new)</b></td><td class="num-good">31%</td><td>n/a in v1</td></tr>
+      <tr><td style="text-align:left">Metadata free (A4)</td><td>29%</td><td>40%</td></tr>
+      <tr><td style="text-align:left">Infinite fabric bandwidth (A2)</td><td>8%</td><td>26%</td></tr>
+      <tr><td style="text-align:left">Infinite L2 bandwidth / capacity / bypass / QoS / ideal hash</td><td>&le;1%</td><td>&le;12%</td></tr>
+    </table>
+    <p class="small">Bandwidth mechanisms collapsed; latency mechanisms dominate. The v1
+      atomic-unit saturation cliff also vanished (max atomic utilisation 0.22, exp107).</p>
+    <h4>Remedies (exp105/108/113/115)</h4>
+    <table>
+      <tr><th style="text-align:left">Design</th><th>v2 gap recovery</th><th>v2 vs best planar</th><th style="text-align:left">Note</th></tr>
+      <tr><td style="text-align:left">B5/A7/A8 — VCs / priority</td><td>&asymp;0&ndash;8%</td><td>—</td><td style="text-align:left">unchanged: latency can't be scheduled away</td></tr>
+      <tr><td style="text-align:left">B6/B7 — dedicated planar SRAM (+net)</td><td>~42% (0.35&ndash;0.53)</td><td>1&times; (reference)</td><td style="text-align:left">engines still sit across the full-latency crossbar</td></tr>
+      <tr><td style="text-align:left"><b>B8 3D-D/E — per-SM/TPC stacked tier</b></td><td class="num-good">92&ndash;98%</td><td class="num-good">1.16&ndash;1.18&times; everywhere</td><td style="text-align:left">&minus;16% comm. energy; robust to vertical bw 8&ndash;128 B/cyc (6% span) and latency 2&ndash;32 cyc (4%)</td></tr>
+      <tr><td style="text-align:left">3D-B — payload-only stacked</td><td class="num-good">92&ndash;98% (&le;1 KiB)</td><td>&asymp;3D-D</td><td style="text-align:left"><b>new:</b> payload latency is the active ingredient; posted L2 metadata is cheap</td></tr>
+      <tr><td style="text-align:left">3D-C — metadata-only stacked</td><td>33&ndash;44%</td><td>&asymp;B7</td><td style="text-align:left">v1's "cheap big win" demoted</td></tr>
+      <tr><td style="text-align:left">3D-F — one global portal</td><td>31&ndash;73%</td><td>varies</td><td style="text-align:left">no longer catastrophic (v1: worse than nothing), but degrades at 4 KiB</td></tr>
+    </table>
+    <figure>
+      <img src="assets_r/15_benefit_region_s3d.png" alt="v2 benefit region S3D">
+      <figcaption><b>v2 benefit region.</b> S<sub>3D</sub> = 1.36&ndash;1.49&times; across the entire
+        payload&times;depth plane (v1: 1.10&ndash;1.16&times; outside corners) — and the margin over
+        the strongest planar design is a uniform 1.16&ndash;1.18&times; (see
+        <code>assets_r/15_benefit_region_3d_vs_planar.png</code>). The 3D dividend became
+        broad-based because it is a latency dividend.</figcaption>
+    </figure>
+    <div class="callout">
+      <strong>The one competitor v2 does not model</strong> — and the reason the verdict stays
+      "conditional": queue SRAM placed on the SM side of the fabric (Hopper's distributed
+      shared memory measures 181&ndash;213-cycle SM-to-SM latency) would land between B7
+      (~300&ndash;460 cyc to slice-side engines) and B8 (~10&ndash;35 cyc vertical). Modeling a
+      DSM-class planar baseline is the top-priority follow-up; until then the 1.16&ndash;1.18&times;
+      margin is an upper bound on the 3D-specific claim.
+    </div>
+  </section>
+
   <section aria-labelledby="val-h" id="validation">
-    <h2 id="val-h">12&nbsp;&middot;&nbsp;Cross-simulator validation</h2>
+    <h2 id="val-h">13&nbsp;&middot;&nbsp;Cross-simulator validation</h2>
     <p>
       A single simulator proving its author's hypothesis is worth little. The plan requires
       <em>trend agreement</em> (same direction and shape, not identical numbers) across
@@ -959,7 +1168,21 @@
     </table>
     <p class="small">Open-loop, network-only latencies; compare slopes within a column, not absolutes across
       topologies (route-table tie-breaking differs slightly between the two anynet files).</p>
-    <h3>12.4&nbsp;&nbsp;Disagreements, explained (not hidden)</h3>
+    <h3>13.3½&nbsp;&nbsp;v2 cross-checks (realistic battery)</h3>
+    <p>
+      After the rebuild, the cross-checks were rerun. SST (independent codebase, now on a
+      merlin crossbar) brackets the custom simulator's P<sub>C</sub> payload trend: 24% &rarr;
+      67% vs 37% &rarr; 51% — below at small payloads (its coherent L1s keep hot queue lines
+      close), above at large ones (coherence ping-pong). BookSim, rebuilt as a
+      hierarchical-crossbar tree with deliberately tight 1-flit/cycle channels, still shows
+      concentration collapse — which, next to the custom simulator's provisioned fabric
+      absorbing the same traffic, <em>quantifies the v1 artifact itself</em>: legacy-style
+      network models collapse where measured-provisioning models shrug. Per-TPC vertical
+      portals keep BookSim's demand class flat (15.0 &rarr; 15.7 cycles) across a 16&times;
+      queue-rate sweep; a global portal saturates early, confirming portal-count sensitivity
+      at network level.
+    </p>
+    <h3>13.4&nbsp;&nbsp;Disagreements, explained (not hidden)</h3>
     <table>
       <tr><th style="text-align:left">Disagreement</th><th style="text-align:left">Explanation</th></tr>
       <tr><td style="text-align:left">SST's P<sub>C</sub> &asymp; 2&times; the custom sim's at matched configs</td>
@@ -976,7 +1199,7 @@
   </section>
 
   <section aria-labelledby="neg-h" id="negative">
-    <h2 id="neg-h">13&nbsp;&middot;&nbsp;Negative results — kept on purpose</h2>
+    <h2 id="neg-h">14&nbsp;&middot;&nbsp;Negative results — kept on purpose</h2>
     <p class="small">The project charter treats negative results as first-class outcomes. These four
       each veto a tempting claim.</p>
     <div class="callout neg">
@@ -999,24 +1222,71 @@
     </div>
     <div class="callout neg">
       <strong>4. Logical QoS is a dead end for this problem.</strong> Virtual channels and priority
-      arbitration — the cheap, obvious fixes — recovered &asymp;0% everywhere, because the
-      contended resource is physical (slice bandwidth, link capacity), not scheduling order.
+      arbitration — the cheap, obvious fixes — recovered &asymp;0% everywhere, in <em>both</em>
+      model generations: in v1 because the contended resource was physical bandwidth, in v2
+      because the cost is wire latency. Neither can be scheduled away.
+    </div>
+    <h3>Superseded by the v2 realism upgrade (kept and labeled — the model was wrong, not the data)</h3>
+    <div class="callout warn">
+      <strong>5. The v1 hotspot collapse was a simulator artifact.</strong> P<sub>C</sub> = 271%
+      under 2-slice queue concentration existed only on the under-provisioned mesh; the
+      measured-GPU fabric (uniform bandwidth + balancing hash) absorbs the same traffic for
+      6&ndash;10%. This is the published "network wall" pitfall, demonstrated on our own study.
+    </div>
+    <div class="callout warn">
+      <strong>6. The v1 atomic-saturation cliff also fell.</strong> With realistic latencies and
+      posted enqueues, the metadata atomic unit peaks at 22% utilisation; metadata cost is
+      round-trip latency, not serialization.
+    </div>
+    <div class="callout warn">
+      <strong>7. Two v1 3D findings reversed:</strong> the global stacked tier (3D-F) is no longer
+      "worse than nothing" (31&ndash;73% recovery, degrading at large payloads), and
+      metadata-only stacking (3D-C) lost its "cheap big win" status to payload-only stacking
+      (3D-B &asymp; full 3D-D) — payload round-trip latency, not synchronization, dominates
+      in the realistic model.
+    </div>
+    <div class="callout warn">
+      <strong>8. W9's "Kitsune loses" result softened.</strong> The naive 3-stage pipeline goes
+      from 0.82&times; (v1) to 1.18&times; (v2, execution-time basis) — bulk-synchronous pays two
+      full serialized memory phases at realistic latencies. Stage partitioning quality still
+      gates the margin.
     </div>
   </section>
 
   <section aria-labelledby="conc-h" id="conclusion">
-    <h2 id="conc-h">14&nbsp;&middot;&nbsp;Final verdict and region table</h2>
+    <h2 id="conc-h">15&nbsp;&middot;&nbsp;Final verdict and region table (v2)</h2>
     <p>
       The plan defines five possible endings: <b>A</b> strong support, <b>B</b> conditional
       support, <b>C</b> planar is sufficient, <b>D</b> wrong bottleneck, <b>E</b> problem too
-      small. The evidence lands on
-      <span class="badge b-amber">Conclusion B — conditional support</span>:
-      the strong claim fails because planar remedies are never negligible and the median-case
-      3D increment is small (1&ndash;6% throughput); but C/D/E all fail too, because
-      identifiable regions exist where only physical separation works, stacked capacity is
-      unmatchable by planar designs, path-length gains are real, and energy favors 3D by
-      &asymp;20&ndash;27%.
+      small. On the realistic model the evidence lands on
+      <span class="badge b-amber">Conclusion B — conditional support, strengthened</span>:
+      versus v1, the favorable region widened from "hotspot/overflow corners" to essentially
+      all communication-bound pipelines on a partitioned die; the planar-remedy ceiling
+      dropped (&asymp;42% vs 75%); the 3D margin grew (a uniform 1.16&ndash;1.18&times; over the
+      strongest planar design, with &minus;16% communication energy); and a new first-order
+      mechanism — die-partition crossing — strengthens the physical-isolation argument.
+      Conclusion A (unconditional) is still withheld for three reasons: the unmodeled
+      DSM-class SM-side planar competitor (§12), missing hardware calibration, and untested
+      thermal/area feasibility of stacking.
     </p>
+    <h3>v2 region table (realistic battery; Kitsune-vs-bulk on execution-time basis)</h3>
+    <table>
+      <tr><th style="text-align:left">Workload region</th><th>Kitsune vs bulk</th><th>P<sub>C</sub></th><th style="text-align:left">Main bottleneck</th><th style="text-align:left">Best planar fix (recovery)</th><th style="text-align:left">3D (recovery / vs B7)</th><th style="text-align:left">3D justified?</th></tr>
+      <tr><td style="text-align:left">Balanced pipeline (W1)</td><td>7.1&times;</td><td>38%</td><td style="text-align:left">queue-path latency</td><td style="text-align:left">B7 (0.42)</td><td style="text-align:left">0.96 / 1.18&times;</td><td style="text-align:left" class="num-good">Yes</td></tr>
+      <tr><td style="text-align:left">Queue-heavy (W4)</td><td>9.3&times;</td><td>73%</td><td style="text-align:left">payload latency + partition crossing</td><td style="text-align:left">B7 (0.36)</td><td style="text-align:left">0.81 / 1.17&times;</td><td style="text-align:left" class="num-good">Yes — strongest</td></tr>
+      <tr><td style="text-align:left">Demand-heavy (W5)</td><td>5.0&times;</td><td>23%</td><td style="text-align:left">demand latency dominates</td><td style="text-align:left">B7 (0.47)</td><td style="text-align:left">0.99 / 1.16&times;</td><td style="text-align:left" class="num-warn">Marginal (small gap)</td></tr>
+      <tr><td style="text-align:left">Metadata-heavy (W6)</td><td>7.2&times;</td><td>37%</td><td style="text-align:left">round-trip latency (not atomics)</td><td style="text-align:left">B7 (0.43)</td><td style="text-align:left">0.99 / 1.17&times;</td><td style="text-align:left" class="num-good">Yes</td></tr>
+      <tr><td style="text-align:left">Pollution / overflow (W7)</td><td>7.2&times;</td><td>62%</td><td style="text-align:left">pinned-line pollution + spill</td><td style="text-align:left">bypass (pollution only); B7 0.53</td><td style="text-align:left">0.94 / 1.17&times;</td><td style="text-align:left" class="num-good">Yes (stacked capacity unique)</td></tr>
+      <tr><td style="text-align:left">Hotspot / camping (W8)</td><td>7.0&times;</td><td>41%</td><td style="text-align:left"><em>not a hotspot problem anymore</em></td><td style="text-align:left">B7 (0.41)</td><td style="text-align:left">0.96 / 1.17&times;</td><td style="text-align:left" class="num-good">Yes (same as baseline)</td></tr>
+      <tr><td style="text-align:left"><b>Cross-partition placement (W11 — new)</b></td><td>6.6&times;</td><td>49%</td><td style="text-align:left">partition-crossing penalty</td><td style="text-align:left">affinity-aware placement first; B7 (0.41)</td><td style="text-align:left">0.95 / 1.17&times;</td><td style="text-align:left" class="num-good">Yes — new mechanism</td></tr>
+      <tr><td style="text-align:left">Consumer-starved (W3)</td><td>7.7&times;</td><td>17%</td><td style="text-align:left">producer rate</td><td style="text-align:left">any engine (B6/B7 &asymp; 0.98)</td><td style="text-align:left">1.0 / &asymp;1.0&times;</td><td style="text-align:left" class="num-bad">No — planar suffices</td></tr>
+      <tr><td style="text-align:left">Multi-stage (W9)</td><td>1.18&times;</td><td>39%</td><td style="text-align:left">chained latency + stage split</td><td style="text-align:left">B7 (0.42)</td><td style="text-align:left">0.95 / 1.16&times;</td><td style="text-align:left" class="num-warn">Qualified yes (thin margin over bulk)</td></tr>
+    </table>
+    <p class="small">Kitsune-vs-bulk magnitudes are synthetic-pipeline numbers on a realistic
+      memory system (bulk pays two serialized memory phases); published Kitsune reports
+      1.3&ndash;2.4&times; on real applications. The v1 (mesh-model) region table is preserved
+      below for comparison.</p>
+    <h3>v1 region table (mesh model — superseded where §12/§14 say so)</h3>
     <table>
       <tr><th style="text-align:left">Workload region</th><th>Kitsune vs bulk</th><th>P<sub>C</sub></th><th style="text-align:left">Main bottleneck</th><th style="text-align:left">Best planar fix (recovery)</th><th style="text-align:left">3D gain</th><th style="text-align:left">3D justified?</th></tr>
       <tr><td style="text-align:left">Queue-light</td><td>1.34&ndash;1.41&times;</td><td>10&ndash;15%</td><td style="text-align:left">enqueue latency + metadata</td><td style="text-align:left">B7 (~0.42)</td><td style="text-align:left">0.74 rec / +1&ndash;6%</td><td style="text-align:left" class="num-bad">No</td></tr>
@@ -1026,29 +1296,34 @@
       <tr><td style="text-align:left">NoC-hotspot (concentrated homes, big payload)</td><td>1.42&times;</td><td>155&ndash;271%</td><td style="text-align:left">slice/link concentration; VCs useless</td><td style="text-align:left">B6/B7 0.72&ndash;0.75</td><td style="text-align:left">0.84 rec / +9%</td><td style="text-align:left" class="num-good">Yes — conditional (but re-hash queue homes first)</td></tr>
       <tr><td style="text-align:left">Multi-stage, naively partitioned</td><td class="num-bad">0.82&times;</td><td>27%</td><td style="text-align:left">stage imbalance dominates</td><td style="text-align:left">fix the partitioning</td><td style="text-align:left">irrelevant</td><td style="text-align:left" class="num-bad">No</td></tr>
     </table>
-    <h3>Design guidance, if pursued</h3>
+    <h3>Design guidance, if pursued (v2)</h3>
     <p>
-      Build <b>3D-D</b>: one vertical link per SM (or per 2-SM cluster at most), stacked
-      payload + metadata banks, hardware enqueue/dequeue with credit/ready <em>events</em>
-      (no polling), &ge;32&nbsp;B/cycle per link (hybrid-bonding class density) — latency is
-      forgiving, bandwidth is not. Do not build centralized tiers or slice-side portals.
-      Cheapest high-value subsets: a queue-<em>metadata</em> engine for fine-grained
-      pipelines, and a non-cacheable bypass policy for pollution.
+      Build <b>3D-D or 3D-E</b>: one vertical link per SM or per TPC, stacked <em>payload</em>
+      banks first (payload-only 3D-B captures nearly the full benefit at &le;1&nbsp;KiB
+      payloads), hardware enqueue/dequeue with credit/ready <em>events</em>, posted-enqueue
+      support in software. Requirements are milder than v1 suggested: even 8&nbsp;B/cycle
+      vertical links lose only ~6%, and 32-cycle vertical latency ~4%. Slice-portal designs
+      (3D-A) remain pointless (&asymp;B7). A global tier (3D-F) is viable at small payloads
+      but degrades sharply at 4&nbsp;KiB. Keep the non-cacheable bypass policy for the
+      pollution axis regardless. For pipelines whose stages can be co-scheduled on one die
+      partition, do <em>placement affinity first</em> — it removes the 31% partition term for
+      free.
     </p>
-    <h3>Recommended next steps (in value order)</h3>
+    <h3>Recommended next steps (v2, in value order)</h3>
     <ol>
-      <li>Hardware microbenchmarks on a real GPU (persistent ring-buffer + victim kernel,
-        footprint sweeps) to calibrate the two regions that matter.</li>
-      <li>An Accel-Sim (cycle-level GPU simulator) case study of pollution/hotspot-like
-        pipelines for end-to-end confirmation with real warps and occupancy.</li>
-      <li>Thermal and area feasibility of SRAM stacked over a hot GPU die — untested here and
-        first-order for any 3D proposal.</li>
-      <li>Wormhole-accurate NoC modeling to tighten the B7-vs-B8 margin.</li>
+      <li><b>Model a DSM-class SM-side planar queue baseline</b> — the one competitor that
+        could still close the 1.16&ndash;1.18&times; gap (Hopper SM-to-SM measures 181&ndash;213
+        cycles vs &asymp;300&ndash;460 for slice-side engines and &asymp;10&ndash;35 vertical).</li>
+      <li>Hardware microbenchmarks on a real GPU (queue round trip, victim curves, footprint
+        sweeps) to calibrate the latency floor that now carries the whole conclusion.</li>
+      <li>An Accel-Sim case study of W4/W7/W11-like pipelines with real warps/occupancy.</li>
+      <li>Thermal and area feasibility of SRAM stacked over a hot GPU die.</li>
+      <li>Full-scale (108-SM) sweep to check scaled-model distortions.</li>
     </ol>
   </section>
 
   <section aria-labelledby="lim-h" id="limits">
-    <h2 id="lim-h">15&nbsp;&middot;&nbsp;Limitations &amp; reproducibility</h2>
+    <h2 id="lim-h">16&nbsp;&middot;&nbsp;Limitations &amp; reproducibility</h2>
     <h3>Limitations (the reasons every number is a trend, not a prediction)</h3>
     <ol>
       <li><b>No hardware calibration.</b> No GPU on the experiment machine; NVIDIA's NoC
@@ -1066,14 +1341,21 @@
       <li><b>Energy = event counts &times; nominal pJ</b>; no layout, no thermal model.</li>
       <li><b>Open-loop BookSim</b> by construction; its stacked-source artifact biases
         <em>against</em> 3D (conservative).</li>
+      <li><b>v2-specific:</b> the DSM-class SM-side planar competitor is unmodeled (bounds the
+        3D margin, §12); the posted-enqueue window (2) is a software-pipelining assumption;
+        SST could not adopt 32-B sectored lines (memHierarchy crash — documented) and stays a
+        128-B-line bracket; v2 anchors are source-derived but still uncalibrated on hardware.</li>
     </ol>
     <h3>Reproducibility</h3>
     <p>
       Every experiment directory stores its <code>config.yaml</code>, random seed, git commit
-      hash, raw outputs, parsed CSVs, and regenerable plots; the custom simulator ships a
-      16-test validation suite (conservation, Little's law, determinism, backpressure
-      direction, ablation direction). Tooling: Python 3.10.12, SST 15.0.0 built from source,
-      BookSim2 master + a two-pattern local patch, g++ 11.4. The research repository
+      hash, raw outputs, parsed CSVs, and regenerable plots. The custom simulator ships a
+      23-test validation suite: 16 invariants (conservation, Little's law, determinism,
+      backpressure direction, ablation direction) plus 7 v2 measured-anchor gates (sector
+      write/read semantics, latency-structure correlation, streaming DRAM utilisation &gt;85%,
+      slice-saturation provisioning). Both batteries are archived: v1 = exp001&ndash;015
+      (mesh model), v2 = exp101&ndash;115 (realistic model). Tooling: Python 3.10.12,
+      SST 15.0.0 built from source, BookSim2 master + a two-pattern local patch, g++ 11.4. The research repository
       (separate from this website) contains the full simulator source, all 15 experiment
       records, per-simulator DESIGN/VALIDATION/RESULTS documents, and the phase reports
       PHASE_00&ndash;PHASE_07.
