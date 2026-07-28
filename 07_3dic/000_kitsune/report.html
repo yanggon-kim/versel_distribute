@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kitsune 3D-IC Queue Fabric — Pilot Study Final Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f6f8fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px;
+      line-height: 1.65;
+    }
+    main { width: min(100%, 1060px); margin: 0 auto; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0 0 10px; }
+    h2 {
+      font-size: 1.45rem; margin: 0 0 16px; padding-bottom: 8px;
+      border-bottom: 2px solid var(--accent);
+    }
+    h3 { font-size: 1.12rem; margin: 26px 0 8px; }
+    h4 { font-size: 1rem; margin: 18px 0 6px; }
+    p { margin: 0 0 12px; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.08); padding: 28px; margin-top: 24px;
+    }
+    .subtitle { color: var(--muted); font-size: 1.02rem; margin-top: 8px; }
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.82rem;
+      font-weight: 700; border: 1px solid var(--border); background: #fbfcff; margin-right: 6px;
+    }
+    .badge.b-blue { color: var(--accent); border-color: #b6d0f7; background: #eef5ff; }
+    .badge.b-green { color: var(--good); border-color: #b4dfc4; background: #ecf7f0; }
+    .badge.b-amber { color: var(--warn); border-color: #eed888; background: #fff8e5; }
+    .badge.b-red { color: var(--bad); border-color: #f0b3b8; background: #fdeef0; }
+    table {
+      border-collapse: collapse; width: 100%; margin: 14px 0 20px; font-size: 0.92rem;
+    }
+    th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: right; }
+    th { background: #eef2f7; text-align: center; }
+    td:first-child, th:first-child { text-align: left; }
+    tr:nth-child(even) td { background: #fafbfd; }
+    .num-good { color: var(--good); font-weight: 700; }
+    .num-bad { color: var(--bad); font-weight: 700; }
+    .num-warn { color: var(--warn); font-weight: 700; }
+    figure { margin: 18px 0; }
+    figure img {
+      max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px;
+      background: #fff;
+    }
+    figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 8px; line-height: 1.55; }
+    .fig-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 800px) { .fig-row { grid-template-columns: 1fr; } }
+    .diagram { width: 100%; overflow-x: auto; margin: 16px 0; }
+    .diagram svg { display: block; margin: 0 auto; }
+    code, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em; background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 5px;
+    }
+    dl.gloss { display: grid; grid-template-columns: 220px 1fr; gap: 6px 18px; margin: 0; }
+    dl.gloss dt { font-weight: 700; color: var(--accent); }
+    dl.gloss dd { margin: 0 0 6px; }
+    @media (max-width: 720px) { dl.gloss { grid-template-columns: 1fr; } dl.gloss dd { margin-bottom: 12px; } }
+    .callout {
+      border-left: 4px solid var(--accent); background: #eef5ff; border-radius: 0 6px 6px 0;
+      padding: 12px 16px; margin: 14px 0;
+    }
+    .callout.warn { border-left-color: var(--warn); background: #fff8e5; }
+    .callout.neg { border-left-color: var(--bad); background: #fdeef0; }
+    .callout.good { border-left-color: var(--good); background: #ecf7f0; }
+    nav.toc ol { columns: 2; gap: 32px; margin: 0; padding-left: 20px; }
+    @media (max-width: 720px) { nav.toc ol { columns: 1; } }
+    nav.toc a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    nav.toc a:hover { text-decoration: underline; }
+    .term { border-bottom: 1px dotted var(--accent); cursor: help; }
+    .site-footer {
+      margin-top: 28px; padding: 20px 4px 0; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.92rem;
+    }
+    .small { font-size: 0.87rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+
+  <header>
+    <h1>Does a Kitsune-Style GPU Dataflow Pipeline Need a 3D-Stacked Queue Fabric?</h1>
+    <p class="subtitle">
+      A four-simulator pilot study of L2-cache / on-chip-network contention in GPU
+      producer&ndash;consumer pipelines, and a fair comparison of 3D-stacked queue hardware
+      against strong planar (2D) alternatives.
+      &nbsp;<span class="badge b-blue">15 experiments</span>
+      <span class="badge b-blue">&asymp;350 simulation runs</span>
+      <span class="badge b-blue">4 platforms</span>
+      <span class="badge b-amber">Verdict: Conditional support (Conclusion&nbsp;B)</span>
+    </p>
+    <p class="subtitle">
+      Every number on this page is <strong>simulated or calculated</strong> on a scaled model
+      with assumed parameters (NVIDIA does not publish its L2/NoC internals, and no GPU was
+      available for calibration). Trends are cross-validated on three independent simulators;
+      absolute magnitudes are illustrative, not predictions.
+    </p>
+  </header>
+
+  <section aria-labelledby="toc-h">
+    <h2 id="toc-h">Contents</h2>
+    <nav class="toc">
+      <ol>
+        <li><a href="#tldr">Executive summary</a></li>
+        <li><a href="#glossary">Glossary — every term defined</a></li>
+        <li><a href="#question">The research question</a></li>
+        <li><a href="#baselines">The baseline ladder B0&ndash;B8</a></li>
+        <li><a href="#platforms">The four simulators (block diagrams)</a></li>
+        <li><a href="#workloads">Workloads W1&ndash;W10</a></li>
+        <li><a href="#r-problem">Results 1 — how big is the problem?</a></li>
+        <li><a href="#r-cause">Results 2 — what causes it?</a></li>
+        <li><a href="#r-planar">Results 3 — can planar tricks fix it?</a></li>
+        <li><a href="#r-3d">Results 4 — the 3D design space</a></li>
+        <li><a href="#r-region">Results 5 — the benefit-region map</a></li>
+        <li><a href="#validation">Cross-simulator validation</a></li>
+        <li><a href="#negative">Negative results (kept on purpose)</a></li>
+        <li><a href="#conclusion">Final verdict &amp; region table</a></li>
+        <li><a href="#limits">Limitations &amp; reproducibility</a></li>
+      </ol>
+    </nav>
+  </section>
+
+  <section aria-labelledby="tldr-h" id="tldr">
+    <h2 id="tldr-h">1&nbsp;&middot;&nbsp;Executive summary</h2>
+    <p>
+      <strong>Kitsune</strong> (Davies et al., arXiv:2502.18403) makes a GPU run dependent
+      kernel stages <em>at the same time</em>, passing intermediate results through software
+      queues that live in the GPU's shared L2 cache instead of writing them out to DRAM.
+      That is faster &mdash; but it turns the L2 cache and the on-chip network into a
+      <em>message fabric</em> on top of their day job as a memory system. This pilot asked:
+      <em>does that dual use ever become the bottleneck, and if so, is dedicated 3D-stacked
+      queue hardware the right fix &mdash; or would cheaper 2D ("planar") tricks do?</em>
+    </p>
+    <div class="callout good">
+      <strong>What we found, in five lines.</strong>
+      (1)&nbsp;At Kitsune-like operating points the queue system costs a moderate
+      10&ndash;33% versus an ideal free queue, and it barely disturbs normal memory traffic
+      &mdash; consistent with Kitsune's own published data.
+      (2)&nbsp;The cost becomes severe (up to 271%) only in specific regions: queue traffic
+      concentrated on a few L2 slices, queue storage overflowing the L2, or very
+      fine-grained synchronization-heavy queues.
+      (3)&nbsp;Quality-of-service tricks (virtual channels, priorities) recover
+      essentially <em>zero</em> of the loss.
+      (4)&nbsp;Strong planar hardware (dedicated queue SRAM + a dedicated planar network)
+      recovers 37&ndash;75% of the loss; a per-SM 3D-stacked queue tier recovers
+      55&ndash;87% and cuts communication energy &asymp;27%, with its edge coming from
+      shorter physical paths, not bandwidth.
+      (5)&nbsp;So the 3D fabric earns only a <em>conditional</em> "yes": it is justified for
+      the hotspot / overflow / fine-grained regions, not as a general-purpose addition.
+    </div>
+    <p>
+      Two honest negative results are preserved: a naive 3-stage Kitsune pipeline was
+      <em>slower than the plain GPU baseline</em> (0.82&times;), and a "global" stacked queue
+      tier (one shared vertical access point) was <em>worse than doing nothing</em> under
+      load. Both matter for anyone building on this idea.
+    </p>
+  </section>
+
+  <section aria-labelledby="gloss-h" id="glossary">
+    <h2 id="gloss-h">2&nbsp;&middot;&nbsp;Glossary — every term used on this page</h2>
+    <p class="small">Definitions are written for a reader who knows basic computer
+      architecture but not GPU internals or this project.</p>
+    <h3>The machine</h3>
+    <dl class="gloss">
+      <dt>GPU</dt>
+      <dd>Graphics Processing Unit — a processor built from many small cores that run
+        thousands of threads at once; today mostly used for AI and scientific computing.</dd>
+      <dt>SM (Streaming Multiprocessor)</dt>
+      <dd>One of the GPU's compute clusters. A large GPU has 100+ SMs; each runs many thread
+        groups concurrently. In our scaled model there are 8 SM endpoints.</dd>
+      <dt>CTA (Cooperative Thread Array)</dt>
+      <dd>NVIDIA's name for a <em>thread block</em>: a group of threads scheduled onto one SM
+        as a unit. Kitsune builds its pipelines out of CTAs — some CTAs are "producer stages",
+        others "consumer stages".</dd>
+      <dt>L2 cache</dt>
+      <dd>The GPU's large last-level on-chip memory cache (tens of MB on real GPUs; 8&nbsp;MiB
+        in our scaled model), shared by all SMs. It is divided into <em>slices</em> (address-
+        partitioned sections) and each slice into <em>banks</em> (independently accessible
+        sub-arrays, each serving ~1 access at a time).</dd>
+      <dt>Cache line</dt>
+      <dd>The unit of cache storage and transfer — 128 bytes here. "Pinning" a line means
+        keeping it in the cache permanently, exempt from eviction.</dd>
+      <dt>MSHR</dt>
+      <dd>Miss-Status Holding Register — bookkeeping entry that tracks an in-flight cache
+        miss. A cache with all MSHRs busy cannot accept new misses (a source of stalls).</dd>
+      <dt>Atomic operation</dt>
+      <dd>A read-modify-write memory operation (e.g. fetch-and-add) executed indivisibly.
+        Kitsune uses atomics on queue head/tail counters. Each L2 slice has an <em>atomic
+        unit</em> that serializes them — a potential choke point.</dd>
+      <dt>NoC (Network-on-Chip)</dt>
+      <dd>The on-chip packet network connecting SMs to L2 slices. Ours is a 4&times;4
+        <em>mesh</em> (grid of routers). A <em>flit</em> (flow-control digit, 32&nbsp;B here) is
+        the unit a link carries per cycle; a packet is one or more flits.</dd>
+      <dt>Virtual channel (VC)</dt>
+      <dd>Separate buffer lanes sharing one physical link, letting one traffic class pass a
+        blocked one — the classic <em>logical</em> (as opposed to physical) isolation tool.</dd>
+      <dt>Head-of-line (HOL) blocking</dt>
+      <dd>When the packet at the front of a queue is stuck, everything behind it waits even
+        if its own path is free. VCs exist to relieve this.</dd>
+      <dt>HBM</dt>
+      <dd>High-Bandwidth Memory — the GPU's off-chip DRAM stack. "Off-chip traffic" =
+        reads/writes that miss in L2 and go to HBM; it is slow (~400 cycles) and
+        energy-expensive relative to on-chip access.</dd>
+      <dt>3D-IC / stacked tier</dt>
+      <dd>Putting a second silicon die directly on top of the GPU die, connected by dense
+        vertical wires — <em>TSVs</em> (through-silicon vias) or <em>hybrid bonding</em>
+        (direct copper-to-copper bonds, much denser). The proposal studied here puts queue
+        SRAM and queue-management logic on that upper die.</dd>
+      <dt>Vertical link / portal</dt>
+      <dd>The wire bundle connecting a point on the GPU die to the stacked die. We call the
+        GPU-side attachment point a <em>portal</em>. Designs differ in how many portals exist
+        and where (one per SM, per SM-cluster, per L2 slice, or one global).</dd>
+    </dl>
+    <h3>The execution model</h3>
+    <dl class="gloss">
+      <dt>Bulk-synchronous execution</dt>
+      <dd>The normal GPU style: run kernel A to completion, write its whole output to memory,
+        synchronize, then run kernel B which reads it back. Stages never overlap.</dd>
+      <dt>Dataflow / spatial pipeline</dt>
+      <dd>Kitsune's style: stage A and stage B run <em>concurrently</em> on different SMs;
+        A streams results to B in small tiles through queues. Stages overlap in time,
+        intermediates stay on-chip.</dd>
+      <dt>Queue (ring buffer)</dt>
+      <dd>A fixed-size first-in-first-out buffer. The producer <em>enqueues</em> items; the
+        consumer <em>dequeues</em> them. <em>Depth</em> = how many items it can hold.
+        <em>Payload</em> = the data bytes of one item. <em>Metadata</em> = the small control
+        state around it (head/tail counters, ready flags, credits).</dd>
+      <dt>Backpressure</dt>
+      <dd>When the queue is full, the producer must stop — the stall propagates backwards.
+        The opposite, <em>starvation</em>, is a consumer stalling on an empty queue.</dd>
+      <dt>Polling / spinning</dt>
+      <dd>Repeatedly reading a flag ("is there an item yet?") in a loop. Kitsune's software
+        queues poll; each poll is real memory traffic. Hardware alternatives deliver an
+        <em>event</em> (a wake-up message) instead.</dd>
+      <dt>Credit</dt>
+      <dd>A token representing one free queue slot. A producer holding zero credits knows the
+        queue is full without having to poll the consumer's side.</dd>
+      <dt>Queue traffic vs demand traffic</dt>
+      <dd>The paper's central distinction. <em>Queue traffic</em> = payload + metadata +
+        polling generated by pipeline communication. <em>Demand traffic</em> = the ordinary
+        loads/stores the computation itself needs (inputs, weights, outputs). The worry is
+        that both share the same L2 + NoC.</dd>
+    </dl>
+    <h3>The metrics</h3>
+    <dl class="gloss">
+      <dt>Throughput</dt>
+      <dd>Completed pipeline items per clock cycle (higher is better). Our runs measure it
+        after a warm-up window (first 20% of items excluded).</dd>
+      <dt>P<sub>C</sub> — communication penalty</dt>
+      <dd><code>P_C = (T_real − T_ideal) / T_ideal</code>, where T is time per item for
+        Kitsune with its real queue (B2) vs an <em>ideal free queue</em> (B3). It answers:
+        "how much performance does queue communication itself cost?" P<sub>C</sub>=0.20 means
+        the real queue makes the pipeline 20% slower than it could ideally be.</dd>
+      <dt>Gap recovery</dt>
+      <dd>For any remedy X: <code>(T_B2 − T_X) / (T_B2 − T_B3)</code> — the fraction of the
+        avoidable penalty that X eliminates. 1.0 = as good as the ideal queue; 0 = no help;
+        negative = made things worse.</dd>
+      <dt>S<sub>3D</sub></dt>
+      <dd>Speedup of the 3D design over shared-L2 Kitsune: <code>T_B2 / T_B8</code>.</dd>
+      <dt>Iso-capacity / iso-bandwidth comparison</dt>
+      <dd>A fairness rule: when comparing planar vs 3D queue hardware, give both the same
+        SRAM capacity / total bandwidth, so 3D cannot win merely by having more resources.</dd>
+      <dt>Utilisation (&rho;)</dt>
+      <dd>Fraction of a resource's capacity in use (busy time &divide; total time). Queueing
+        delay explodes as &rho; &rarr; 1 ("saturation").</dd>
+      <dt>p50 / p95 / p99</dt>
+      <dd>Percentiles: p95 latency = 95% of requests were at least this fast. Tail latency
+        (p99) matters because one late ready-flag can stall a whole consumer stage.</dd>
+    </dl>
+    <h3>The methods</h3>
+    <dl class="gloss">
+      <dt>Discrete-event simulation (DES)</dt>
+      <dd>Simulation that jumps from event to event (packet arrives, bank finishes an access)
+        rather than ticking every cycle for every wire — fast and exact for queueing systems.</dd>
+      <dt>Closed-loop vs open-loop traffic</dt>
+      <dd><em>Closed-loop</em>: simulated producers/consumers react to the system — a blocked
+        producer stops generating traffic (like real programs). <em>Open-loop</em>: traffic is
+        injected at a fixed rate regardless of congestion (standard in pure network studies,
+        but misses feedback). The plan mandates closed-loop for all primary results.</dd>
+      <dt>M/D/1 queue model</dt>
+      <dd>Textbook queueing formula (random arrivals, fixed service time, one server) used in
+        the first-order analytical model to predict waiting time from utilisation.</dd>
+      <dt>Little's law</dt>
+      <dd><code>occupancy = rate × time-in-system</code> — a conservation law any correct
+        simulator must satisfy; we use it as a validation check.</dd>
+      <dt>Ablation</dt>
+      <dd>Removing/idealizing one mechanism at a time (e.g. "make the NoC infinitely fast")
+        to attribute how much of the penalty each mechanism causes.</dd>
+      <dt>Baseline / workload sweep</dt>
+      <dd>A <em>baseline</em> is one machine configuration (B0&ndash;B8 below); a
+        <em>sweep</em> runs the same experiment across a range of one parameter
+        (payload size, CTA count, &hellip;).</dd>
+    </dl>
+  </section>
+
+  <section aria-labelledby="q-h" id="question">
+    <h2 id="q-h">3&nbsp;&middot;&nbsp;The research question</h2>
+    <p>
+      Kitsune's queues live <em>inside</em> the shared L2 and travel over the shared NoC, so
+      queue traffic and demand traffic compete for the same physical resources: L2 capacity,
+      cache banks and ports, atomic units, MSHRs, and every router and link of the mesh. The
+      proposed alternative physically separates them: queue payload and metadata move over
+      dedicated <em>vertical links</em> to SRAM on a stacked die, leaving the planar L2/NoC
+      to demand traffic alone.
+    </p>
+    <div class="diagram" role="img" aria-label="Shared planar path versus proposed 3D path diagram">
+      <svg viewBox="0 0 960 300" width="960" height="300" font-family="Arial" font-size="13">
+        <defs>
+          <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#172033"/>
+          </marker>
+          <marker id="arrB" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#1f6feb"/>
+          </marker>
+          <marker id="arrR" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#cf222e"/>
+          </marker>
+        </defs>
+        <text x="115" y="24" font-weight="bold">Today (B2): shared everything</text>
+        <rect x="20" y="40" width="130" height="46" rx="6" fill="#eef5ff" stroke="#1f6feb"/>
+        <text x="85" y="60" text-anchor="middle" font-weight="bold">Producer CTA</text>
+        <text x="85" y="76" text-anchor="middle" fill="#647083">on SM</text>
+        <rect x="20" y="210" width="130" height="46" rx="6" fill="#eef5ff" stroke="#1f6feb"/>
+        <text x="85" y="230" text-anchor="middle" font-weight="bold">Consumer CTA</text>
+        <text x="85" y="246" text-anchor="middle" fill="#647083">on SM</text>
+        <rect x="220" y="118" width="150" height="60" rx="6" fill="#fff" stroke="#172033"/>
+        <text x="295" y="141" text-anchor="middle" font-weight="bold">planar NoC</text>
+        <text x="295" y="158" text-anchor="middle" fill="#647083">shared mesh</text>
+        <rect x="420" y="105" width="160" height="86" rx="6" fill="#fff8e5" stroke="#9a6700"/>
+        <text x="500" y="130" text-anchor="middle" font-weight="bold">shared L2</text>
+        <text x="500" y="148" text-anchor="middle" fill="#647083">demand data</text>
+        <text x="500" y="166" text-anchor="middle" fill="#cf222e">+ queue payload</text>
+        <text x="500" y="182" text-anchor="middle" fill="#cf222e">+ queue metadata</text>
+        <path d="M150,63 C200,63 200,130 218,138" fill="none" stroke="#cf222e" stroke-width="2" marker-end="url(#arrR)"/>
+        <path d="M150,233 C200,233 200,168 218,158" fill="none" stroke="#cf222e" stroke-width="2" marker-end="url(#arrR)"/>
+        <path d="M370,148 L418,148" stroke="#cf222e" stroke-width="2" marker-end="url(#arrR)"/>
+        <text x="295" y="200" text-anchor="middle" fill="#cf222e" font-size="12">queue + demand traffic mixed</text>
+
+        <text x="740" y="24" font-weight="bold">Proposal (B8): physical isolation</text>
+        <rect x="620" y="40" width="130" height="46" rx="6" fill="#eef5ff" stroke="#1f6feb"/>
+        <text x="685" y="60" text-anchor="middle" font-weight="bold">Producer CTA</text>
+        <rect x="620" y="210" width="130" height="46" rx="6" fill="#eef5ff" stroke="#1f6feb"/>
+        <text x="685" y="230" text-anchor="middle" font-weight="bold">Consumer CTA</text>
+        <rect x="790" y="40" width="150" height="60" rx="6" fill="#ecf7f0" stroke="#1a7f37"/>
+        <text x="865" y="63" text-anchor="middle" font-weight="bold">stacked queue tier</text>
+        <text x="865" y="81" text-anchor="middle" fill="#647083">SRAM + engines + events</text>
+        <rect x="790" y="196" width="150" height="60" rx="6" fill="#fff8e5" stroke="#9a6700"/>
+        <text x="865" y="219" text-anchor="middle" font-weight="bold">planar NoC + L2</text>
+        <text x="865" y="237" text-anchor="middle" fill="#1a7f37">demand traffic only</text>
+        <path d="M750,55 L788,62" stroke="#1a7f37" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M788,80 L750,74" stroke="#1a7f37" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="769" y="46" text-anchor="middle" fill="#1a7f37" font-size="11">vertical</text>
+        <path d="M750,226 L788,222" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M865,100 L865,150" stroke="#1a7f37" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+        <text x="908" y="130" fill="#1a7f37" font-size="11">event to</text>
+        <text x="908" y="144" fill="#1a7f37" font-size="11">consumer</text>
+      </svg>
+    </div>
+    <p>The pilot was explicitly forbidden from assuming the hypothesis. It had to answer, in order:</p>
+    <table>
+      <tr><th>#</th><th style="text-align:left">Question</th><th style="text-align:left">Answered by</th></tr>
+      <tr><td>RQ1</td><td style="text-align:left">Can Kitsune-like closed-loop behavior be reproduced at all?</td><td style="text-align:left">custom simulator + SST (backpressure, starvation, spill all emerge)</td></tr>
+      <tr><td>RQ2&ndash;3</td><td style="text-align:left">Does queue traffic hurt demand traffic, and does Kitsune still win?</td><td style="text-align:left">Results&nbsp;1 (&sect;7)</td></tr>
+      <tr><td>RQ4&ndash;5</td><td style="text-align:left">How big is the real-vs-ideal gap and which resource causes it?</td><td style="text-align:left">Results&nbsp;1&ndash;2 (&sect;7&ndash;8)</td></tr>
+      <tr><td>RQ6&ndash;8</td><td style="text-align:left">Do planar fixes suffice? Does 3D beat them fairly? At what cost?</td><td style="text-align:left">Results&nbsp;3&ndash;4 (&sect;9&ndash;10)</td></tr>
+      <tr><td>RQ9</td><td style="text-align:left">Where exactly is 3D useful / useless / harmful?</td><td style="text-align:left">Benefit region (&sect;11) + final table (&sect;14)</td></tr>
+    </table>
+  </section>
+
+  <section aria-labelledby="base-h" id="baselines">
+    <h2 id="base-h">4&nbsp;&middot;&nbsp;The baseline ladder B0&ndash;B8</h2>
+    <p>
+      Every claim is comparative, so the study defines nine machine configurations. The gaps
+      between rungs of this ladder are themselves the measurements: B2&minus;B3 = total
+      avoidable communication penalty; B2&minus;B6 = L2-sharing cost; B6&minus;B7 = shared-NoC
+      cost; B7&minus;B8 = what only 3D adds.
+    </p>
+    <table>
+      <tr><th>ID</th><th style="text-align:left">Configuration</th><th style="text-align:left">What it isolates</th></tr>
+      <tr><td><b>B0</b></td><td style="text-align:left">Bulk-synchronous: kernel A &rarr; memory &rarr; barrier &rarr; kernel B</td><td style="text-align:left">the normal GPU baseline Kitsune must beat</td></tr>
+      <tr><td><b>B1</b></td><td style="text-align:left">Both kernels concurrent but <em>no</em> queue coupling</td><td style="text-align:left">generic concurrency contention without queues</td></tr>
+      <tr><td><b>B2</b></td><td style="text-align:left">Kitsune: L2-resident queues, atomics, spin-polling, pinned lines</td><td style="text-align:left">the real system under study</td></tr>
+      <tr><td><b>B3</b></td><td style="text-align:left">Kitsune with an <em>ideal queue</em>: zero traffic, zero latency, zero footprint (finite depth kept)</td><td style="text-align:left">upper bound; defines P<sub>C</sub></td></tr>
+      <tr><td><b>B4</b></td><td style="text-align:left">L2 way-partitioning (queue lines restricted to 4 of 16 ways)</td><td style="text-align:left">logical cache isolation</td></tr>
+      <tr><td><b>B5</b></td><td style="text-align:left">Separate virtual channels for queue vs demand classes</td><td style="text-align:left">logical network isolation</td></tr>
+      <tr><td><b>B6</b></td><td style="text-align:left">Dedicated planar queue SRAM at each slice (hardware engines, events, no polling) — traffic still on the shared NoC</td><td style="text-align:left">removing L2 capacity/bank sharing</td></tr>
+      <tr><td><b>B7</b></td><td style="text-align:left">B6 + a second dedicated planar network for queue traffic</td><td style="text-align:left">the strongest planar design — 3D's real competitor</td></tr>
+      <tr><td><b>B8</b></td><td style="text-align:left">3D: stacked queue SRAM + engines reached over vertical links (designs 3D-A&hellip;F vary portal placement and what is stacked)</td><td style="text-align:left">physical vertical isolation</td></tr>
+    </table>
+    <p class="small">
+      Fairness rules: all designs move payload in 128-B cache lines; B6&ndash;B8 all get the
+      same hardware-engine + event protocol (no polling handicap for planar); B7's dedicated
+      network has aggregate bandwidth &ge; B8's vertical links, so any B8 win is not a
+      bandwidth artifact; stacked SRAM capacity = planar queue SRAM capacity (iso-capacity).
+      Ablations A1&ndash;A11 (used in &sect;8) idealize one resource at a time on top of B2.
+    </p>
+  </section>
+
+  <section aria-labelledby="plat-h" id="platforms">
+    <h2 id="plat-h">5&nbsp;&middot;&nbsp;The four simulators</h2>
+    <p>
+      No single simulator is trustworthy alone, so the plan requires several with different
+      strengths, cross-checked (&sect;12). All four model the same scaled system: 8 SM
+      endpoints and 8 L2 slices on a 4&times;4 mesh, 8&nbsp;MiB L2, HBM at 700&nbsp;B/cycle
+      and 400-cycle latency — roughly 1/8 of a large GPU, with every parameter recorded as
+      an assumption.
+    </p>
+
+    <h3>5.1&nbsp;&nbsp;Analytical model (first-order mathematics)</h3>
+    <p>
+      A ~300-line Python model: each pipeline stage's item time is
+      <code>T = compute + demand_requests/MLP &times; memory_latency + enqueue_time</code>;
+      each shared resource (L2 banks, atomic unit, NoC hotspot link, HBM, vertical links) gets
+      an M/D/1 waiting time from its utilisation; the achieved rate is solved as a fixed point
+      (rates raise utilisations, which raise latencies, which lower rates). Purpose: predict
+      <em>where</em> contention should appear before writing any simulator, and provide
+      closed-form sanity anchors (zero-load latency, saturation throughput) the simulators
+      must reproduce. It predicted: hotspot NoC link binds first, banks second; severe region
+      at queue/demand byte ratio &gtrsim;1&ndash;2 or footprint &gtrsim;0.5&times;L2 — both
+      later confirmed.
+    </p>
+
+    <h3>5.2&nbsp;&nbsp;Custom closed-loop discrete-event simulator (the workhorse)</h3>
+    <div class="diagram" role="img" aria-label="Custom simulator block diagram">
+      <svg viewBox="0 0 980 430" width="980" height="430" font-family="Arial" font-size="13">
+        <rect x="10" y="10" width="220" height="180" rx="8" fill="#eef5ff" stroke="#1f6feb"/>
+        <text x="120" y="32" text-anchor="middle" font-weight="bold">Stage agents (closed loop)</text>
+        <rect x="25" y="45" width="190" height="38" rx="5" fill="#fff" stroke="#1f6feb"/>
+        <text x="120" y="61" text-anchor="middle">Producer FSM &times;N</text>
+        <text x="120" y="76" text-anchor="middle" fill="#647083" font-size="11">demand&rarr;compute&rarr;enqueue</text>
+        <rect x="25" y="92" width="190" height="38" rx="5" fill="#fff" stroke="#1f6feb"/>
+        <text x="120" y="108" text-anchor="middle">Consumer FSM &times;N</text>
+        <text x="120" y="123" text-anchor="middle" fill="#647083" font-size="11">dequeue&rarr;demand&rarr;compute</text>
+        <rect x="25" y="139" width="190" height="38" rx="5" fill="#fff" stroke="#1f6feb"/>
+        <text x="120" y="155" text-anchor="middle">Bulk agents (B0/B1)</text>
+        <text x="120" y="170" text-anchor="middle" fill="#647083" font-size="11">two phases + barrier</text>
+
+        <rect x="270" y="10" width="200" height="180" rx="8" fill="#f6f8fa" stroke="#172033"/>
+        <text x="370" y="32" text-anchor="middle" font-weight="bold">Queue backends</text>
+        <rect x="283" y="45" width="174" height="30" rx="5" fill="#fff" stroke="#172033"/>
+        <text x="370" y="64" text-anchor="middle" font-size="12">L2 (B2): atomics + polling</text>
+        <rect x="283" y="80" width="174" height="30" rx="5" fill="#fff" stroke="#172033"/>
+        <text x="370" y="99" text-anchor="middle" font-size="12">Ideal (B3): zero cost</text>
+        <rect x="283" y="115" width="174" height="30" rx="5" fill="#fff" stroke="#172033"/>
+        <text x="370" y="134" text-anchor="middle" font-size="12">Engine (B6/B7): SRAM+events</text>
+        <rect x="283" y="150" width="174" height="30" rx="5" fill="#fff" stroke="#172033"/>
+        <text x="370" y="169" text-anchor="middle" font-size="12">Stacked (B8): 3D-A&hellip;F</text>
+
+        <rect x="510" y="10" width="220" height="180" rx="8" fill="#fff" stroke="#172033"/>
+        <text x="620" y="32" text-anchor="middle" font-weight="bold">Planar NoC — 4&times;4 mesh</text>
+        <text x="620" y="52" text-anchor="middle" fill="#647083" font-size="12">per-link finite-buffer servers</text>
+        <text x="620" y="70" text-anchor="middle" fill="#647083" font-size="12">XY routing &middot; 4 B/cyc/flit-lane</text>
+        <text x="620" y="88" text-anchor="middle" fill="#647083" font-size="12">FIFO / VC / priority policies</text>
+        <text x="620" y="106" text-anchor="middle" fill="#647083" font-size="12">per-class latency stats</text>
+        <text x="620" y="124" text-anchor="middle" fill="#647083" font-size="12">backpressure by retry</text>
+        <rect x="525" y="140" width="190" height="36" rx="5" fill="#fbfcff" stroke="#1f6feb"/>
+        <text x="620" y="156" text-anchor="middle" font-size="12">optional 2nd mesh (B7)</text>
+        <text x="620" y="171" text-anchor="middle" fill="#647083" font-size="11">dedicated queue network</text>
+
+        <rect x="770" y="10" width="200" height="180" rx="8" fill="#fff8e5" stroke="#9a6700"/>
+        <text x="870" y="32" text-anchor="middle" font-weight="bold">L2 slices &times;8</text>
+        <text x="870" y="52" text-anchor="middle" fill="#647083" font-size="12">4 banks &middot; 2 cyc/line each</text>
+        <text x="870" y="70" text-anchor="middle" fill="#647083" font-size="12">16-way LRU array, 128-B lines</text>
+        <text x="870" y="88" text-anchor="middle" fill="#647083" font-size="12">pin / bypass / partition policies</text>
+        <text x="870" y="106" text-anchor="middle" fill="#647083" font-size="12">32 MSHRs (merging)</text>
+        <text x="870" y="124" text-anchor="middle" fill="#647083" font-size="12">serialized atomic unit (8 cyc)</text>
+        <text x="870" y="142" text-anchor="middle" fill="#647083" font-size="12">finite request queue</text>
+        <text x="870" y="160" text-anchor="middle" fill="#647083" font-size="12">writebacks &rarr; HBM</text>
+
+        <rect x="300" y="250" width="380" height="70" rx="8" fill="#ecf7f0" stroke="#1a7f37"/>
+        <text x="490" y="274" text-anchor="middle" font-weight="bold">Stacked queue tier (B8)</text>
+        <text x="490" y="292" text-anchor="middle" fill="#647083" font-size="12">8 SRAM banks (1 cyc/line) &middot; vertical links 64 B/cyc @ 4 cyc</text>
+        <text x="490" y="309" text-anchor="middle" fill="#647083" font-size="12">portals: per-SM / cluster / slice / global &middot; credit + ready events</text>
+
+        <rect x="770" y="250" width="200" height="70" rx="8" fill="#fff" stroke="#172033"/>
+        <text x="870" y="274" text-anchor="middle" font-weight="bold">HBM model</text>
+        <text x="870" y="292" text-anchor="middle" fill="#647083" font-size="12">8 channels &middot; 87.5 B/cyc each</text>
+        <text x="870" y="309" text-anchor="middle" fill="#647083" font-size="12">400-cycle latency</text>
+
+        <rect x="10" y="250" width="240" height="70" rx="8" fill="#f6f8fa" stroke="#172033"/>
+        <text x="130" y="274" text-anchor="middle" font-weight="bold">Metrics + energy</text>
+        <text x="130" y="292" text-anchor="middle" fill="#647083" font-size="12">warm-up snapshots &middot; p50/95/99</text>
+        <text x="130" y="309" text-anchor="middle" fill="#647083" font-size="12">event-count energy (pJ per event)</text>
+
+        <rect x="10" y="355" width="960" height="52" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="490" y="376" text-anchor="middle" fill="#647083" font-size="12">heapq event engine &middot; deterministic seeds &middot; 16-test validation suite &middot; ~15 s/run &middot; 56-way parallel sweeps</text>
+        <text x="490" y="395" text-anchor="middle" fill="#647083" font-size="12">configs are pure data: baseline B0&ndash;B8 &times; workload W1&ndash;W10 &times; ablations A1&ndash;A11 &times; parameter overrides</text>
+
+        <path d="M230,100 L268,100" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M470,100 L508,100" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M730,100 L768,100" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M870,190 L870,248" stroke="#9a6700" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M420,190 L470,248" stroke="#1a7f37" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+      </svg>
+    </div>
+    <p>
+      Python, ~2,500 lines, event-driven at packet/transaction granularity. Every mechanism
+      the research question touches is explicit: finite queues with credits, spin-poll
+      traffic, pinned queue lines that consume L2 ways (and spill past their budget —
+      reproducing Kitsune's published over-capacity falloff), MSHR exhaustion, atomic-unit
+      serialization, per-class NoC queueing, and a configurable stacked tier. It ran 13 of
+      the 15 experiments.
+    </p>
+
+    <h3>5.3&nbsp;&nbsp;SST 15 — independent cache-hierarchy check</h3>
+    <div class="diagram" role="img" aria-label="SST model block diagram">
+      <svg viewBox="0 0 980 250" width="980" height="250" font-family="Arial" font-size="13">
+        <rect x="10" y="20" width="185" height="120" rx="8" fill="#eef5ff" stroke="#1f6feb"/>
+        <text x="102" y="44" text-anchor="middle" font-weight="bold">kitsune.Stage &times;16</text>
+        <text x="102" y="63" text-anchor="middle" fill="#647083" font-size="12">custom C++ component</text>
+        <text x="102" y="81" text-anchor="middle" fill="#647083" font-size="12">same closed-loop FSMs</text>
+        <text x="102" y="99" text-anchor="middle" fill="#647083" font-size="12">StandardMem interface</text>
+        <text x="102" y="117" text-anchor="middle" fill="#647083" font-size="12">ideal=1 &rArr; B3</text>
+        <rect x="235" y="20" width="150" height="120" rx="8" fill="#fff" stroke="#172033"/>
+        <text x="310" y="44" text-anchor="middle" font-weight="bold">private L1 &times;16</text>
+        <text x="310" y="63" text-anchor="middle" fill="#647083" font-size="12">4 KiB, MESI coherent</text>
+        <text x="310" y="81" text-anchor="middle" fill="#647083" font-size="12">memHierarchy.Cache</text>
+        <rect x="425" y="20" width="170" height="120" rx="8" fill="#fff" stroke="#172033"/>
+        <text x="510" y="44" text-anchor="middle" font-weight="bold">merlin 4&times;4 mesh</text>
+        <text x="510" y="63" text-anchor="middle" fill="#647083" font-size="12">hr_router, 128 GB/s links</text>
+        <text x="510" y="81" text-anchor="middle" fill="#647083" font-size="12">32-B flits, MemNIC groups</text>
+        <rect x="635" y="20" width="160" height="120" rx="8" fill="#fff8e5" stroke="#9a6700"/>
+        <text x="715" y="44" text-anchor="middle" font-weight="bold">shared L2 &times;8 slices</text>
+        <text x="715" y="63" text-anchor="middle" fill="#647083" font-size="12">1 MiB each, 16-way</text>
+        <text x="715" y="81" text-anchor="middle" fill="#647083" font-size="12">round-robin line slicing</text>
+        <text x="715" y="99" text-anchor="middle" fill="#647083" font-size="12">MESI, 32 MSHRs</text>
+        <rect x="835" y="20" width="135" height="55" rx="8" fill="#fff" stroke="#172033"/>
+        <text x="902" y="42" text-anchor="middle" font-weight="bold">directory</text>
+        <text x="902" y="60" text-anchor="middle" fill="#647083" font-size="12">coherence point</text>
+        <rect x="835" y="85" width="135" height="55" rx="8" fill="#fff" stroke="#172033"/>
+        <text x="902" y="107" text-anchor="middle" font-weight="bold">memory ctrl</text>
+        <text x="902" y="125" text-anchor="middle" fill="#647083" font-size="12">350 ns</text>
+        <path d="M195,80 L233,80" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M385,80 L423,80" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M595,80 L633,80" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M795,60 L833,48" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <path d="M902,75 L902,83" stroke="#172033" stroke-width="2" marker-end="url(#arr)"/>
+        <rect x="10" y="170" width="960" height="58" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+        <text x="490" y="192" text-anchor="middle" fill="#647083" font-size="12">Queue *state* lives in a process-global registry; queue *traffic* (payload line writes/reads, metadata read-modify-writes, spin-poll reads)</text>
+        <text x="490" y="211" text-anchor="middle" fill="#647083" font-size="12">is issued as real memory operations through L1 &rarr; mesh &rarr; sliced L2 &rarr; directory — an independent codebase reproducing the B2-vs-B3 gap.</text>
+      </svg>
+    </div>
+    <p>
+      SST (Structural Simulation Toolkit, Sandia) is a community C++ simulation framework;
+      <span class="term" title="memHierarchy = SST's cache/memory component library; merlin = its network library">memHierarchy</span>
+      provides detailed caches and coherence, <em>merlin</em> the network. We wrote a custom
+      component (<code>kitsune.Stage</code>) implementing the same closed-loop stage machines
+      and drove SST's own caches/network with the queue traffic. Because SST's L1s are
+      MESI-coherent, queue lines physically migrate producer-L1 &rarr; L2 &rarr; consumer-L1
+      with invalidation messages — a <em>different, costlier</em> queue mechanism than the
+      custom sim's L2-atomic model. The two implementations bracket the real Kitsune
+      mechanism from below and above, which is exactly what an independent check should do.
+    </p>
+
+    <h3>5.4&nbsp;&nbsp;BookSim2 — network microarchitecture</h3>
+    <div class="diagram" role="img" aria-label="BookSim topologies diagram">
+      <svg viewBox="0 0 980 330" width="980" height="330" font-family="Arial" font-size="13">
+        <text x="235" y="24" font-weight="bold" text-anchor="middle">Planar topology (anynet): 4&times;4 mesh</text>
+        <g>
+          <!-- 4x4 mesh grid -->
+          <g stroke="#c6ccd8" stroke-width="2">
+            <line x1="90" y1="70" x2="390" y2="70"/><line x1="90" y1="140" x2="390" y2="140"/>
+            <line x1="90" y1="210" x2="390" y2="210"/><line x1="90" y1="280" x2="390" y2="280"/>
+            <line x1="90" y1="70" x2="90" y2="280"/><line x1="190" y1="70" x2="190" y2="280"/>
+            <line x1="290" y1="70" x2="290" y2="280"/><line x1="390" y1="70" x2="390" y2="280"/>
+          </g>
+          <g font-size="11" text-anchor="middle">
+            <circle cx="90" cy="70" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="90" y="74">SM</text>
+            <circle cx="190" cy="70" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="190" y="74">L2</text>
+            <circle cx="290" cy="70" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="290" y="74">SM</text>
+            <circle cx="390" cy="70" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="390" y="74">L2</text>
+            <circle cx="90" cy="140" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="90" y="144">SM</text>
+            <circle cx="190" cy="140" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="190" y="144">L2</text>
+            <circle cx="290" cy="140" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="290" y="144">SM</text>
+            <circle cx="390" cy="140" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="390" y="144">L2</text>
+            <circle cx="90" cy="210" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="90" y="214">SM</text>
+            <circle cx="190" cy="210" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="190" y="214">L2</text>
+            <circle cx="290" cy="210" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="290" y="214">SM</text>
+            <circle cx="390" cy="210" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="390" y="214">L2</text>
+            <circle cx="90" cy="280" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="90" y="284">SM</text>
+            <circle cx="190" cy="280" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="190" y="284">L2</text>
+            <circle cx="290" cy="280" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="290" y="284">SM</text>
+            <circle cx="390" cy="280" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="390" y="284">L2</text>
+          </g>
+          <text x="235" y="312" text-anchor="middle" fill="#647083" font-size="12">2 traffic classes share links: demand (&rarr;L2 nodes) + queue (&rarr;L2 or 2 hot slices)</text>
+        </g>
+        <text x="720" y="24" font-weight="bold" text-anchor="middle">3D topology: + stacked routers over vertical links</text>
+        <g>
+          <g stroke="#c6ccd8" stroke-width="2">
+            <line x1="560" y1="210" x2="860" y2="210"/><line x1="560" y1="280" x2="860" y2="280"/>
+            <line x1="560" y1="210" x2="560" y2="280"/><line x1="660" y1="210" x2="660" y2="280"/>
+            <line x1="760" y1="210" x2="760" y2="280"/><line x1="860" y1="210" x2="860" y2="280"/>
+          </g>
+          <g font-size="11" text-anchor="middle">
+            <rect x="530" y="80" width="60" height="34" rx="6" fill="#ecf7f0" stroke="#1a7f37"/><text x="560" y="101">Q0</text>
+            <rect x="730" y="80" width="60" height="34" rx="6" fill="#ecf7f0" stroke="#1a7f37"/><text x="760" y="101">Q1</text>
+            <text x="660" y="101" fill="#1a7f37">&hellip;8 stacked queue-bank routers&hellip;</text>
+            <circle cx="560" cy="210" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="560" y="214">SM</text>
+            <circle cx="660" cy="210" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="660" y="214">L2</text>
+            <circle cx="760" cy="210" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="760" y="214">SM</text>
+            <circle cx="860" cy="210" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="860" y="214">L2</text>
+            <circle cx="560" cy="280" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="560" y="284">SM</text>
+            <circle cx="660" cy="280" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="660" y="284">L2</text>
+            <circle cx="760" cy="280" r="16" fill="#eef5ff" stroke="#1f6feb"/><text x="760" y="284">SM</text>
+            <circle cx="860" cy="280" r="16" fill="#fff8e5" stroke="#9a6700"/><text x="860" y="284">L2</text>
+          </g>
+          <path d="M560,194 L560,116" stroke="#1a7f37" stroke-width="3" marker-end="url(#arr)"/>
+          <path d="M760,194 L760,116" stroke="#1a7f37" stroke-width="3" marker-end="url(#arr)"/>
+          <text x="640" y="160" fill="#1a7f37" font-size="12">vertical links (patched "portal" pattern:</text>
+          <text x="640" y="176" fill="#1a7f37" font-size="12">each SM targets *its own* portal)</text>
+          <text x="720" y="312" text-anchor="middle" fill="#647083" font-size="12">queue class leaves the mesh entirely; demand class unchanged</text>
+        </g>
+      </svg>
+    </div>
+    <p>
+      BookSim2 (Stanford) is the standard cycle-level NoC simulator: real routers with
+      virtual channels, allocators, and finite buffers — detail our custom sim abstracts. It
+      has no cache model and injects traffic open-loop, so we use it only for network
+      questions: how much does queue traffic delay the demand class on shared links, do
+      VCs/priorities help, and what happens with 1 / 2 / 8 vertical portals. Two small
+      traffic patterns were patched in (upstream's <code>hotspot</code> cannot express
+      "each source uses its own portal"), and one upstream pitfall is documented: BookSim's
+      config tokenizer silently truncates single-braced list arguments — list parameters
+      must be double-braced, or your 8-destination hotspot quietly becomes a 1-destination
+      hotspot (this invalidated our first runs; all were redone).
+    </p>
+  </section>
+
+  <section aria-labelledby="wl-h" id="workloads">
+    <h2 id="wl-h">6&nbsp;&middot;&nbsp;Workloads W1&ndash;W10</h2>
+    <p>
+      Synthetic but closed-loop: each stage is parameterized by compute cycles per item,
+      demand line-reads per item, queue payload bytes, metadata operations, and
+      producer:consumer ratio. The ten families each stress one axis. (A <em>line read</em>
+      = one 128-B cache-line load.)
+    </p>
+    <table>
+      <tr><th>ID</th><th style="text-align:left">Family</th><th style="text-align:left">What it stresses</th><th style="text-align:left">Key parameters vs default</th></tr>
+      <tr><td>W1</td><td style="text-align:left">Balanced pipeline</td><td style="text-align:left">pure communication cost</td><td style="text-align:left">producer rate = consumer rate</td></tr>
+      <tr><td>W2</td><td style="text-align:left">Producer-heavy</td><td style="text-align:left">queue fill + backpressure</td><td style="text-align:left">producer 3&times; faster</td></tr>
+      <tr><td>W3</td><td style="text-align:left">Consumer-heavy</td><td style="text-align:left">starvation + latency sensitivity</td><td style="text-align:left">consumer 3&times; faster</td></tr>
+      <tr><td>W4</td><td style="text-align:left">Queue-heavy</td><td style="text-align:left">payload bandwidth</td><td style="text-align:left">2 KiB payload, few demand reads</td></tr>
+      <tr><td>W5</td><td style="text-align:left">Demand-heavy</td><td style="text-align:left">interference against big demand traffic</td><td style="text-align:left">128-B payload, 16 demand reads</td></tr>
+      <tr><td>W6</td><td style="text-align:left">Metadata-heavy</td><td style="text-align:left">atomics / synchronization</td><td style="text-align:left">64-B payload, +4 extra atomics, 20-cyc polling</td></tr>
+      <tr><td>W7</td><td style="text-align:left">Cache-pollution</td><td style="text-align:left">queue footprint vs reusable data</td><td style="text-align:left">deep queues (512), 1 KiB payload, tight L2</td></tr>
+      <tr><td>W8</td><td style="text-align:left">NoC-hotspot</td><td style="text-align:left">concentrated queue placement</td><td style="text-align:left">all queues homed on 2 of 8 slices</td></tr>
+      <tr><td>W9</td><td style="text-align:left">Multi-stage</td><td style="text-align:left">chained queues</td><td style="text-align:left">3 stages, 2 queue groups</td></tr>
+      <tr><td>W10</td><td style="text-align:left">Fan-in</td><td style="text-align:left">shared queues</td><td style="text-align:left">3 producers per consumer</td></tr>
+    </table>
+  </section>
+
+  <section aria-labelledby="r1-h" id="r-problem">
+    <h2 id="r1-h">7&nbsp;&middot;&nbsp;Results 1 — how big is the problem?</h2>
+    <h3>7.1&nbsp;&nbsp;Kitsune wins; its queue costs a moderate tax</h3>
+    <p>
+      Sweeping payload size (which sets the <em>queue intensity</em> B<sub>Q</sub>/B<sub>D</sub>,
+      the ratio of queue bytes to demand bytes moved per item):
+      Kitsune (B2) beats the bulk-synchronous baseline (B0) by 1.34&ndash;1.90&times;
+      throughout, but sits 15&ndash;26% below its own ideal-queue bound (B3).
+      Note B1 (both kernels concurrent, <em>no</em> queues) beats B2 — concurrency itself is
+      the win; queue transport is the tax on it.
+    </p>
+    <table>
+      <tr><th>Payload (B)</th><th>B<sub>Q</sub>/B<sub>D</sub></th><th>B0 thr</th><th>B1 thr</th><th>B2 thr</th><th>B3 thr</th><th>P<sub>C</sub></th><th>Kitsune speedup vs B0</th></tr>
+      <tr><td>64</td><td>0.03</td><td>0.0209</td><td>0.0319</td><td>0.0281</td><td>0.0324</td><td class="num-warn">15.1%</td><td class="num-good">1.34&times;</td></tr>
+      <tr><td>512</td><td>0.25</td><td>0.0197</td><td>0.0308</td><td>0.0278</td><td>0.0324</td><td class="num-warn">16.7%</td><td class="num-good">1.41&times;</td></tr>
+      <tr><td>1024</td><td>0.5</td><td>0.0195</td><td>0.0289</td><td>0.0274</td><td>0.0324</td><td class="num-warn">18.1%</td><td class="num-good">1.41&times;</td></tr>
+      <tr><td>2048</td><td>1.0</td><td>0.0194</td><td>0.0235</td><td>0.0269</td><td>0.0324</td><td class="num-warn">20.3%</td><td class="num-good">1.38&times;</td></tr>
+      <tr><td>4096</td><td>2.0</td><td>0.0135</td><td>0.0174</td><td>0.0258</td><td>0.0324</td><td class="num-bad">25.6%</td><td class="num-good">1.90&times;</td></tr>
+    </table>
+    <p class="small">Throughput in items/cycle (exp003, custom simulator, workload W1, 48 CTAs, seed 1).
+      P<sub>C</sub> = (1/B2 &minus; 1/B3)/(1/B3) computed on throughputs.</p>
+    <div class="fig-row">
+      <figure>
+        <img src="assets/02_throughput_vs_intensity.png" alt="Throughput vs queue intensity">
+        <figcaption><b>Throughput vs queue intensity.</b> B3 (ideal queue) is flat — the pipeline
+          itself doesn't care about payload size; every gap below it is communication cost.
+          B0 falls at large payloads because bulk mode must round-trip big intermediates
+          through memory.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/01_demand_latency_vs_intensity.png" alt="Demand latency vs queue intensity">
+        <figcaption><b>Demand latency vs queue intensity.</b> The key non-result: ordinary
+          memory-request latency barely moves as queue traffic grows — below saturation,
+          queue traffic does <em>not</em> meaningfully victimize demand traffic. The penalty
+          P<sub>C</sub> is the producer/consumer paying for their own enqueue/dequeue, not
+          collateral damage.</figcaption>
+      </figure>
+    </div>
+    <div class="fig-row">
+      <figure>
+        <img src="assets/04_noc_hotspot_vs_intensity.png" alt="NoC hotspot utilisation">
+        <figcaption><b>Hottest-link utilisation.</b> B2 loads the busiest mesh link visibly more
+          than B3; the analytical model predicted this link is the first resource to bind.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/03_bank_util_vs_intensity.png" alt="L2 bank utilisation">
+        <figcaption><b>Mean L2-bank utilisation.</b> Banks load second; at these operating
+          points both resources are far from saturation — which is exactly why demand
+          latency stays flat.</figcaption>
+      </figure>
+    </div>
+
+    <h3>7.2&nbsp;&nbsp;Where it turns severe</h3>
+    <p>Three regions push the penalty from "tax" to "bottleneck":</p>
+    <table>
+      <tr><th style="text-align:left">Severe region</th><th style="text-align:left">Experiment</th><th>P<sub>C</sub></th><th style="text-align:left">Mechanism</th></tr>
+      <tr><td style="text-align:left"><b>Hotspot placement</b> — all queues homed on 2 of 8 L2 slices, 4 KiB payload</td><td style="text-align:left">exp008 (W8)</td><td class="num-bad">271%</td><td style="text-align:left">the two slices' links/banks saturate; everything queues behind them</td></tr>
+      <tr><td style="text-align:left"><b>Footprint overflow</b> — queue storage &ge; L2 capacity</td><td style="text-align:left">exp004/exp015 (W7)</td><td class="num-bad">50&ndash;134%</td><td style="text-align:left">pinned queue lines evict reusable data (demand miss rate 0.21 &rarr; <b>0.94</b>), then spill to HBM</td></tr>
+      <tr><td style="text-align:left"><b>Fine-grained metadata</b> — small items, extra atomics, fast polling</td><td style="text-align:left">exp007 (W6)</td><td class="num-bad">33%</td><td style="text-align:left">the per-slice atomic unit approaches saturation (utilisation 0.47)</td></tr>
+    </table>
+    <figure>
+      <img src="assets/08_ideal_gap.png" alt="Real-vs-ideal gap per workload">
+      <figcaption><b>P<sub>C</sub> across all ten workload families</b> (exp010, default operating
+        points). Most families sit in the 10&ndash;27% band; W7 (cache pollution) already shows
+        50% at defaults — the severe regions above push far beyond this scale.</figcaption>
+    </figure>
+    <figure>
+      <img src="assets/06_miss_vs_footprint.png" alt="Demand miss rate vs queue footprint">
+      <figcaption><b>Cache pollution, isolated.</b> Demand-traffic miss rate vs queue footprint
+        (as a fraction of L2). B2's pinned queue lines crowd out reusable data as footprint
+        grows; the bypass ablation (A6 — queue lines made non-cacheable) stays flat at the
+        no-queue miss rate, proving pollution is fully separable from the transport cost.</figcaption>
+    </figure>
+    <h3>7.3&nbsp;&nbsp;Imbalance shrinks the problem</h3>
+    <p>
+      When producer and consumer rates differ (exp006), the slower stage dominates total time
+      and <em>hides</em> communication cost: P<sub>C</sub> peaks at balance (16.5%) and falls
+      to 11&ndash;12% at 3&times; imbalance. Communication fabric only matters for pipelines
+      someone bothered to balance — an important scoping fact.
+    </p>
+    <figure>
+      <img src="assets/05_occupancy_vs_rate_ratio.png" alt="Queue occupancy vs rate ratio">
+      <figcaption><b>Queue occupancy vs producer/consumer rate ratio</b> (depth 16). Faster
+        producers fill the queue (occupancy &rarr; depth, backpressure); faster consumers
+        drain it (starvation). The closed-loop model reproduces textbook queue behavior —
+        one of the validation checks.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="r2-h" id="r-cause">
+    <h2 id="r2-h">8&nbsp;&middot;&nbsp;Results 2 — what causes the penalty?</h2>
+    <p>
+      The ablation battery idealizes one resource at a time on top of B2 (queue-heavy W4,
+      64 CTAs) and measures how much of the B2&rarr;B3 gap each idealization recovers.
+      Reading this table is reading the bottleneck:
+    </p>
+    <table>
+      <tr><th style="text-align:left">Ablation (one resource made ideal)</th><th>Gap recovered</th><th style="text-align:left">Interpretation</th></tr>
+      <tr><td style="text-align:left">A5 — payload transport free</td><td class="num-good">48.6%</td><td style="text-align:left">moving payload bytes is the largest cost</td></tr>
+      <tr><td style="text-align:left">A4 — metadata/atomics free</td><td class="num-good">39.9%</td><td style="text-align:left">synchronization is second</td></tr>
+      <tr><td style="text-align:left">A2 — infinite NoC bandwidth</td><td>26.4%</td><td style="text-align:left">network contention matters</td></tr>
+      <tr><td style="text-align:left">A1 — infinite L2 bank bandwidth</td><td>11.5%</td><td style="text-align:left">banks are a minor constraint here</td></tr>
+      <tr><td style="text-align:left">A3 — infinite L2 capacity</td><td>1.7%</td><td style="text-align:left">no pollution in this region (small footprint)</td></tr>
+      <tr><td style="text-align:left">A6 — queue-line bypass (non-cacheable)</td><td>1.1%</td><td style="text-align:left">confirms A3; bypass fixes only pollution</td></tr>
+      <tr><td style="text-align:left">A8 — demand-priority routing</td><td>2.1%</td><td style="text-align:left" rowspan="2">logical QoS is <b>not</b> the answer</td></tr>
+      <tr><td style="text-align:left">A7 — queue-priority routing</td><td class="num-bad">&minus;1.9%</td></tr>
+    </table>
+    <p class="small">exp009; "gap recovered" = (thr<sub>ablation</sub> &minus; thr<sub>B2</sub>) / (thr<sub>B3</sub> &minus; thr<sub>B2</sub>).
+      Percentages overlap (removing one bottleneck exposes the next), so they sum &gt;100%.</p>
+    <div class="callout">
+      <strong>Why this matters for the architecture:</strong> the two dominant terms —
+      payload transport and metadata synchronization — are exactly the two things a queue
+      fabric (planar or 3D) moves off the shared path. Capacity effects, which a cheap cache
+      policy fixes, are negligible outside the overflow region. And the two QoS rows justify
+      the whole "physical vs logical isolation" framing: reprioritizing traffic on
+      shared wires recovers nothing, because the wires themselves are the constraint.
+    </div>
+  </section>
+
+  <section aria-labelledby="r3-h" id="r-planar">
+    <h2 id="r3-h">9&nbsp;&middot;&nbsp;Results 3 — can planar remedies fix it?</h2>
+    <p>
+      Before any 3D claim, the strong planar alternatives get their shot. In the severe
+      hotspot region (W8, 4 KiB payload — the best possible showcase for any remedy):
+    </p>
+    <table>
+      <tr><th style="text-align:left">Remedy</th><th>Gap recovered</th><th style="text-align:left">Verdict</th></tr>
+      <tr><td style="text-align:left">B5 — separate virtual channels</td><td class="num-bad">&minus;0.1%</td><td style="text-align:left">logical isolation fails: the physical slice is the bottleneck</td></tr>
+      <tr><td style="text-align:left">B6 — dedicated planar queue SRAM (per slice, hardware engines + events)</td><td>72.3%</td><td style="text-align:left">removing L2 sharing is most of the fix</td></tr>
+      <tr><td style="text-align:left">B7 — B6 + dedicated planar queue network</td><td>75.1%</td><td style="text-align:left">the strongest planar design</td></tr>
+      <tr><td style="text-align:left">B8 — 3D stacked queue tier (per-SM portals)</td><td class="num-good">83.7%</td><td style="text-align:left">best, by a consistent margin</td></tr>
+    </table>
+    <figure>
+      <img src="assets/11_planar_vs_3d_severe.png" alt="Planar vs 3D recovery in the severe region">
+      <figcaption><b>Severe-region shoot-out</b> (exp008, hotspot + 4 KiB payload). Dashed line
+        = full recovery (ideal queue). The ordering VCs &lt; planar SRAM &lt; planar SRAM+net
+        &lt; 3D holds in every region tested; only the magnitudes change.</figcaption>
+    </figure>
+    <p>
+      Across the full workload grid (exp010), B7 recovers 40&ndash;67% and B8 recovers
+      55&ndash;84%, a persistent B8&minus;B7 margin of ~0.2&ndash;0.3 of the gap. The fairness
+      point: <b>B7's dedicated planar network has <em>more</em> aggregate bandwidth than B8's
+      vertical links, and still loses</b> — the 3D edge is path length (a producer's queue
+      op takes zero planar hops), not bandwidth. BookSim independently confirms the network
+      part: with per-SM vertical portals, demand-class latency stays flat (19.4&rarr;22.3
+      cycles) across a 24&times; increase in queue traffic that drives the planar variants to
+      saturation.
+    </p>
+    <figure>
+      <img src="assets/10_gap_recovery.png" alt="Gap recovery by design across workloads">
+      <figcaption><b>Gap recovery per workload</b> (exp010, all ten workload families).
+        B6 (planar SRAM), B7 (+planar network), B8 (3D). The 3D bar is highest everywhere,
+        but the planar bars are never negligible — this is why the verdict is conditional
+        rather than absolute.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="r4-h" id="r-3d">
+    <h2 id="r4-h">10&nbsp;&middot;&nbsp;Results 4 — the 3D design space</h2>
+    <h3>10.1&nbsp;&nbsp;Six organizations, one clear winner and one trap</h3>
+    <p>
+      "3D queue fabric" is not one design. Six variants differ in <em>where the portals are</em>
+      (how a CTA physically reaches the stacked die) and <em>what is stacked</em>
+      (payload, metadata, or both). Gap recovery at three payload sizes (exp013, W1):
+    </p>
+    <table>
+      <tr><th style="text-align:left">Design</th><th style="text-align:left">Portal / placement</th><th>256 B</th><th>1 KiB</th><th>4 KiB</th><th style="text-align:left">Verdict</th></tr>
+      <tr><td style="text-align:left"><b>3D-D</b></td><td style="text-align:left">one vertical link per SM; payload+metadata stacked</td><td class="num-good">0.78</td><td class="num-good">0.69</td><td class="num-good">0.42</td><td style="text-align:left"><b>best everywhere</b></td></tr>
+      <tr><td style="text-align:left">3D-E</td><td style="text-align:left">one link per 2-SM cluster</td><td>0.53</td><td>0.46</td><td class="num-bad">&minus;0.02</td><td style="text-align:left">sharing portals already hurts</td></tr>
+      <tr><td style="text-align:left">3D-A</td><td style="text-align:left">portals at L2-slice nodes (queue ops cross the mesh first)</td><td>0.41</td><td>0.33</td><td class="num-bad">&minus;0.07</td><td style="text-align:left">&asymp; planar B7, pointless</td></tr>
+      <tr><td style="text-align:left">3D-B</td><td style="text-align:left">payload stacked, metadata stays in L2</td><td>0.54</td><td>0.48</td><td>0.29</td><td style="text-align:left">half-measure, half the benefit</td></tr>
+      <tr><td style="text-align:left">3D-C</td><td style="text-align:left">metadata stacked (hardware events), payload stays in L2</td><td>0.52</td><td>0.42</td><td>0.27</td><td style="text-align:left">the cheap option; wins the metadata-heavy region</td></tr>
+      <tr><td style="text-align:left"><b>3D-F</b></td><td style="text-align:left">one global portal for the whole chip</td><td>0.32</td><td>0.05</td><td class="num-bad"><b>&minus;2.43</b></td><td style="text-align:left"><b>worse than doing nothing</b> — the portal saturates</td></tr>
+      <tr><td style="text-align:left">B7 (reference)</td><td style="text-align:left">best planar</td><td>0.42</td><td>0.42</td><td>0.38</td><td style="text-align:left">the bar to clear</td></tr>
+    </table>
+    <div class="callout warn">
+      <strong>The 3D-F trap deserves emphasis.</strong> A centralized stacked tier turns the
+      one vertical access point into a hotspot worse than the L2 hotspot it replaced —
+      recovery &minus;243% means it more than <em>tripled</em> the penalty. The research
+      position warned that "the bottleneck may simply move to the vertical endpoint"; this is
+      that warning, measured. Any real proposal must budget vertical bandwidth per SM or per
+      small cluster, never globally.
+    </div>
+    <h3>10.2&nbsp;&nbsp;How much vertical bandwidth does it need?</h3>
+    <div class="fig-row">
+      <figure>
+        <img src="assets/13_vlink_bandwidth_sensitivity.png" alt="Vertical bandwidth sensitivity">
+        <figcaption><b>Bandwidth sensitivity</b> (exp014): below ~16&nbsp;B/cycle per link the 3D
+          design underperforms the planar B7; gains flatten past 64&nbsp;B/cycle. This puts the
+          requirement in <em>hybrid-bonding</em> territory rather than sparse TSVs.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/14_vlink_latency_sensitivity.png" alt="Vertical latency sensitivity">
+        <figcaption><b>Latency sensitivity:</b> 2 &rarr; 32 cycles of one-way vertical latency
+          costs only 4&ndash;15% — the asynchronous engine/event protocol hides latency well.
+          Bandwidth, not latency, is the binding constraint.</figcaption>
+      </figure>
+    </div>
+    <h3>10.3&nbsp;&nbsp;Energy</h3>
+    <figure>
+      <img src="assets/12_energy_by_design.png" alt="Energy per item by design">
+      <figcaption><b>Communication energy per pipeline item</b> (event counts &times; nominal
+        per-event energies: L2 access 20&nbsp;pJ, queue SRAM 10&nbsp;pJ, NoC 6&nbsp;pJ/flit-hop,
+        vertical 2&nbsp;pJ/flit, HBM 3.9&nbsp;pJ/B — values are assumptions with sensitivity
+        ranges, so compare bars, not absolutes). B2 = 6,567&nbsp;pJ/item; B7 = 6,101 (a planar
+        network still burns router energy); 3D-D = 4,819 (<b>&minus;27%</b> vs B2), near the
+        B3 floor of 4,455.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="r5-h" id="r-region">
+    <h2 id="r5-h">11&nbsp;&middot;&nbsp;Results 5 — the benefit-region map</h2>
+    <p>
+      The study's single most important artifact: P<sub>C</sub> and the 3D payoff mapped over
+      queue intensity (payload size) &times; queue depth (which sets the L2 footprint,
+      annotated <code>fp</code> in each cell as a fraction of L2 capacity).
+    </p>
+    <figure>
+      <img src="assets/15_benefit_region_pc.png" alt="Benefit region: communication penalty">
+      <figcaption><b>Where the problem lives.</b> A flat ~15&ndash;25% penalty floor across most
+        of the space; the bottleneck region is the top-right corner where big payloads meet
+        deep queues and the footprint exceeds L2 (fp = 2&ndash;4): P<sub>C</sub> = 51% and 134%.</figcaption>
+    </figure>
+    <div class="fig-row">
+      <figure>
+        <img src="assets/15_benefit_region_s3d.png" alt="Benefit region: 3D speedup">
+        <figcaption><b>Where 3D pays.</b> S<sub>3D</sub> = T<sub>B2</sub>/T<sub>B8</sub>:
+          1.10&ndash;1.16&times; in the moderate region, 1.40&ndash;2.07&times; exactly where the
+          penalty is — benefit tracks problem.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/15_benefit_region_3d_vs_planar.png" alt="Benefit region: 3D vs planar">
+        <figcaption><b>The honest margin.</b> 3D vs the strongest planar design
+          (T<sub>B7</sub>/T<sub>B8</sub>): a constant 1.01&ndash;1.06&times; — largest for small
+          payloads (latency-bound, path length wins) and thinnest at 4 KiB (vertical
+          bandwidth-bound).</figcaption>
+      </figure>
+    </div>
+    <div class="fig-row">
+      <figure>
+        <img src="assets/07_kitsune_speedup.png" alt="Kitsune speedup per workload">
+        <figcaption><b>Context: Kitsune vs bulk per workload</b> (exp010). Dashed line = 1&times;.
+          Note W9's bar below the line — the preserved negative result (&sect;13).</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/09_3d_speedup.png" alt="3D speedup per workload">
+        <figcaption><b>3D speedup over shared-L2 Kitsune per workload</b> — modest (1.03&ndash;1.10&times;)
+          in the median cases, meaningful only in the stressed families.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="val-h" id="validation">
+    <h2 id="val-h">12&nbsp;&middot;&nbsp;Cross-simulator validation</h2>
+    <p>
+      A single simulator proving its author's hypothesis is worth little. The plan requires
+      <em>trend agreement</em> (same direction and shape, not identical numbers) across
+      independently-built platforms, plus explanations for every disagreement.
+    </p>
+    <h3>12.1&nbsp;&nbsp;What all platforms agree on</h3>
+    <table>
+      <tr><th style="text-align:left">Claim</th><th style="text-align:left">Analytical</th><th style="text-align:left">Custom DES</th><th style="text-align:left">SST</th><th style="text-align:left">BookSim</th></tr>
+      <tr><td style="text-align:left">P<sub>C</sub> grows monotonically with payload</td><td style="text-align:left">8% &rarr; steep past ratio&asymp;1&ndash;2</td><td style="text-align:left">15% &rarr; 26%</td><td style="text-align:left">30% &rarr; 69%</td><td style="text-align:left">n/a (no pipeline)</td></tr>
+      <tr><td style="text-align:left">Demand latency ~flat below saturation (no victim effect)</td><td style="text-align:left">predicted</td><td style="text-align:left">&asymp;flat</td><td style="text-align:left">363&rarr;369 cyc</td><td style="text-align:left">24&rarr;32 cyc</td></tr>
+      <tr><td style="text-align:left">Hotspot concentration is the severe planar failure</td><td style="text-align:left">predicted (hotspot factor)</td><td style="text-align:left">P<sub>C</sub> 271%</td><td style="text-align:left">&mdash;</td><td style="text-align:left">collapse: 827 cyc, unstable</td></tr>
+      <tr><td style="text-align:left">Logical QoS does not isolate</td><td style="text-align:left">&mdash;</td><td style="text-align:left">A7/A8/B5 &asymp; 0</td><td style="text-align:left">&mdash;</td><td style="text-align:left">priority helps mildly, never isolates</td></tr>
+      <tr><td style="text-align:left">Physical vertical isolation is complete; portal count is the new constraint</td><td style="text-align:left">endpoint term</td><td style="text-align:left">3D-F &minus;2.43; needs &ge;32 B/cyc/link</td><td style="text-align:left">&mdash;</td><td style="text-align:left">1 portal saturates @ rq&asymp;0.012; 8 stable</td></tr>
+      <tr><td style="text-align:left">NoC hotspot link binds first, L2 banks second</td><td style="text-align:left">predicted</td><td style="text-align:left">measured ordering</td><td style="text-align:left">consistent</td><td style="text-align:left">consistent</td></tr>
+    </table>
+    <h3>12.2&nbsp;&nbsp;SST validation numbers (exp011)</h3>
+    <table>
+      <tr><th>Payload lines (&times;128 B)</th><th>B2 throughput (items/cyc)</th><th>B3 throughput</th><th>P<sub>C</sub></th><th>B2 demand latency (cyc)</th><th>B2 enqueue latency (cyc)</th></tr>
+      <tr><td>1</td><td>0.00795</td><td>0.01036</td><td>30.3%</td><td>363</td><td>226</td></tr>
+      <tr><td>4</td><td>0.00786</td><td>0.01036</td><td>31.8%</td><td>364</td><td>238</td></tr>
+      <tr><td>8</td><td>0.00781</td><td>0.01036</td><td>32.8%</td><td>365</td><td>247</td></tr>
+      <tr><td>16</td><td>0.00717</td><td>0.01036</td><td>44.5%</td><td>366</td><td>337</td></tr>
+      <tr><td>32</td><td>0.00613</td><td>0.01036</td><td>69.1%</td><td>369</td><td>528</td></tr>
+    </table>
+    <h3>12.3&nbsp;&nbsp;BookSim demand-class latency (exp012, cycles; "sat" = network saturated)</h3>
+    <table>
+      <tr><th>Queue inj. rate</th><th>planar</th><th>planar hot-2</th><th>demand-priority</th><th>8 VCs</th><th>3D per-SM</th><th>3D 2-portal</th><th>3D global</th></tr>
+      <tr><td>0.002</td><td>24.0</td><td>24.0</td><td>24.0</td><td>24.0</td><td class="num-good">19.4</td><td>19.4</td><td>19.4</td></tr>
+      <tr><td>0.012</td><td>25.0</td><td>25.4</td><td>24.6</td><td>25.0</td><td class="num-good">20.1</td><td>20.2</td><td class="num-bad">151.8</td></tr>
+      <tr><td>0.024</td><td>26.3</td><td class="num-bad">160.7</td><td>25.5</td><td>26.3</td><td class="num-good">20.4</td><td class="num-bad">143.2</td><td class="num-bad">sat</td></tr>
+      <tr><td>0.048</td><td>32.0</td><td class="num-bad">827 (sat)</td><td>28.9</td><td>31.8</td><td class="num-good">22.3</td><td class="num-bad">sat</td><td class="num-bad">sat</td></tr>
+    </table>
+    <p class="small">Open-loop, network-only latencies; compare slopes within a column, not absolutes across
+      topologies (route-table tie-breaking differs slightly between the two anynet files).</p>
+    <h3>12.4&nbsp;&nbsp;Disagreements, explained (not hidden)</h3>
+    <table>
+      <tr><th style="text-align:left">Disagreement</th><th style="text-align:left">Explanation</th></tr>
+      <tr><td style="text-align:left">SST's P<sub>C</sub> &asymp; 2&times; the custom sim's at matched configs</td>
+          <td style="text-align:left">SST's L1s are MESI-coherent, so each queue line physically migrates
+          producer-L1 &rarr; L2 &rarr; consumer-L1 with invalidations, and metadata is a shared-line
+          read+write pair — a costlier queue mechanism than the custom sim's L2-atomic model.
+          Real Kitsune (L2 atomics) sits between; the two simulators <em>bracket</em> it.</td></tr>
+      <tr><td style="text-align:left">Analytical saturation onset later than DES</td>
+          <td style="text-align:left">The M/D/1 model has no finite buffers, MSHR limits, or store-and-forward
+          serialization; it is optimistic near saturation by construction. Resource <em>ordering</em> matches.</td></tr>
+      <tr><td style="text-align:left">BookSim absolute latencies tiny vs the others</td>
+          <td style="text-align:left">Network-only cycles; no cache or memory in the loop. Used for slopes only.</td></tr>
+    </table>
+  </section>
+
+  <section aria-labelledby="neg-h" id="negative">
+    <h2 id="neg-h">13&nbsp;&middot;&nbsp;Negative results — kept on purpose</h2>
+    <p class="small">The project charter treats negative results as first-class outcomes. These four
+      each veto a tempting claim.</p>
+    <div class="callout neg">
+      <strong>1. The headline contention story is <em>not</em> supported at Kitsune's published
+      operating points.</strong> No severe demand-victim slowdown exists at moderate payloads,
+      small footprints, and sub-saturation load — in any of the three simulators. This
+      matches Kitsune's own characterization; the pilot's contribution is mapping where that
+      stops being true.
+    </div>
+    <div class="callout neg">
+      <strong>2. Naive multi-stage Kitsune loses outright.</strong> The 3-stage W9 pipeline ran at
+      0.82&times; the plain bulk-synchronous baseline — dividing the same SMs across three
+      coupled stages made everything worse. Stage partitioning quality gates the whole
+      execution model; no communication fabric can rescue a badly-cut pipeline.
+    </div>
+    <div class="callout neg">
+      <strong>3. A global stacked tier is worse than nothing.</strong> Design 3D-F (one shared
+      vertical access point) recovered &minus;243% of the gap at 4 KiB payloads: the portal
+      becomes a hotspot worse than the L2 hotspot it replaced.
+    </div>
+    <div class="callout neg">
+      <strong>4. Logical QoS is a dead end for this problem.</strong> Virtual channels and priority
+      arbitration — the cheap, obvious fixes — recovered &asymp;0% everywhere, because the
+      contended resource is physical (slice bandwidth, link capacity), not scheduling order.
+    </div>
+  </section>
+
+  <section aria-labelledby="conc-h" id="conclusion">
+    <h2 id="conc-h">14&nbsp;&middot;&nbsp;Final verdict and region table</h2>
+    <p>
+      The plan defines five possible endings: <b>A</b> strong support, <b>B</b> conditional
+      support, <b>C</b> planar is sufficient, <b>D</b> wrong bottleneck, <b>E</b> problem too
+      small. The evidence lands on
+      <span class="badge b-amber">Conclusion B — conditional support</span>:
+      the strong claim fails because planar remedies are never negligible and the median-case
+      3D increment is small (1&ndash;6% throughput); but C/D/E all fail too, because
+      identifiable regions exist where only physical separation works, stacked capacity is
+      unmatchable by planar designs, path-length gains are real, and energy favors 3D by
+      &asymp;20&ndash;27%.
+    </p>
+    <table>
+      <tr><th style="text-align:left">Workload region</th><th>Kitsune vs bulk</th><th>P<sub>C</sub></th><th style="text-align:left">Main bottleneck</th><th style="text-align:left">Best planar fix (recovery)</th><th style="text-align:left">3D gain</th><th style="text-align:left">3D justified?</th></tr>
+      <tr><td style="text-align:left">Queue-light</td><td>1.34&ndash;1.41&times;</td><td>10&ndash;15%</td><td style="text-align:left">enqueue latency + metadata</td><td style="text-align:left">B7 (~0.42)</td><td style="text-align:left">0.74 rec / +1&ndash;6%</td><td style="text-align:left" class="num-bad">No</td></tr>
+      <tr><td style="text-align:left">Queue-heavy (payload-dominated)</td><td>1.40&times;</td><td>20&ndash;26%</td><td style="text-align:left">payload transport &gt; metadata &gt; NoC</td><td style="text-align:left">B7 (~0.40)</td><td style="text-align:left">0.55&ndash;0.69 rec</td><td style="text-align:left" class="num-warn">Marginal</td></tr>
+      <tr><td style="text-align:left">Metadata-heavy (fine-grained)</td><td>1.30&times;</td><td>19&ndash;33%</td><td style="text-align:left">atomic-unit serialization</td><td style="text-align:left">metadata engine (~0.84)</td><td style="text-align:left">3D-C alone ~0.42</td><td style="text-align:left" class="num-bad">No — a metadata engine (planar or stacked) suffices</td></tr>
+      <tr><td style="text-align:left">Pollution / overflow (footprint &ge; 0.5&times;L2)</td><td>1.41&times;</td><td>50&ndash;134%</td><td style="text-align:left">pinned-line pollution + HBM spill</td><td style="text-align:left">bypass kills pollution; B7 ~0.67; capacity unfixable planar</td><td style="text-align:left">0.82 rec + stacked capacity</td><td style="text-align:left" class="num-good">Yes — conditional</td></tr>
+      <tr><td style="text-align:left">NoC-hotspot (concentrated homes, big payload)</td><td>1.42&times;</td><td>155&ndash;271%</td><td style="text-align:left">slice/link concentration; VCs useless</td><td style="text-align:left">B6/B7 0.72&ndash;0.75</td><td style="text-align:left">0.84 rec / +9%</td><td style="text-align:left" class="num-good">Yes — conditional (but re-hash queue homes first)</td></tr>
+      <tr><td style="text-align:left">Multi-stage, naively partitioned</td><td class="num-bad">0.82&times;</td><td>27%</td><td style="text-align:left">stage imbalance dominates</td><td style="text-align:left">fix the partitioning</td><td style="text-align:left">irrelevant</td><td style="text-align:left" class="num-bad">No</td></tr>
+    </table>
+    <h3>Design guidance, if pursued</h3>
+    <p>
+      Build <b>3D-D</b>: one vertical link per SM (or per 2-SM cluster at most), stacked
+      payload + metadata banks, hardware enqueue/dequeue with credit/ready <em>events</em>
+      (no polling), &ge;32&nbsp;B/cycle per link (hybrid-bonding class density) — latency is
+      forgiving, bandwidth is not. Do not build centralized tiers or slice-side portals.
+      Cheapest high-value subsets: a queue-<em>metadata</em> engine for fine-grained
+      pipelines, and a non-cacheable bypass policy for pollution.
+    </p>
+    <h3>Recommended next steps (in value order)</h3>
+    <ol>
+      <li>Hardware microbenchmarks on a real GPU (persistent ring-buffer + victim kernel,
+        footprint sweeps) to calibrate the two regions that matter.</li>
+      <li>An Accel-Sim (cycle-level GPU simulator) case study of pollution/hotspot-like
+        pipelines for end-to-end confirmation with real warps and occupancy.</li>
+      <li>Thermal and area feasibility of SRAM stacked over a hot GPU die — untested here and
+        first-order for any 3D proposal.</li>
+      <li>Wormhole-accurate NoC modeling to tighten the B7-vs-B8 margin.</li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="lim-h" id="limits">
+    <h2 id="lim-h">15&nbsp;&middot;&nbsp;Limitations &amp; reproducibility</h2>
+    <h3>Limitations (the reasons every number is a trend, not a prediction)</h3>
+    <ol>
+      <li><b>No hardware calibration.</b> No GPU on the experiment machine; NVIDIA's NoC
+        topology, L2 bank mapping, and arbitration are proprietary. All parameters are
+        assumed, scaled values with sensitivity sweeps.</li>
+      <li><b>No end-to-end GPU execution model.</b> Warp scheduling, occupancy, and register
+        pressure are outside scope (gem5 and Accel-Sim were deliberately skipped, with the
+        justification recorded in the project's decision log).</li>
+      <li><b>Scaled system</b> (~1/8 of a large GPU): 8 SMs, 8 MiB L2, 4&times;4 mesh.</li>
+      <li><b>Bracketed queue mechanism:</b> custom sim models L2-atomic queues, SST models
+        coherent-L1 queues; real Kitsune sits between.</li>
+      <li><b>Simplified NoC</b> in the custom sim (store-and-forward per hop, retry
+        backpressure) — slightly flatters short paths; bounded by making all designs move
+        line-granular payloads, and BookSim agrees directionally.</li>
+      <li><b>Energy = event counts &times; nominal pJ</b>; no layout, no thermal model.</li>
+      <li><b>Open-loop BookSim</b> by construction; its stacked-source artifact biases
+        <em>against</em> 3D (conservative).</li>
+    </ol>
+    <h3>Reproducibility</h3>
+    <p>
+      Every experiment directory stores its <code>config.yaml</code>, random seed, git commit
+      hash, raw outputs, parsed CSVs, and regenerable plots; the custom simulator ships a
+      16-test validation suite (conservation, Little's law, determinism, backpressure
+      direction, ablation direction). Tooling: Python 3.10.12, SST 15.0.0 built from source,
+      BookSim2 master + a two-pattern local patch, g++ 11.4. The research repository
+      (separate from this website) contains the full simulator source, all 15 experiment
+      records, per-simulator DESIGN/VALIDATION/RESULTS documents, and the phase reports
+      PHASE_00&ndash;PHASE_07.
+    </p>
+    <p class="small">
+      Source papers &amp; docs referenced by the study: Kitsune (arXiv:2502.18403), WASP
+      (HPCA 2024), 3DLS (IEEE CAL 2026), StreamDQ (arXiv:2607.08993), TokenStack
+      (arXiv:2605.05639), NVIDIA Hopper/CUDA documentation, MICRO 2024 GPU-NoC
+      microbenchmarking. Reported numbers from those papers are cited in the research repo's
+      literature review and were never copied into this study's projections.
+    </p>
+  </section>
+
+  <footer class="site-footer">
+    <p>author : yang-gon kim</p>
+    <p>email : yanggon@g.ucla.edu</p>
+    <p><a href="../../index.html">&larr; back to the report archive</a></p>
+  </footer>
+</main>
+</body>
+</html>
