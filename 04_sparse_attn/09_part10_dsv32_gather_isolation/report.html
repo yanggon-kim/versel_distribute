@@ -354,12 +354,12 @@
 <th>note</th>
 </tr></thead>
 <tbody>
-<tr><td>hbm_tma_copy</td><td>3.9 &ndash; 5.8</td><td>2645 &ndash; 2817</td><td>1.1 &ndash; 6.0</td><td>best-behaved tier; used as the standalone-gather curve</td></tr>
-<tr><td>hbm_naive</td><td>284.4 &ndash; 331.9</td><td>1164 &ndash; 1986</td><td>1.2 &ndash; 7.2</td><td>LDG baseline, consistent with anchor 2</td></tr>
-<tr><td>hbm_tma_read</td><td>237.1 &ndash; 297.1</td><td>1087 &ndash; 3817</td><td>7.4 &ndash; 20.1</td><td>large constant term = the unexplained small-batch anomaly</td></tr>
-<tr><td>pcie_uvm_mapped</td><td>-326.4 &ndash; 26.9</td><td>34 &ndash; 37</td><td>0.1 &ndash; 4.7</td><td>far-tier anchor</td></tr>
-<tr><td>cpu_ddr_mlp</td><td>2.2 &ndash; 28.7</td><td>202 &ndash; 219</td><td>0.2 &ndash; 10.4</td><td>LOWER BOUND (limited by memory-level parallelism at the 23-core quota, not by DRAM)</td></tr>
-<tr><td>hbm_exposed</td><td>-1.2 &ndash; 0.7</td><td>47456 &ndash; 130278</td><td>5.2 &ndash; 110.5</td><td>NOT usable &mdash; delta_layer is noise-dominated</td></tr>
+<tr><td>hbm_tma_copy</td><td>3.9 &ndash; 5.8</td><td>2645 &ndash; 2817</td><td>1.1 &ndash; 6.0</td><td>best-behaved tier; used as the standalone-gather curve (b counts gathered reads only; the copy-out writes &asymp; the same volume again) &middot; <strong>peak 8,000 GB/s (HBM3e) &rarr; util 33&ndash;35%</strong></td></tr>
+<tr><td>hbm_naive</td><td>284.4 &ndash; 331.9</td><td>1164 &ndash; 1986</td><td>1.2 &ndash; 7.2</td><td>LDG baseline, consistent with anchor 2 &middot; <strong>peak 8,000 GB/s (HBM3e) &rarr; util 15&ndash;25%</strong></td></tr>
+<tr><td>hbm_tma_read</td><td>237.1 &ndash; 297.1</td><td>1087 &ndash; 3817</td><td>7.4 &ndash; 20.1</td><td>large constant term = the unexplained small-batch anomaly &middot; <strong>peak 8,000 GB/s (HBM3e) &rarr; util 14&ndash;48%</strong></td></tr>
+<tr><td>pcie_uvm_mapped</td><td>-326.4 &ndash; 26.9</td><td>34 &ndash; 37</td><td>0.1 &ndash; 4.7</td><td>far-tier anchor &middot; <strong>peak 63 GB/s (PCIe Gen5 x16) &rarr; util 54&ndash;59%</strong></td></tr>
+<tr><td>cpu_ddr_mlp</td><td>2.2 &ndash; 28.7</td><td>202 &ndash; 219</td><td>0.2 &ndash; 10.4</td><td>LOWER BOUND (limited by memory-level parallelism at the 23-core quota, not by DRAM) &middot; <strong>peak 576 GB/s (DDR5, assumed) &rarr; util 35&ndash;38%</strong></td></tr>
+<tr><td>hbm_exposed</td><td>-1.2 &ndash; 0.7</td><td>47456 &ndash; 130278</td><td>5.2 &ndash; 110.5</td><td>NOT usable &mdash; delta_layer is noise-dominated &middot; peak n/a (this b is a leak slope, not a bandwidth)</td></tr>
 </tbody>
 </table>
 </div>
