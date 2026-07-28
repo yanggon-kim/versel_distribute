@@ -367,6 +367,7 @@
 </section>
 <section class="card" id="breakdown">
 <h2><span class="num">10</span>Percentage breakdown</h2>
+<p>One decoder layer split into exposed gather / everything else, <strong>per decode step, with the whole layer as the denominator</strong>. Exposed uses the kernel-level estimator (2&times;<code>delta_kernel</code>, the split-launch convention) &mdash; the same low-noise quantity as the section-6 grids. An earlier revision of this table used the layer-level <code>delta_layer</code> estimator, which is noise-dominated (&le;0 in 19/34 cells) and produced values like 0.02% and &minus;0.04% here that contradicted section 6; those are corrected below.</p>
 <div class="scroll">
 <table>
 <thead><tr>
@@ -380,14 +381,15 @@
 <th>hidden % of total</th>
 </tr></thead>
 <tbody>
-<tr><td>b=64, L=128K</td><td>860.5</td><td>0.20</td><td>860.3</td><td>0.02</td><td>99.98</td><td>35.8</td><td>4.16</td></tr>
-<tr><td>b=192, L=128K</td><td>1588.6</td><td>8.21</td><td>1580.4</td><td>0.52</td><td>99.48</td><td>91.6</td><td>5.76</td></tr>
-<tr><td>b=128, L=512K</td><td>2484.2</td><td>-0.98</td><td>2485.2</td><td>-0.04</td><td>100.04</td><td>63.9</td><td>2.57</td></tr>
+<tr><td>b=64, L=128K</td><td>860.5</td><td>3.01</td><td>857.5</td><td>0.35</td><td>99.65</td><td>35.8</td><td>4.16</td></tr>
+<tr><td>b=192, L=128K</td><td>1588.6</td><td>6.69</td><td>1581.9</td><td>0.42</td><td>99.58</td><td>91.6</td><td>5.76</td></tr>
+<tr><td>b=128, L=512K</td><td>2484.2</td><td>4.56</td><td>2479.7</td><td>0.18</td><td>99.82</td><td>63.9</td><td>2.57</td></tr>
 </tbody>
 </table>
 </div>
 <div class="callout">
-<p><code>exposed + other = 100&nbsp;%</code> by construction. <strong>Hidden gather rides <em>under</em> &ldquo;other&rdquo; concurrently and must never be added into that split.</strong> The negative exposed value at (128,&nbsp;512K) is layer-level noise rather than a negative gather; with the kernel-level estimator that cell is +2.28&nbsp;&micro;s per launch (+4.6&nbsp;&micro;s per step).</p>
+<p><code>exposed + other = 100&nbsp;%</code> by construction. <strong>Hidden gather rides <em>under</em> &ldquo;other&rdquo; concurrently and must never be added into that split.</strong></p>
+<p><strong>Do not confuse this table with the section-6 percentage grid &mdash; the denominators differ.</strong> Section 6 normalizes the exposed gather to the <em>fused kernel</em> (per launch: <code>delta_kernel / fusedk_A</code>); this table normalizes it to the <em>whole decoder layer</em> (per step). Example, (64,&nbsp;128K): 1.51&nbsp;/&nbsp;42.83&nbsp;&micro;s = <strong>3.52% of the kernel</strong>, and the same measurement as 2&times;1.51&nbsp;=&nbsp;3.01&nbsp;&micro;s over the 860.5&nbsp;&micro;s layer = <strong>0.35% of the layer</strong>. Both are correct; they answer different questions.</p>
 </div>
 <h3>Reading it per GPU count</h3>
 <p>Under the serving layout each rank runs attention for its own per-rank batch <code>b = B_cluster / N</code>, and gather time is a function of (b, L) only. So the batch axis <em>is</em> the GPU-count axis: fewer GPUs means larger b per rank and proportionally more gather. The planned comparison's per-rank operating points (137, 163, 172, 176) all fall inside 128&ndash;512, where the exposed gather runs 2.05&nbsp;&rarr;&nbsp;8.06&nbsp;&micro;s &mdash; though the b=256 dip noted above sits inside that interval.</p>
