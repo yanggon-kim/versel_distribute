@@ -119,9 +119,9 @@
 <table>
 <thead><tr>
 <th>cell</th>
-<th>expected &micro;s</th>
-<th>measured &micro;s</th>
-<th>deviation</th>
+<th>expected (&micro;s)</th>
+<th>measured (&micro;s)</th>
+<th>deviation (%)</th>
 <th>verdict</th>
 </tr></thead>
 <tbody>
@@ -228,7 +228,7 @@
 <div class="scroll">
 <table>
 <thead><tr>
-<th>context</th>
+<th>context \ batch &mdash; &delta;_kernel (&micro;s/launch)</th>
 <th>b=16</th>
 <th>b=32</th>
 <th>b=64</th>
@@ -251,7 +251,7 @@
 <div class="scroll">
 <table>
 <thead><tr>
-<th>context</th>
+<th>context \ batch &mdash; &delta;_kernel / fusedk_A (%)</th>
 <th>b=16</th>
 <th>b=32</th>
 <th>b=64</th>
@@ -281,13 +281,13 @@
 <table>
 <thead><tr>
 <th>cell</th>
-<th>tma_read</th>
-<th>GB/s</th>
-<th>tma_copy</th>
-<th>GB/s</th>
-<th>naive_read</th>
-<th>naive_copy</th>
-<th>D2 &delta;_kernel</th>
+<th>tma_read (&micro;s)</th>
+<th>(GB/s)</th>
+<th>tma_copy (&micro;s)</th>
+<th>(GB/s)</th>
+<th>naive_read (&micro;s)</th>
+<th>naive_copy (&micro;s)</th>
+<th>D2 &delta;_kernel (&micro;s)</th>
 </tr></thead>
 <tbody>
 <tr><td>b=16, L=32K</td><td>177.29</td><td>121</td><td>11.96</td><td>1798</td><td>347.27</td><td>18.74</td><td>0.49</td></tr>
@@ -308,9 +308,9 @@
 <table>
 <thead><tr>
 <th>mode</th>
-<th>cells</th>
-<th>min GB/s</th>
-<th>max GB/s</th>
+<th>cells (count)</th>
+<th>min (GB/s)</th>
+<th>max (GB/s)</th>
 <th>note</th>
 </tr></thead>
 <tbody>
@@ -326,8 +326,8 @@
 <table>
 <thead><tr>
 <th>threads</th>
-<th>scattered read GB/s</th>
-<th>peakread GB/s</th>
+<th>scattered read (GB/s)</th>
+<th>peakread (GB/s)</th>
 </tr></thead>
 <tbody>
 <tr><td>8</td><td>105.1</td><td>120.7</td></tr>
@@ -396,18 +396,26 @@
 </section>
 <section class="card" id="corun">
 <h2><span class="num">11</span>Co-run interference (D6, complete on the subset grid)</h2>
-<p><em>Terms:</em> the <em>partner</em> is the workload whose slowdown we care about &mdash; a full layer-B forward running on the primary stream; the <em>co-runner</em> is a gather kernel on a second stream; <em>makespan</em> is the wall-clock from the first launch to the last completion of the pair. Interference shows up as partner co-run time exceeding partner solo time.</p>
-<p>Both sides must share one CUDA context or they time-slice instead of overlapping, so the co-runner runs on a second stream inside the same worker process. It is a torch gather (HBM) or a pinned-host stream (PCIe), <em>not</em> the TMA kernel &mdash; absolute gather times are not comparable to the microbench, but the interference is exactly the quantity of interest. The first attempt died at b=192 on a CUDA device-side assert; the root cause was a multi-stream allocator hazard (tensors allocated on the default stream, consumed on the side stream without <code>record_stream()</code>, so the caching allocator could recycle the index buffer mid-read). Fixed and rerun clean.</p>
+<p><strong>Why this section exists.</strong> The tier-substitution model credits an overlap window: <code>exposed<sub>tier</sub> = max(0, t_gather &minus; W)</code> &mdash; up to W of a slow tier's gather is assumed to hide <em>for free</em> under the layer's other work. That &ldquo;for free&rdquo; is an assumption worth attacking: the gather and the compute kernels share one GPU and could fight over the same HBM bandwidth, in which case &ldquo;hidden&rdquo; gather would silently slow everything else and the credit would be partly an illusion. This experiment runs a gather <em>concurrently</em> with the layer and measures whether either side slows down.</p>
+<p><em>The vocabulary, term by term:</em></p>
+<ul>
+<li><strong>Stream</strong>: a CUDA stream is an ordered queue of GPU work. Kernels within one stream run in order; kernels in <em>different</em> streams may run concurrently on the same GPU, sharing its SMs, copy engines and memory system. vLLM normally issues everything into one stream (the <strong>primary stream</strong>), so nothing ever overlaps with the layer &mdash; a <strong>second stream</strong> is the only way to make two workloads genuinely execute at the same time.</li>
+<li><strong>Partner = the full layer-B forward</strong>: the decoder layer run with the HOT index set (Set B of the A/B experiment), i.e. the layer with its own gather made ~free &mdash; <code>t_layer_no_gather</code>, the &ldquo;everything else&rdquo; a tier gather would hide under. Layer-A is not used because its own DRAM gather would double-count.</li>
+<li><strong>CUDA context</strong>: the per-process GPU state container (address space, allocations, loaded kernels, streams). Both sides must share one context &mdash; i.e. run inside the same worker process &mdash; or the GPU time-slices between two processes instead of overlapping them (no MPS on this box).</li>
+<li><strong>Co-runner</strong>: the synthetic gather injected on the second stream &mdash; a torch gather over an HBM pool (<code>src=hbm</code>) or a pinned-host&rarr;device copy sized to the gather bytes (<code>src=pcie</code>). It is <em>not</em> the TMA microbench kernel, so its absolute times are not comparable to D3; only the solo&rarr;co-run <em>change</em> (the interference) is the measurement.</li>
+<li><strong>Makespan</strong>: wall-clock from the first launch to the last completion of the pair (in the CSV, with <code>W_eff = partner_solo + (makespan &minus; partner_corun)</code>).</li>
+</ul>
+<p><em>How to read a row:</em> at (64, 128K) hbm, the gather alone takes 76.2&nbsp;&micro;s but 90.5&nbsp;&micro;s beside the layer (+19% &mdash; the gather got slower), while the layer goes 8275.9&nbsp;&rarr;&nbsp;8246.5&nbsp;&micro;s (&minus;0.4% &mdash; it did not notice). The interference exists but lands entirely on the gather &mdash; exactly what a design that hides gather under compute wants. Engineering note: the first attempt died at b=192 on a CUDA device-side assert; root cause was a multi-stream allocator hazard (tensors allocated on the default stream, consumed on the side stream without <code>record_stream()</code>, so the caching allocator could recycle the index buffer mid-read). Fixed and rerun clean.</p>
 <div class="scroll">
 <table>
 <thead><tr>
 <th>cell</th>
 <th>src</th>
-<th>gather solo</th>
-<th>gather co-run</th>
-<th>partner solo</th>
-<th>partner co-run</th>
-<th>partner &Delta; %</th>
+<th>gather solo (&micro;s)</th>
+<th>gather co-run (&micro;s)</th>
+<th>partner solo (&micro;s)</th>
+<th>partner co-run (&micro;s)</th>
+<th>partner &Delta; (%)</th>
 </tr></thead>
 <tbody>
 <tr><td>b=64, L=128K</td><td>hbm</td><td>76.2</td><td>90.5</td><td>8275.9</td><td>8246.5</td><td>-0.4</td></tr>
@@ -440,7 +448,7 @@
 <th>cell</th>
 <th>baseline &micro;s</th>
 <th>stub &micro;s</th>
-<th>stub / baseline</th>
+<th>stub / baseline (ratio)</th>
 <th>removed math &micro;s</th>
 </tr></thead>
 <tbody>
@@ -547,15 +555,15 @@
 <div class="scroll">
 <table>
 <thead><tr>
-<th>L \ B</th>
-<th>16</th>
-<th>32</th>
-<th>64</th>
-<th>128</th>
-<th>192</th>
-<th>256</th>
-<th>512</th>
-<th>1024</th>
+<th>L \ B &mdash; W (&micro;s/step)</th>
+<th>b=16</th>
+<th>b=32</th>
+<th>b=64</th>
+<th>b=128</th>
+<th>b=192</th>
+<th>b=256</th>
+<th>b=512</th>
+<th>b=1024</th>
 </tr></thead>
 <tbody>
 <tr><td>32K</td><td>35.8</td><td>51.9</td><td>83.0</td><td>140.8</td><td>212.1</td><td>277.6</td><td>518.4</td><td>909.5</td></tr>
@@ -571,15 +579,15 @@
 <div class="scroll">
 <table>
 <thead><tr>
-<th>L \ B</th>
-<th>16</th>
-<th>32</th>
-<th>64</th>
-<th>128</th>
-<th>192</th>
-<th>256</th>
-<th>512</th>
-<th>1024</th>
+<th>L \ B &mdash; b* (GB/s)</th>
+<th>b=16</th>
+<th>b=32</th>
+<th>b=64</th>
+<th>b=128</th>
+<th>b=192</th>
+<th>b=256</th>
+<th>b=512</th>
+<th>b=1024</th>
 </tr></thead>
 <tbody>
 <tr><td>32K</td><td>600</td><td>829</td><td>1036</td><td>1221</td><td>1216</td><td>1239</td><td>1327</td><td>1513</td></tr>
@@ -787,7 +795,7 @@ tierRecalc();
 <th>cell</th>
 <th>predicted (c) &micro;s</th>
 <th>measured (c) &micro;s</th>
-<th>error</th>
+<th>error (%)</th>
 </tr></thead>
 <tbody>
 <tr><td>b=16, L=128K</td><td>1.15</td><td>1.11</td><td>+4%</td></tr>
