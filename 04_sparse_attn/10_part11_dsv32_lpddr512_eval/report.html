@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek-V3.2 &mdash; Part XI: Custom-HBM LPDDR Extension, Honestly Charged (a=0.2 &micro;s, b=512 GB/s)</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  section.card h3{margin:22px 0 6px;font-size:1.05rem;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0 6px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .scroll{overflow-x:auto;}
+  code.k{background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.86em;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" id="toc">
+<div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+<a href="#intro">Overview</a>
+<a href="#systems">1 &middot; Systems under test</a>
+<a href="#method">2 &middot; Method</a>
+<a href="#maxbatch">3 &middot; Max-batch comparison</a>
+<a href="#ladders">4 &middot; Full batch ladders</a>
+<a href="#findings">5 &middot; Findings</a>
+<a href="#caveats">6 &middot; Honesty box</a>
+<a href="#artifacts">Artifacts</a>
+</nav>
+<main>
+<header class="page">
+<h1>DeepSeek-V3.2 &mdash; Part XI: Custom-HBM LPDDR Extension, Honestly Charged</h1>
+<p class="sub">The custom-HBM design point specified end-to-end: each GPU&rsquo;s 8 HBM stacks carry a base die fronting a 128&nbsp;GB/s &times; 128&nbsp;GB LPDDR extension (per GPU: 1,024&nbsp;GB/s wire aggregate, 1,024&nbsp;GB capacity, 1,216&nbsp;GB total). Latent KV lives in LPDDR and is gathered through the base die at an assumed 0.5 wire efficiency &mdash; <strong>b = 512&nbsp;GB/s achieved scatter, a = 0.2&nbsp;&micro;s</strong> &mdash; charged with the measured, in-situ-validated window-credited tier law from Part&nbsp;X. Three GPU-only variants (no KV offload or eviction), batch ladders under each max fit, four context lengths, in LLMServingSim over measured B200 kernels.</p>
+<div class="tags">
+<span class="tag live">50 simulated cells &middot; all steady-state validated (n_eff = b)</span>
+<span class="tag">tier law validated in-situ to 0.28% (Part X)</span>
+<span class="tag">stock anchors reproduce &plusmn;0.02%</span>
+<span class="tag">L &isin; {64K, 128K, 512K, 1M}</span>
+</div>
+</header>
+<section class="card" id="intro">
+<h2><span class="num">&sect;0</span>Overview &mdash; the capacity win survives an honest LPDDR, and a new effect appears</h2>
+<div class="headline">
+<div class="kpi"><div class="v">2.2&times; &rarr; 8.6&times;</div><div class="l">8-GPU custom vs 8-GPU stock: throughput &amp; J/token, 64K &rarr; 1M, at max batch</div></div>
+<div class="kpi"><div class="v">6 &gt; 8</div><div class="l">6 custom GPUs beat 8 stock at every context (1.66&ndash;6.28&times;)</div></div>
+<div class="kpi"><div class="v">1.1 / 2.3 / 5.4&times;</div><div class="l">iso-latency wins at 128K/512K/1M (+4/+17/+49% TPOT)</div></div>
+<div class="kpi"><div class="v">b* &lt; b_max</div><div class="l">NEW: at 512K the throughput-optimal batch sits BELOW the capacity fit &mdash; the LPDDR tax makes marginal sessions net-negative</div></div>
+<div class="kpi"><div class="v">&minus;23% &rarr; &minus;2%</div><div class="l">cost of honest charging vs the flat-BW idealization (Part IX), shrinking with context</div></div>
+</div>
+<p>Part IX evaluated this capacity design with LPDDR idealized to HBM bandwidth. Part X measured what the gather actually costs and how much of it hides. This page closes the loop: the same three-way comparison, with the LPDDR gather charged by the validated law at the user-specified engine spec. The capacity verdict survives &mdash; and the honest model reveals structure the idealization could not: a throughput-<em>optimal</em> batch below the capacity ceiling at long context, and a bandwidth tax that matters most exactly where batches are largest.</p>
+</section>
+<section class="card" id="systems">
+<h2><span class="num">&sect;1</span>Systems under test</h2>
+<div class="scroll"><table>
+<thead><tr><th>variant</th><th>GPUs</th><th>layout</th><th class="num">npu_mem (GiB)</th><th>attention profile</th><th class="num">weights/rank (GiB)</th><th class="num">max batch/GPU @ 64K/128K/512K/1M</th></tr></thead><tbody>
+<tr><td>S8 stock</td><td class="num">8</td><td>TP1+DP8+EP8</td><td class="num">179</td><td>measured <code class="k">bf16-kvfp8</code></td><td class="num">94.65</td><td class="num">28 / 14 / 3 / 1</td></tr>
+<tr><td>C8 custom</td><td class="num">8</td><td>TP1+DP8+EP8</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">94.65</td><td class="num">351 / 176 / 44 / 22</td></tr>
+<tr><td>C6 custom</td><td class="num">6</td><td>TP1+DP6+EP6</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">120.8 (43-expert heavy rank)</td><td class="num">342 / 172 / 43 / 21</td></tr>
+</tbody></table></div>
+<ul class="notes">
+<li>179 GiB = the audited real exposed capacity of a stock B200 (192 GB marketed); 1133 GiB = 179 + 1,024 GB LPDDR (unit conversion audited).</li>
+<li>Weights stay in HBM in every variant (they fit); only latent KV overflows to LPDDR. The 132 B/token indexer key cache is assumed HBM-resident (see &sect;6).</li>
+<li>No KV offload or eviction anywhere: a variant&rsquo;s max batch is its no-eviction fit (64K fits carry a 2-session headroom for output-token block growth).</li>
+</ul>
+</section>
+<section class="card" id="method">
+<h2><span class="num">&sect;2</span>Method &mdash; validated pieces only</h2>
+<ul class="notes">
+<li><strong>EP-rank proxy</strong>: one simulated tp1 rank stands for each DP=EP rank; cluster batch = N&times;b, cluster throughput = N&times;rank. TPOT at equal per-rank batch is GPU-count-invariant (measured: MoE latency flat in expert count).</li>
+<li><strong>The lpddr512 patch</strong>: only the 115 pure-decode attention rows change: <code class="k">t_att += max( floor(N), a + N/b &minus; W(n) ) &minus; 2&middot;&delta;_kernel(n)</code> with N = n&middot;2048&middot;656 B (latent gather bytes only), W = 2&middot;fusedk_B (measured overlap window), floor = 0.67 + N/44,642&middot;10&sup3; &micro;s (measured HBM exposure floor), 2&middot;&delta;_kernel = measured HBM exposed gather (subtracted to avoid double counting). Weights, indexer scan, top-k, MoE, dense: untouched measured values. The window-credited law reproduced 8 in-situ PCIe layer measurements to &le;0.28% (Part X &sect;14).</li>
+<li><strong>Steady state</strong>: staggered-output workloads; steady TPOT = the last-prefilled request&rsquo;s TPOT over its final 64 tokens at full concurrency; validity gate n_eff = b at the steady-window midpoint (50/50 cells pass); decode power = tail plateau of the per-second power series; TTFT = first request&rsquo;s single-prefill latency.</li>
+<li><strong>Batch ladder</strong>: max fit + descending powers of two (&ge;8; down to 1 when max &le; 8) &mdash; the menu between throughput-max and latency-min.</li>
+<li><strong>Anchors</strong>: the stock cells reproduce the Part IX runs &mdash; (14, 128K) +0.01%, (28, 64K) &minus;0.02%.</li>
+</ul>
+</section>
+<section class="card" id="maxbatch">
+<h2><span class="num">&sect;3</span>Max-batch operating points</h2>
+<p class="lead">Each variant at its no-eviction capacity fit. J/token ratios equal throughput ratios (decode is power-flat at ~1,268 W per rank-node).</p>
+<div class="scroll"><table>
+<thead><tr><th>L</th><th>S8: B_cl / TPOT (ms) / tok/s / J-tok</th><th>C8: B_cl / TPOT (ms) / tok/s / J-tok</th><th>C6: B_cl / TPOT (ms) / tok/s / J-tok</th><th class="num">C8/S8 (&times;)</th><th class="num">C6/S8 (&times;)</th></tr></thead><tbody>
+<tr><td>64K</td><td class="num">224 / 27.4 / 8,174 / 1.241</td><td class="num">2808 / 153.94 / 18,241 / 0.556</td><td class="num">2052 / 151.24 / 13,568 / 0.561</td><td class="num"><strong>2.23</strong></td><td class="num">1.66</td></tr>
+<tr><td>128K</td><td class="num">112 / 26.19 / 4,277 / 2.373</td><td class="num">1408 / 117.84 / 11,948 / 0.849</td><td class="num">1032 / 116.26 / 8,877 / 0.857</td><td class="num"><strong>2.79</strong></td><td class="num">2.08</td></tr>
+<tr><td>512K</td><td class="num">24 / 24.07 / 997 / 10.18</td><td class="num">352 / 69.92 / 5,034 / 2.016</td><td class="num">258 / 68.4 / 3,772 / 2.018</td><td class="num"><strong>5.05</strong></td><td class="num">3.78</td></tr>
+<tr><td>1M</td><td class="num">8 / 23.08 / 347 / 29.286</td><td class="num">176 / 59.42 / 2,962 / 3.427</td><td class="num">126 / 57.87 / 2,177 / 3.496</td><td class="num"><strong>8.55</strong></td><td class="num">6.28</td></tr>
+</tbody></table></div>
+</section>
+<section class="card" id="ladders">
+<h2><span class="num">&sect;4</span>Full batch ladders per context</h2>
+<p class="lead">The menu between the extremes. Bold rows: each variant&rsquo;s throughput-best point &mdash; note it is NOT always the max batch.</p>
+<h3>64K context</h3>
+<div class="scroll"><table>
+<thead><tr><th>variant</th><th class="num">b/GPU</th><th class="num">cluster batch</th><th class="num">TPOT (ms)</th><th class="num">user rate (tok/s)</th><th class="num">cluster (tok/s)</th><th class="num">TTFT (s)</th><th class="num">J/token</th></tr></thead><tbody>
+<tr><td><strong>S8 &mdash; 8&times; stock</strong></td><td class="num"><strong>28</strong></td><td class="num">224</td><td class="num">27.4</td><td class="num">36.5</td><td class="num"><strong>8,174</strong></td><td class="num">3.4</td><td class="num">1.241</td></tr>
+<tr><td>S8 &mdash; 8&times; stock</td><td class="num">16</td><td class="num">128</td><td class="num">25.37</td><td class="num">39.4</td><td class="num">5,045</td><td class="num">3.4</td><td class="num">2.012</td></tr>
+<tr><td>S8 &mdash; 8&times; stock</td><td class="num">8</td><td class="num">64</td><td class="num">22.48</td><td class="num">44.5</td><td class="num">2,847</td><td class="num">3.4</td><td class="num">3.566</td></tr>
+<tr><td><strong>C8 &mdash; 8&times; custom</strong></td><td class="num"><strong>351</strong></td><td class="num">2808</td><td class="num">153.94</td><td class="num">6.5</td><td class="num"><strong>18,241</strong></td><td class="num">3.4</td><td class="num">0.556</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">256</td><td class="num">2048</td><td class="num">122.53</td><td class="num">8.2</td><td class="num">16,715</td><td class="num">3.4</td><td class="num">0.607</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">128</td><td class="num">1024</td><td class="num">84.24</td><td class="num">11.9</td><td class="num">12,156</td><td class="num">3.4</td><td class="num">0.834</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">64</td><td class="num">512</td><td class="num">51.21</td><td class="num">19.5</td><td class="num">9,999</td><td class="num">3.4</td><td class="num">1.015</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">32</td><td class="num">256</td><td class="num">29.78</td><td class="num">33.6</td><td class="num">8,596</td><td class="num">3.4</td><td class="num">1.18</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">16</td><td class="num">128</td><td class="num">25.69</td><td class="num">38.9</td><td class="num">4,982</td><td class="num">3.4</td><td class="num">2.037</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">8</td><td class="num">64</td><td class="num">22.48</td><td class="num">44.5</td><td class="num">2,847</td><td class="num">3.4</td><td class="num">3.566</td></tr>
+<tr><td><strong>C6 &mdash; 6&times; custom</strong></td><td class="num"><strong>342</strong></td><td class="num">2052</td><td class="num">151.24</td><td class="num">6.6</td><td class="num"><strong>13,568</strong></td><td class="num">3.4</td><td class="num">0.561</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">256</td><td class="num">1536</td><td class="num">122.57</td><td class="num">8.2</td><td class="num">12,532</td><td class="num">3.4</td><td class="num">0.607</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">128</td><td class="num">768</td><td class="num">84.27</td><td class="num">11.9</td><td class="num">9,114</td><td class="num">3.4</td><td class="num">0.835</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">64</td><td class="num">384</td><td class="num">51.27</td><td class="num">19.5</td><td class="num">7,490</td><td class="num">3.4</td><td class="num">1.016</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">32</td><td class="num">192</td><td class="num">29.76</td><td class="num">33.6</td><td class="num">6,452</td><td class="num">3.4</td><td class="num">1.18</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">25.68</td><td class="num">38.9</td><td class="num">3,738</td><td class="num">3.4</td><td class="num">2.036</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">22.5</td><td class="num">44.4</td><td class="num">2,133</td><td class="num">3.4</td><td class="num">3.569</td></tr>
+</tbody></table></div>
+<h3>128K context</h3>
+<div class="scroll"><table>
+<thead><tr><th>variant</th><th class="num">b/GPU</th><th class="num">cluster batch</th><th class="num">TPOT (ms)</th><th class="num">user rate (tok/s)</th><th class="num">cluster (tok/s)</th><th class="num">TTFT (s)</th><th class="num">J/token</th></tr></thead><tbody>
+<tr><td><strong>S8 &mdash; 8&times; stock</strong></td><td class="num"><strong>14</strong></td><td class="num">112</td><td class="num">26.19</td><td class="num">38.2</td><td class="num"><strong>4,277</strong></td><td class="num">7.3</td><td class="num">2.373</td></tr>
+<tr><td>S8 &mdash; 8&times; stock</td><td class="num">8</td><td class="num">64</td><td class="num">23.42</td><td class="num">42.7</td><td class="num">2,733</td><td class="num">7.3</td><td class="num">3.714</td></tr>
+<tr><td>S8 &mdash; 8&times; stock</td><td class="num">4</td><td class="num">32</td><td class="num">22.25</td><td class="num">44.9</td><td class="num">1,438</td><td class="num">7.3</td><td class="num">7.058</td></tr>
+<tr><td><strong>C8 &mdash; 8&times; custom</strong></td><td class="num"><strong>176</strong></td><td class="num">1408</td><td class="num">117.84</td><td class="num">8.5</td><td class="num"><strong>11,948</strong></td><td class="num">7.3</td><td class="num">0.849</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">128</td><td class="num">1024</td><td class="num">95.53</td><td class="num">10.5</td><td class="num">10,719</td><td class="num">7.3</td><td class="num">0.946</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">64</td><td class="num">512</td><td class="num">57.6</td><td class="num">17.4</td><td class="num">8,889</td><td class="num">7.3</td><td class="num">1.141</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">32</td><td class="num">256</td><td class="num">32.45</td><td class="num">30.8</td><td class="num">7,888</td><td class="num">7.3</td><td class="num">1.286</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">16</td><td class="num">128</td><td class="num">27.27</td><td class="num">36.7</td><td class="num">4,693</td><td class="num">7.3</td><td class="num">2.163</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">8</td><td class="num">64</td><td class="num">23.42</td><td class="num">42.7</td><td class="num">2,733</td><td class="num">7.3</td><td class="num">3.714</td></tr>
+<tr><td><strong>C6 &mdash; 6&times; custom</strong></td><td class="num"><strong>172</strong></td><td class="num">1032</td><td class="num">116.26</td><td class="num">8.6</td><td class="num"><strong>8,877</strong></td><td class="num">7.3</td><td class="num">0.857</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">128</td><td class="num">768</td><td class="num">95.57</td><td class="num">10.5</td><td class="num">8,036</td><td class="num">7.3</td><td class="num">0.947</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">64</td><td class="num">384</td><td class="num">57.66</td><td class="num">17.3</td><td class="num">6,659</td><td class="num">7.3</td><td class="num">1.143</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">32</td><td class="num">192</td><td class="num">32.43</td><td class="num">30.8</td><td class="num">5,920</td><td class="num">7.3</td><td class="num">1.286</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">27.26</td><td class="num">36.7</td><td class="num">3,522</td><td class="num">7.3</td><td class="num">2.161</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">23.44</td><td class="num">42.7</td><td class="num">2,048</td><td class="num">7.3</td><td class="num">3.717</td></tr>
+</tbody></table></div>
+<h3>512K context</h3>
+<div class="scroll"><table>
+<thead><tr><th>variant</th><th class="num">b/GPU</th><th class="num">cluster batch</th><th class="num">TPOT (ms)</th><th class="num">user rate (tok/s)</th><th class="num">cluster (tok/s)</th><th class="num">TTFT (s)</th><th class="num">J/token</th></tr></thead><tbody>
+<tr><td><strong>S8 &mdash; 8&times; stock</strong></td><td class="num"><strong>3</strong></td><td class="num">24</td><td class="num">24.07</td><td class="num">41.5</td><td class="num"><strong>997</strong></td><td class="num">40.8</td><td class="num">10.18</td></tr>
+<tr><td>S8 &mdash; 8&times; stock</td><td class="num">2</td><td class="num">16</td><td class="num">22.95</td><td class="num">43.6</td><td class="num">697</td><td class="num">40.8</td><td class="num">14.563</td></tr>
+<tr><td>S8 &mdash; 8&times; stock</td><td class="num">1</td><td class="num">8</td><td class="num">21.8</td><td class="num">45.9</td><td class="num">367</td><td class="num">40.7</td><td class="num">27.664</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">44</td><td class="num">352</td><td class="num">69.92</td><td class="num">14.3</td><td class="num">5,034</td><td class="num">40.8</td><td class="num">2.016</td></tr>
+<tr><td><strong>C8 &mdash; 8&times; custom</strong></td><td class="num"><strong>32</strong></td><td class="num">256</td><td class="num">49.32</td><td class="num">20.3</td><td class="num"><strong>5,191</strong></td><td class="num">40.8</td><td class="num">1.955</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">16</td><td class="num">128</td><td class="num">36.42</td><td class="num">27.5</td><td class="num">3,515</td><td class="num">40.8</td><td class="num">2.888</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">8</td><td class="num">64</td><td class="num">28.27</td><td class="num">35.4</td><td class="num">2,264</td><td class="num">40.8</td><td class="num">4.484</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">43</td><td class="num">258</td><td class="num">68.4</td><td class="num">14.6</td><td class="num">3,772</td><td class="num">40.8</td><td class="num">2.018</td></tr>
+<tr><td><strong>C6 &mdash; 6&times; custom</strong></td><td class="num"><strong>32</strong></td><td class="num">192</td><td class="num">49.3</td><td class="num">20.3</td><td class="num"><strong>3,894</strong></td><td class="num">40.8</td><td class="num">1.954</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">36.4</td><td class="num">27.5</td><td class="num">2,637</td><td class="num">40.8</td><td class="num">2.887</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">28.29</td><td class="num">35.3</td><td class="num">1,697</td><td class="num">40.8</td><td class="num">4.487</td></tr>
+</tbody></table></div>
+<h3>1M context</h3>
+<div class="scroll"><table>
+<thead><tr><th>variant</th><th class="num">b/GPU</th><th class="num">cluster batch</th><th class="num">TPOT (ms)</th><th class="num">user rate (tok/s)</th><th class="num">cluster (tok/s)</th><th class="num">TTFT (s)</th><th class="num">J/token</th></tr></thead><tbody>
+<tr><td><strong>S8 &mdash; 8&times; stock</strong></td><td class="num"><strong>1</strong></td><td class="num">8</td><td class="num">23.08</td><td class="num">43.3</td><td class="num"><strong>347</strong></td><td class="num">142.9</td><td class="num">29.286</td></tr>
+<tr><td><strong>C8 &mdash; 8&times; custom</strong></td><td class="num"><strong>22</strong></td><td class="num">176</td><td class="num">59.42</td><td class="num">16.8</td><td class="num"><strong>2,962</strong></td><td class="num">143.1</td><td class="num">3.427</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">16</td><td class="num">128</td><td class="num">48.89</td><td class="num">20.5</td><td class="num">2,618</td><td class="num">143.1</td><td class="num">3.877</td></tr>
+<tr><td>C8 &mdash; 8&times; custom</td><td class="num">8</td><td class="num">64</td><td class="num">34.38</td><td class="num">29.1</td><td class="num">1,862</td><td class="num">143.1</td><td class="num">5.452</td></tr>
+<tr><td><strong>C6 &mdash; 6&times; custom</strong></td><td class="num"><strong>21</strong></td><td class="num">126</td><td class="num">57.87</td><td class="num">17.3</td><td class="num"><strong>2,177</strong></td><td class="num">143.0</td><td class="num">3.496</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">48.88</td><td class="num">20.5</td><td class="num">1,964</td><td class="num">143.0</td><td class="num">3.876</td></tr>
+<tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">34.4</td><td class="num">29.1</td><td class="num">1,396</td><td class="num">143.0</td><td class="num">5.455</td></tr>
+</tbody></table></div>
+</section>
+<section class="card" id="findings">
+<h2><span class="num">&sect;5</span>Findings</h2>
+<ul class="notes">
+<li><strong>1 &middot; The capacity win survives honest charging and grows with context</strong>: 2.23&times; (64K) &rarr; 8.55&times; (1M) for 8-GPU custom vs 8-GPU stock, identically for energy per token. Six custom GPUs beat eight stock ones at every context (1.66&ndash;6.28&times;) with 25% less silicon.</li>
+<li><strong>2 &middot; NEW: the throughput-optimal batch sits below the capacity fit at long context.</strong> C8 at 512K peaks at b=32 (5,191 tok/s) not at its b=44 fit (5,034); same for C6 (3,895 @ 32 vs 3,772 @ 43). The LPDDR gather tax grows ~linearly in batch while marginal throughput grows sublinearly &mdash; past the crossover, one more session costs more TPOT than it adds tokens. The flat-BW idealization (Part IX) never showed this: there, more batch was always better. Consequence: at long context, capacity beyond b* buys admission headroom and QoS slack, not throughput.</li>
+<li><strong>3 &middot; The iso-latency menu</strong> (custom at &asymp; stock&rsquo;s max-batch TPOT): 128K &mdash; C8 b=16: 4,693 tok/s at 27.3 ms = 1.10&times; stock at +4% TPOT; 512K &mdash; C8 b=8: 2,264 at 28.3 ms = 2.27&times; at +17%; 1M &mdash; C8 b=8: 1,862 at 34.4 ms = 5.4&times; at +49%. Only at 64K is iso-latency custom merely at parity (1.05&times;) &mdash; short context is where stock is least capacity-starved. The design does not force the max-batch latency price; it offers it.</li>
+<li><strong>4 &middot; The max-batch latency price</strong>: 4.4&ndash;5.6&times; stock&rsquo;s TPOT (users read 6.5&ndash;17 tok/s vs stock&rsquo;s 36&ndash;46). The ladders in &sect;4 are the negotiation range.</li>
+<li><strong>5 &middot; TTFT is variant-invariant</strong> (3.4 / 7.3 / 40.8 / 143 s at 64K/128K/512K/1M) <em>by construction</em> &mdash; prefill is unpatched. A real LPDDR tier could slow prefill KV writes; unmodeled (&sect;6).</li>
+<li><strong>6 &middot; The cost of honesty shrinks with context</strong>: vs Part IX&rsquo;s flat-BW numbers, lpddr512 gives back 23% (64K), 15% (128K), 5% (512K), 2% (1M) of max-batch throughput. Gather traffic scales with batch only, while scan/attend grow with kv &mdash; so the bandwidth assumption matters most exactly where batches are largest.</li>
+<li><strong>7 &middot; GPU count stays a linear knob</strong>: C8 and C6 TPOT agree at equal per-rank batch to &le;0.05 ms across the grid (the N-invariance check under the patch); C6 = 6/8 of C8&rsquo;s throughput at equal b.</li>
+</ul>
+</section>
+<section class="card" id="caveats">
+<h2><span class="num">&sect;6</span>Honesty box &mdash; what these numbers assume</h2>
+<div class="callout warn">
+<p><strong>b = 512 GB/s is an assumed engine spec</strong> (0.5 of the 1,024 GB/s wire), not a measurement. Measured reference efficiencies for scattered 656-B gathers: TMA-copy engine ~34% of pins, transfer-only ceiling 63&ndash;74%, PCIe production kernel 16.6% of its link. 0.5 sits between DMA-copy class and the ceiling &mdash; it requires the deep-pipeline base-die engine (k_eff &rarr; 1). a = 0.2 &micro;s is aggressive vs the measured HBM head (0.67 &micro;s/step). The Ramulator base-die model is the tool that must certify both.</p>
+</div>
+<ul class="notes">
+<li><strong>Keys-in-HBM flag</strong>: the indexer scan is unpatched (keys assumed HBM-resident). Cells where b &times; keys/session exceeds free HBM overstate this: C8 &mdash; 64K b&ge;256, 128K b&ge;128, 512K b&ge;32, 1M b&ge;16; C6 (less free HBM) &mdash; 64K b&ge;128, 128K b&ge;64, 512K b&ge;16, 1M b&ge;8. Long-context max-batch rows are therefore optimistic; the iso-latency mid-ladder rows are largely clean.</li>
+<li>Decode-only patch: prefill sparse attention and KV writes keep measured HBM values (hence the variant-invariant TTFT).</li>
+<li>EP all-to-all unmodeled (sub-percent at NVLink5); C6 uses the 43-expert heavy-rank proxy (&le;2% conservative).</li>
+<li>Dummy-weight kernel profiles; 1-layer probe lineage &mdash; same basis as Parts VI&ndash;X.</li>
+</ul>
+</section>
+<section class="card" id="artifacts">
+<h2>Artifacts &amp; reproduction</h2>
+<ul class="notes">
+<li>Experiment (isolated): <code class="k">agent/experiments/dsv32-b200-lpddr512-study/</code> (README with purpose/method/references, run_matrix.py, aggregate.py, results.csv, RESULTS.md) on branch <code class="k">b200-v32-profiling</code>.</li>
+<li>Patch: <code class="k">patch_attention_csv.py --a 0.2 --b 512 --tag lpddr512</code> &rarr; <code class="k">bf16-kvfp8-lpddr512</code>; aliases <code class="k">EP8RankL512</code>/<code class="k">EP6RankL512</code>.</li>
+<li>This page is generated from results.csv by <code class="k">build_versel_page.py</code> in the experiment directory.</li>
+<li>Companion pages: <a href="../08_part9_dsv32_capacity_eval/report.html">Part IX &mdash; the same comparison under the flat-BW idealization</a> &middot; <a href="../09_part10_dsv32_gather_isolation/report.html">Part X &mdash; the measured gather isolation and the tier law this page charges with</a> &middot; <a href="../07_part8_dsv32_b200/report.html">Part VIII &mdash; the measured B200 kernels underneath</a>.</li>
+</ul>
+<div class="footer">DeepSeek-V3.2 study &middot; Part XI &middot; LLMServingSim on B200-measured profiles + Part X tier law &middot; <a href="../../index.html">&larr; Report Archive</a></div>
+</section>
+</main>
+</div>
+</body>
+</html>
