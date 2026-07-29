@@ -82,7 +82,7 @@
 <div class="kpi"><div class="v">&minus;23% &rarr; &minus;2%</div><div class="l">cost of honest charging vs the flat-BW idealization (Part IX), shrinking with context</div></div>
 <div class="kpi"><div class="v">8 &rarr; 1 GPUs</div><div class="l">the full GPU-count ladder: linear down to C4; C2/C1 break the weights-fit-in-HBM premise (see honesty box)</div></div>
 </div>
-<p>Part IX evaluated this capacity design with LPDDR idealized to HBM bandwidth. Part X measured what the gather actually costs and how much of it hides. This page closes the loop: the same three-way comparison, with the LPDDR gather charged by the validated law at the user-specified engine spec. The capacity verdict survives &mdash; and the honest model reveals structure the idealization could not: a throughput-<em>optimal</em> batch below the capacity ceiling at long context, and a bandwidth tax that matters most exactly where batches are largest.</p>
+<p>Part IX evaluated this capacity design with LPDDR idealized to HBM bandwidth. Part X measured what the gather actually costs and how much of it hides. This page closes the loop: the comparison, now spanning the full 8/6/4/2/1 GPU-count ladder, with the LPDDR gather charged by the validated law at the user-specified engine spec. The capacity verdict survives &mdash; and the honest model reveals structure the idealization could not: a throughput-<em>optimal</em> batch below the capacity ceiling at long context, and a bandwidth tax that matters most exactly where batches are largest.</p>
 </section>
 <section class="card" id="systems">
 <h2><span class="num">&sect;1</span>Systems under test</h2>
@@ -114,8 +114,9 @@
 <section class="card" id="maxbatch">
 <h2><span class="num">&sect;3</span>Max-batch operating points</h2>
 <p class="lead">Each variant at its no-eviction capacity fit. J/token ratios equal throughput ratios (decode is power-flat at ~1,268 W per rank-node).</p>
+<p class="lead">Cell format: cluster batch / TPOT (ms) / cluster tok/s / J-token.</p>
 <div class="scroll"><table>
-<thead><tr><th>L</th><th>S8: B_cl / TPOT (ms) / tok/s / J-tok</th><th>C8: B_cl / TPOT (ms) / tok/s / J-tok</th><th>C6: B_cl / TPOT (ms) / tok/s / J-tok</th><th class="num">C8/S8 (&times;)</th><th class="num">C6/S8 (&times;)</th></tr></thead><tbody>
+<thead><tr><th>L</th><th class="num">S8 stock</th><th class="num">C8 custom</th><th class="num">C6 custom</th><th class="num">C4 custom</th><th class="num">C2 custom</th><th class="num">C1 custom</th><th class="num">C8/S8 (&times;)</th><th class="num">C6/S8 (&times;)</th></tr></thead><tbody>
 <tr><td>64K</td><td class="num">224 / 27.4 / 8,174 / 1.241</td><td class="num">2808 / 153.94 / 18,241 / 0.556</td><td class="num">2052 / 151.24 / 13,568 / 0.561</td><td class="num">1300 / 145.92 / 8,909 / 0.569</td><td class="num">548 / 128.09 / 4,278 / 0.593</td><td class="num">170 / 99.77 / 1,704 / 0.744</td><td class="num"><strong>2.23</strong></td><td class="num">1.66</td></tr>
 <tr><td>128K</td><td class="num">112 / 26.19 / 4,277 / 2.373</td><td class="num">1408 / 117.84 / 11,948 / 0.849</td><td class="num">1032 / 116.26 / 8,877 / 0.857</td><td class="num">652 / 112.54 / 5,794 / 0.876</td><td class="num">274 / 100.33 / 2,731 / 0.929</td><td class="num">86 / 72.54 / 1,186 / 1.07</td><td class="num"><strong>2.79</strong></td><td class="num">2.08</td></tr>
 <tr><td>512K</td><td class="num">24 / 24.07 / 997 / 10.18</td><td class="num">352 / 69.92 / 5,034 / 2.016</td><td class="num">258 / 68.4 / 3,772 / 2.018</td><td class="num">160 / 63.63 / 2,515 / 2.018</td><td class="num">68 / 53.08 / 1,281 / 1.981</td><td class="num">21 / 41.48 / 506 / 2.506</td><td class="num"><strong>5.05</strong></td><td class="num">3.78</td></tr>
@@ -258,6 +259,7 @@
 <li><strong>5 &middot; TTFT is variant-invariant</strong> (3.4 / 7.3 / 40.8 / 143 s at 64K/128K/512K/1M) <em>by construction</em> &mdash; prefill is unpatched. A real LPDDR tier could slow prefill KV writes; unmodeled (&sect;6).</li>
 <li><strong>6 &middot; The cost of honesty shrinks with context</strong>: vs Part IX&rsquo;s flat-BW numbers, lpddr512 gives back 23% (64K), 15% (128K), 5% (512K), 2% (1M) of max-batch throughput. Gather traffic scales with batch only, while scan/attend grow with kv &mdash; so the bandwidth assumption matters most exactly where batches are largest.</li>
 <li><strong>7 &middot; GPU count is a linear knob down to C4, then the premise breaks</strong>: C8/C6/C4 TPOT agree at equal per-rank batch (N-invariance under the patch) and cluster throughput scales ~N/8. C2 and C1 continue the pattern numerically, but their weights no longer fit HBM (323 / 627.6 GiB vs 179), so their simulated numbers omit LPDDR weight streaming &mdash; treat them as upper bounds (&sect;6). Capacity also compounds: free KV per GPU shrinks from 1,038 GiB (C8) to 505 GiB (C1), so per-GPU max batch halves 176 &rarr; 86 at 128K.</li>
+<li><strong>8 &middot; The break-even GPU count falls with context</strong>: matching 8 stock GPUs takes 4 custom GPUs at 64K&ndash;128K (1.09&times; / 1.35&times;) and only 2 at 512K&ndash;1M (1.30&times; / 1.93&times;, upper bounds); a single custom GPU reaches 0.74&times; of the whole 8-GPU stock cluster at 1M. Per-GPU throughput at the 128K best points is nearly flat across the custom ladder &mdash; 1,494 / 1,479 / 1,448 / 1,365 tok/s/GPU for C8/C6/C4/C2, all 2.6&ndash;2.8&times; stock&rsquo;s 535 &mdash; while C1&rsquo;s 1,186 is capacity-capped (its 627.6 GiB of weights leave room for only b=86).</li>
 </ul>
 </section>
 <section class="card" id="caveats">
