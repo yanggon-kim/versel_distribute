@@ -64,9 +64,9 @@
 <main>
 <header class="page">
 <h1>DeepSeek-V3.2 &mdash; Part XI: Custom-HBM LPDDR Extension, Honestly Charged</h1>
-<p class="sub">The custom-HBM design point specified end-to-end: each GPU&rsquo;s 8 HBM stacks carry a base die fronting a 128&nbsp;GB/s &times; 128&nbsp;GB LPDDR extension (per GPU: 1,024&nbsp;GB/s wire aggregate, 1,024&nbsp;GB capacity, 1,216&nbsp;GB total). Latent KV lives in LPDDR and is gathered through the base die at an assumed 0.5 wire efficiency &mdash; <strong>b = 512&nbsp;GB/s achieved scatter, a = 0.2&nbsp;&micro;s</strong> &mdash; charged with the measured, in-situ-validated window-credited tier law from Part&nbsp;X. Three GPU-only variants (no KV offload or eviction), batch ladders under each max fit, four context lengths, in LLMServingSim over measured B200 kernels.</p>
+<p class="sub">The custom-HBM design point specified end-to-end: each GPU&rsquo;s 8 HBM stacks carry a base die fronting a 128&nbsp;GB/s &times; 128&nbsp;GB LPDDR extension (per GPU: 1,024&nbsp;GB/s wire aggregate, 1,024&nbsp;GB capacity, 1,216&nbsp;GB total). Latent KV lives in LPDDR and is gathered through the base die at an assumed 0.5 wire efficiency &mdash; <strong>b = 512&nbsp;GB/s achieved scatter, a = 0.2&nbsp;&micro;s</strong> &mdash; charged with the measured, in-situ-validated window-credited tier law from Part&nbsp;X. Six GPU-only variants &mdash; 8-GPU stock and 8/6/4/2/1-GPU custom (no KV offload or eviction) &mdash; batch ladders under each max fit, four context lengths, in LLMServingSim over measured B200 kernels.</p>
 <div class="tags">
-<span class="tag live">50 simulated cells &middot; all steady-state validated (n_eff = b)</span>
+<span class="tag live">106 simulated cells &middot; steady-state validated (n_eff = b)</span>
 <span class="tag">tier law validated in-situ to 0.28% (Part X)</span>
 <span class="tag">stock anchors reproduce &plusmn;0.02%</span>
 <span class="tag">L &isin; {64K, 128K, 512K, 1M}</span>
@@ -80,6 +80,7 @@
 <div class="kpi"><div class="v">1.1 / 2.3 / 5.4&times;</div><div class="l">iso-latency wins at 128K/512K/1M (+4/+17/+49% TPOT)</div></div>
 <div class="kpi"><div class="v">b* &lt; b_max</div><div class="l">NEW: at 512K the throughput-optimal batch sits BELOW the capacity fit &mdash; the LPDDR tax makes marginal sessions net-negative</div></div>
 <div class="kpi"><div class="v">&minus;23% &rarr; &minus;2%</div><div class="l">cost of honest charging vs the flat-BW idealization (Part IX), shrinking with context</div></div>
+<div class="kpi"><div class="v">8 &rarr; 1 GPUs</div><div class="l">the full GPU-count ladder: linear down to C4; C2/C1 break the weights-fit-in-HBM premise (see honesty box)</div></div>
 </div>
 <p>Part IX evaluated this capacity design with LPDDR idealized to HBM bandwidth. Part X measured what the gather actually costs and how much of it hides. This page closes the loop: the same three-way comparison, with the LPDDR gather charged by the validated law at the user-specified engine spec. The capacity verdict survives &mdash; and the honest model reveals structure the idealization could not: a throughput-<em>optimal</em> batch below the capacity ceiling at long context, and a bandwidth tax that matters most exactly where batches are largest.</p>
 </section>
@@ -90,10 +91,13 @@
 <tr><td>S8 stock</td><td class="num">8</td><td>TP1+DP8+EP8</td><td class="num">179</td><td>measured <code class="k">bf16-kvfp8</code></td><td class="num">94.65</td><td class="num">28 / 14 / 3 / 1</td></tr>
 <tr><td>C8 custom</td><td class="num">8</td><td>TP1+DP8+EP8</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">94.65</td><td class="num">351 / 176 / 44 / 22</td></tr>
 <tr><td>C6 custom</td><td class="num">6</td><td>TP1+DP6+EP6</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">120.8 (43-expert heavy rank)</td><td class="num">342 / 172 / 43 / 21</td></tr>
+<tr><td>C4 custom</td><td class="num">4</td><td>TP1+DP4+EP4</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">170.7 (64 experts, exact)</td><td class="num">325 / 163 / 40 / 20</td></tr>
+<tr><td>C2 custom</td><td class="num">2</td><td>TP1+DP2+EP2</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">323.0 (128 experts, exact)</td><td class="num">274 / 137 / 34 / 17</td></tr>
+<tr><td>C1 custom</td><td class="num">1</td><td>single GPU, EP1</td><td class="num">1133</td><td><code class="k">bf16-kvfp8-lpddr512</code></td><td class="num">627.6 (full 256-expert model, probed)</td><td class="num">170 / 86 / 21 / 10</td></tr>
 </tbody></table></div>
 <ul class="notes">
 <li>179 GiB = the audited real exposed capacity of a stock B200 (192 GB marketed); 1133 GiB = 179 + 1,024 GB LPDDR (unit conversion audited).</li>
-<li>Weights stay in HBM in every variant (they fit); only latent KV overflows to LPDDR. The 132 B/token indexer key cache is assumed HBM-resident (see &sect;6).</li>
+<li>Weights fit HBM for S8/C8/C6/C4; <strong>C2 (323 GiB) and C1 (627.6 GiB) exceed the 179 GiB HBM &mdash; their weights would physically spill into LPDDR, a cost the gather-only patch does NOT charge</strong> (see &sect;6). The 132 B/token indexer key cache is assumed HBM-resident everywhere.</li>
 <li>No KV offload or eviction anywhere: a variant&rsquo;s max batch is its no-eviction fit (64K fits carry a 2-session headroom for output-token block growth).</li>
 </ul>
 </section>
@@ -112,10 +116,10 @@
 <p class="lead">Each variant at its no-eviction capacity fit. J/token ratios equal throughput ratios (decode is power-flat at ~1,268 W per rank-node).</p>
 <div class="scroll"><table>
 <thead><tr><th>L</th><th>S8: B_cl / TPOT (ms) / tok/s / J-tok</th><th>C8: B_cl / TPOT (ms) / tok/s / J-tok</th><th>C6: B_cl / TPOT (ms) / tok/s / J-tok</th><th class="num">C8/S8 (&times;)</th><th class="num">C6/S8 (&times;)</th></tr></thead><tbody>
-<tr><td>64K</td><td class="num">224 / 27.4 / 8,174 / 1.241</td><td class="num">2808 / 153.94 / 18,241 / 0.556</td><td class="num">2052 / 151.24 / 13,568 / 0.561</td><td class="num"><strong>2.23</strong></td><td class="num">1.66</td></tr>
-<tr><td>128K</td><td class="num">112 / 26.19 / 4,277 / 2.373</td><td class="num">1408 / 117.84 / 11,948 / 0.849</td><td class="num">1032 / 116.26 / 8,877 / 0.857</td><td class="num"><strong>2.79</strong></td><td class="num">2.08</td></tr>
-<tr><td>512K</td><td class="num">24 / 24.07 / 997 / 10.18</td><td class="num">352 / 69.92 / 5,034 / 2.016</td><td class="num">258 / 68.4 / 3,772 / 2.018</td><td class="num"><strong>5.05</strong></td><td class="num">3.78</td></tr>
-<tr><td>1M</td><td class="num">8 / 23.08 / 347 / 29.286</td><td class="num">176 / 59.42 / 2,962 / 3.427</td><td class="num">126 / 57.87 / 2,177 / 3.496</td><td class="num"><strong>8.55</strong></td><td class="num">6.28</td></tr>
+<tr><td>64K</td><td class="num">224 / 27.4 / 8,174 / 1.241</td><td class="num">2808 / 153.94 / 18,241 / 0.556</td><td class="num">2052 / 151.24 / 13,568 / 0.561</td><td class="num">1300 / 145.92 / 8,909 / 0.569</td><td class="num">548 / 128.09 / 4,278 / 0.593</td><td class="num">170 / 99.77 / 1,704 / 0.744</td><td class="num"><strong>2.23</strong></td><td class="num">1.66</td></tr>
+<tr><td>128K</td><td class="num">112 / 26.19 / 4,277 / 2.373</td><td class="num">1408 / 117.84 / 11,948 / 0.849</td><td class="num">1032 / 116.26 / 8,877 / 0.857</td><td class="num">652 / 112.54 / 5,794 / 0.876</td><td class="num">274 / 100.33 / 2,731 / 0.929</td><td class="num">86 / 72.54 / 1,186 / 1.07</td><td class="num"><strong>2.79</strong></td><td class="num">2.08</td></tr>
+<tr><td>512K</td><td class="num">24 / 24.07 / 997 / 10.18</td><td class="num">352 / 69.92 / 5,034 / 2.016</td><td class="num">258 / 68.4 / 3,772 / 2.018</td><td class="num">160 / 63.63 / 2,515 / 2.018</td><td class="num">68 / 53.08 / 1,281 / 1.981</td><td class="num">21 / 41.48 / 506 / 2.506</td><td class="num"><strong>5.05</strong></td><td class="num">3.78</td></tr>
+<tr><td>1M</td><td class="num">8 / 23.08 / 347 / 29.286</td><td class="num">176 / 59.42 / 2,962 / 3.427</td><td class="num">126 / 57.87 / 2,177 / 3.496</td><td class="num">80 / 56.23 / 1,423 / 3.567</td><td class="num">34 / 50.94 / 667 / 3.802</td><td class="num">10 / 39.25 / 255 / 4.98</td><td class="num"><strong>8.55</strong></td><td class="num">6.28</td></tr>
 </tbody></table></div>
 </section>
 <section class="card" id="ladders">
@@ -141,6 +145,26 @@
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">32</td><td class="num">192</td><td class="num">29.76</td><td class="num">33.6</td><td class="num">6,452</td><td class="num">3.4</td><td class="num">1.18</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">25.68</td><td class="num">38.9</td><td class="num">3,738</td><td class="num">3.4</td><td class="num">2.036</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">22.5</td><td class="num">44.4</td><td class="num">2,133</td><td class="num">3.4</td><td class="num">3.569</td></tr>
+<tr><td><strong>C4 &mdash; 4&times; custom</strong></td><td class="num"><strong>325</strong></td><td class="num">1300</td><td class="num">145.92</td><td class="num">6.9</td><td class="num"><strong>8,909</strong></td><td class="num">3.4</td><td class="num">0.569</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">256</td><td class="num">1024</td><td class="num">122.66</td><td class="num">8.2</td><td class="num">8,349</td><td class="num">3.4</td><td class="num">0.607</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">128</td><td class="num">512</td><td class="num">84.34</td><td class="num">11.9</td><td class="num">6,071</td><td class="num">3.4</td><td class="num">0.835</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">64</td><td class="num">256</td><td class="num">51.39</td><td class="num">19.5</td><td class="num">4,982</td><td class="num">3.4</td><td class="num">1.018</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">32</td><td class="num">128</td><td class="num">29.72</td><td class="num">33.6</td><td class="num">4,306</td><td class="num">3.4</td><td class="num">1.178</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">16</td><td class="num">64</td><td class="num">25.65</td><td class="num">39.0</td><td class="num">2,495</td><td class="num">3.4</td><td class="num">2.034</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">8</td><td class="num">32</td><td class="num">22.54</td><td class="num">44.4</td><td class="num">1,420</td><td class="num">3.4</td><td class="num">3.575</td></tr>
+<tr><td><strong>C2 &mdash; 2&times; custom</strong></td><td class="num"><strong>274</strong></td><td class="num">548</td><td class="num">128.09</td><td class="num">7.8</td><td class="num"><strong>4,278</strong></td><td class="num">3.4</td><td class="num">0.593</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">256</td><td class="num">512</td><td class="num">122.67</td><td class="num">8.2</td><td class="num">4,174</td><td class="num">3.4</td><td class="num">0.607</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">128</td><td class="num">256</td><td class="num">84.33</td><td class="num">11.9</td><td class="num">3,036</td><td class="num">3.4</td><td class="num">0.835</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">64</td><td class="num">128</td><td class="num">51.23</td><td class="num">19.5</td><td class="num">2,499</td><td class="num">3.4</td><td class="num">1.015</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">32</td><td class="num">64</td><td class="num">29.71</td><td class="num">33.7</td><td class="num">2,154</td><td class="num">3.4</td><td class="num">1.178</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">16</td><td class="num">32</td><td class="num">25.74</td><td class="num">38.8</td><td class="num">1,243</td><td class="num">3.4</td><td class="num">2.041</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">8</td><td class="num">16</td><td class="num">22.54</td><td class="num">44.4</td><td class="num">710</td><td class="num">3.4</td><td class="num">3.575</td></tr>
+<tr><td><strong>C1 &mdash; 1&times; custom</strong></td><td class="num"><strong>170</strong></td><td class="num">170</td><td class="num">99.77</td><td class="num">10.0</td><td class="num"><strong>1,704</strong></td><td class="num">3.4</td><td class="num">0.744</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">128</td><td class="num">128</td><td class="num">84.33</td><td class="num">11.9</td><td class="num">1,518</td><td class="num">3.4</td><td class="num">0.835</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">64</td><td class="num">64</td><td class="num">51.45</td><td class="num">19.4</td><td class="num">1,244</td><td class="num">3.4</td><td class="num">1.019</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">32</td><td class="num">32</td><td class="num">29.75</td><td class="num">33.6</td><td class="num">1,076</td><td class="num">3.4</td><td class="num">1.179</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">16</td><td class="num">16</td><td class="num">25.74</td><td class="num">38.8</td><td class="num">622</td><td class="num">3.4</td><td class="num">2.041</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">8</td><td class="num">8</td><td class="num">22.54</td><td class="num">44.4</td><td class="num">355</td><td class="num">3.4</td><td class="num">3.575</td></tr>
 </tbody></table></div>
 <h3>128K context</h3>
 <div class="scroll"><table>
@@ -160,6 +184,23 @@
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">32</td><td class="num">192</td><td class="num">32.43</td><td class="num">30.8</td><td class="num">5,920</td><td class="num">7.3</td><td class="num">1.286</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">27.26</td><td class="num">36.7</td><td class="num">3,522</td><td class="num">7.3</td><td class="num">2.161</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">23.44</td><td class="num">42.7</td><td class="num">2,048</td><td class="num">7.3</td><td class="num">3.717</td></tr>
+<tr><td><strong>C4 &mdash; 4&times; custom</strong></td><td class="num"><strong>163</strong></td><td class="num">652</td><td class="num">112.54</td><td class="num">8.9</td><td class="num"><strong>5,794</strong></td><td class="num">7.2</td><td class="num">0.876</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">128</td><td class="num">512</td><td class="num">95.63</td><td class="num">10.5</td><td class="num">5,354</td><td class="num">7.2</td><td class="num">0.947</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">64</td><td class="num">256</td><td class="num">57.78</td><td class="num">17.3</td><td class="num">4,430</td><td class="num">7.2</td><td class="num">1.145</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">32</td><td class="num">128</td><td class="num">32.4</td><td class="num">30.9</td><td class="num">3,951</td><td class="num">7.2</td><td class="num">1.284</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">16</td><td class="num">64</td><td class="num">27.23</td><td class="num">36.7</td><td class="num">2,350</td><td class="num">7.2</td><td class="num">2.159</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">8</td><td class="num">32</td><td class="num">23.48</td><td class="num">42.6</td><td class="num">1,363</td><td class="num">7.2</td><td class="num">3.723</td></tr>
+<tr><td><strong>C2 &mdash; 2&times; custom</strong></td><td class="num"><strong>137</strong></td><td class="num">274</td><td class="num">100.33</td><td class="num">10.0</td><td class="num"><strong>2,731</strong></td><td class="num">7.3</td><td class="num">0.929</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">128</td><td class="num">256</td><td class="num">95.62</td><td class="num">10.5</td><td class="num">2,677</td><td class="num">7.3</td><td class="num">0.947</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">64</td><td class="num">128</td><td class="num">57.62</td><td class="num">17.4</td><td class="num">2,221</td><td class="num">7.3</td><td class="num">1.142</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">32</td><td class="num">64</td><td class="num">32.39</td><td class="num">30.9</td><td class="num">1,976</td><td class="num">7.3</td><td class="num">1.284</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">16</td><td class="num">32</td><td class="num">27.32</td><td class="num">36.6</td><td class="num">1,171</td><td class="num">7.3</td><td class="num">2.166</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">8</td><td class="num">16</td><td class="num">23.48</td><td class="num">42.6</td><td class="num">682</td><td class="num">7.3</td><td class="num">3.723</td></tr>
+<tr><td><strong>C1 &mdash; 1&times; custom</strong></td><td class="num"><strong>86</strong></td><td class="num">86</td><td class="num">72.54</td><td class="num">13.8</td><td class="num"><strong>1,186</strong></td><td class="num">7.3</td><td class="num">1.07</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">64</td><td class="num">64</td><td class="num">57.85</td><td class="num">17.3</td><td class="num">1,106</td><td class="num">7.3</td><td class="num">1.146</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">32</td><td class="num">32</td><td class="num">32.42</td><td class="num">30.8</td><td class="num">987</td><td class="num">7.3</td><td class="num">1.285</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">16</td><td class="num">16</td><td class="num">27.32</td><td class="num">36.6</td><td class="num">586</td><td class="num">7.3</td><td class="num">2.166</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">8</td><td class="num">8</td><td class="num">23.48</td><td class="num">42.6</td><td class="num">341</td><td class="num">7.3</td><td class="num">3.723</td></tr>
 </tbody></table></div>
 <h3>512K context</h3>
 <div class="scroll"><table>
@@ -175,6 +216,17 @@
 <tr><td><strong>C6 &mdash; 6&times; custom</strong></td><td class="num"><strong>32</strong></td><td class="num">192</td><td class="num">49.3</td><td class="num">20.3</td><td class="num"><strong>3,894</strong></td><td class="num">40.8</td><td class="num">1.954</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">36.4</td><td class="num">27.5</td><td class="num">2,637</td><td class="num">40.8</td><td class="num">2.887</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">28.29</td><td class="num">35.3</td><td class="num">1,697</td><td class="num">40.8</td><td class="num">4.487</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">40</td><td class="num">160</td><td class="num">63.63</td><td class="num">15.7</td><td class="num">2,515</td><td class="num">40.7</td><td class="num">2.018</td></tr>
+<tr><td><strong>C4 &mdash; 4&times; custom</strong></td><td class="num"><strong>32</strong></td><td class="num">128</td><td class="num">49.26</td><td class="num">20.3</td><td class="num"><strong>2,598</strong></td><td class="num">40.7</td><td class="num">1.953</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">16</td><td class="num">64</td><td class="num">36.38</td><td class="num">27.5</td><td class="num">1,759</td><td class="num">40.7</td><td class="num">2.884</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">8</td><td class="num">32</td><td class="num">28.33</td><td class="num">35.3</td><td class="num">1,130</td><td class="num">40.7</td><td class="num">4.493</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">34</td><td class="num">68</td><td class="num">53.08</td><td class="num">18.8</td><td class="num">1,281</td><td class="num">40.8</td><td class="num">1.981</td></tr>
+<tr><td><strong>C2 &mdash; 2&times; custom</strong></td><td class="num"><strong>32</strong></td><td class="num">64</td><td class="num">49.25</td><td class="num">20.3</td><td class="num"><strong>1,300</strong></td><td class="num">40.8</td><td class="num">1.952</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">16</td><td class="num">32</td><td class="num">36.47</td><td class="num">27.4</td><td class="num">878</td><td class="num">40.8</td><td class="num">2.892</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">8</td><td class="num">16</td><td class="num">28.33</td><td class="num">35.3</td><td class="num">565</td><td class="num">40.8</td><td class="num">4.493</td></tr>
+<tr><td><strong>C1 &mdash; 1&times; custom</strong></td><td class="num"><strong>21</strong></td><td class="num">21</td><td class="num">41.48</td><td class="num">24.1</td><td class="num"><strong>506</strong></td><td class="num">40.9</td><td class="num">2.506</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">16</td><td class="num">16</td><td class="num">36.47</td><td class="num">27.4</td><td class="num">439</td><td class="num">40.9</td><td class="num">2.892</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">8</td><td class="num">8</td><td class="num">28.33</td><td class="num">35.3</td><td class="num">282</td><td class="num">40.9</td><td class="num">4.493</td></tr>
 </tbody></table></div>
 <h3>1M context</h3>
 <div class="scroll"><table>
@@ -186,6 +238,14 @@
 <tr><td><strong>C6 &mdash; 6&times; custom</strong></td><td class="num"><strong>21</strong></td><td class="num">126</td><td class="num">57.87</td><td class="num">17.3</td><td class="num"><strong>2,177</strong></td><td class="num">143.0</td><td class="num">3.496</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">16</td><td class="num">96</td><td class="num">48.88</td><td class="num">20.5</td><td class="num">1,964</td><td class="num">143.0</td><td class="num">3.876</td></tr>
 <tr><td>C6 &mdash; 6&times; custom</td><td class="num">8</td><td class="num">48</td><td class="num">34.4</td><td class="num">29.1</td><td class="num">1,396</td><td class="num">143.0</td><td class="num">5.455</td></tr>
+<tr><td><strong>C4 &mdash; 4&times; custom</strong></td><td class="num"><strong>20</strong></td><td class="num">80</td><td class="num">56.23</td><td class="num">17.8</td><td class="num"><strong>1,423</strong></td><td class="num">142.9</td><td class="num">3.567</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">16</td><td class="num">64</td><td class="num">48.85</td><td class="num">20.5</td><td class="num">1,310</td><td class="num">142.9</td><td class="num">3.874</td></tr>
+<tr><td>C4 &mdash; 4&times; custom</td><td class="num">8</td><td class="num">32</td><td class="num">34.44</td><td class="num">29.0</td><td class="num">929</td><td class="num">142.9</td><td class="num">5.462</td></tr>
+<tr><td><strong>C2 &mdash; 2&times; custom</strong></td><td class="num"><strong>17</strong></td><td class="num">34</td><td class="num">50.94</td><td class="num">19.6</td><td class="num"><strong>667</strong></td><td class="num">143.1</td><td class="num">3.802</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">16</td><td class="num">32</td><td class="num">48.94</td><td class="num">20.4</td><td class="num">654</td><td class="num">143.1</td><td class="num">3.881</td></tr>
+<tr><td>C2 &mdash; 2&times; custom</td><td class="num">8</td><td class="num">16</td><td class="num">34.44</td><td class="num">29.0</td><td class="num">465</td><td class="num">143.1</td><td class="num">5.462</td></tr>
+<tr><td><strong>C1 &mdash; 1&times; custom</strong></td><td class="num"><strong>10</strong></td><td class="num">10</td><td class="num">39.25</td><td class="num">25.5</td><td class="num"><strong>255</strong></td><td class="num">143.2</td><td class="num">4.98</td></tr>
+<tr><td>C1 &mdash; 1&times; custom</td><td class="num">8</td><td class="num">8</td><td class="num">34.44</td><td class="num">29.0</td><td class="num">232</td><td class="num">143.2</td><td class="num">5.462</td></tr>
 </tbody></table></div>
 </section>
 <section class="card" id="findings">
@@ -197,13 +257,16 @@
 <li><strong>4 &middot; The max-batch latency price</strong>: 4.4&ndash;5.6&times; stock&rsquo;s TPOT (users read 6.5&ndash;17 tok/s vs stock&rsquo;s 36&ndash;46). The ladders in &sect;4 are the negotiation range.</li>
 <li><strong>5 &middot; TTFT is variant-invariant</strong> (3.4 / 7.3 / 40.8 / 143 s at 64K/128K/512K/1M) <em>by construction</em> &mdash; prefill is unpatched. A real LPDDR tier could slow prefill KV writes; unmodeled (&sect;6).</li>
 <li><strong>6 &middot; The cost of honesty shrinks with context</strong>: vs Part IX&rsquo;s flat-BW numbers, lpddr512 gives back 23% (64K), 15% (128K), 5% (512K), 2% (1M) of max-batch throughput. Gather traffic scales with batch only, while scan/attend grow with kv &mdash; so the bandwidth assumption matters most exactly where batches are largest.</li>
-<li><strong>7 &middot; GPU count stays a linear knob</strong>: C8 and C6 TPOT agree at equal per-rank batch to &le;0.05 ms across the grid (the N-invariance check under the patch); C6 = 6/8 of C8&rsquo;s throughput at equal b.</li>
+<li><strong>7 &middot; GPU count is a linear knob down to C4, then the premise breaks</strong>: C8/C6/C4 TPOT agree at equal per-rank batch (N-invariance under the patch) and cluster throughput scales ~N/8. C2 and C1 continue the pattern numerically, but their weights no longer fit HBM (323 / 627.6 GiB vs 179), so their simulated numbers omit LPDDR weight streaming &mdash; treat them as upper bounds (&sect;6). Capacity also compounds: free KV per GPU shrinks from 1,038 GiB (C8) to 505 GiB (C1), so per-GPU max batch halves 176 &rarr; 86 at 128K.</li>
 </ul>
 </section>
 <section class="card" id="caveats">
 <h2><span class="num">&sect;6</span>Honesty box &mdash; what these numbers assume</h2>
 <div class="callout warn">
 <p><strong>b = 512 GB/s is an assumed engine spec</strong> (0.5 of the 1,024 GB/s wire), not a measurement. Measured reference efficiencies for scattered 656-B gathers: TMA-copy engine ~34% of pins, transfer-only ceiling 63&ndash;74%, PCIe production kernel 16.6% of its link. 0.5 sits between DMA-copy class and the ceiling &mdash; it requires the deep-pipeline base-die engine (k_eff &rarr; 1). a = 0.2 &micro;s is aggressive vs the measured HBM head (0.67 &micro;s/step). The Ramulator base-die model is the tool that must certify both.</p>
+</div>
+<div class="callout warn">
+<p><strong>C2/C1 weight-spill warning.</strong> The gather-only patch charges latent-KV gathers to LPDDR but leaves every weight access at measured HBM speed. That premise holds for S8/C8/C6/C4 (rank weights &le; 170.7 GiB &lt; 179 GiB HBM) but fails for C2 (323 GiB) and C1 (627.6 GiB): most of their weights would live in LPDDR. A worst-case bound on the omitted cost &mdash; streaming min(8b, n_local)&times;44 MB of expert weights per MoE layer at 512 vs 8,000 GB/s &mdash; reaches tens of ms per step at high batch, i.e. potentially larger than the entire simulated TPOT. C2/C1 rows are therefore <em>upper bounds</em> whose realism requires either weight pinning strategies (hot experts in HBM) or a weight-tier extension of the patch (future work).</p>
 </div>
 <ul class="notes">
 <li><strong>Keys-in-HBM flag</strong>: the indexer scan is unpatched (keys assumed HBM-resident). Cells where b &times; keys/session exceeds free HBM overstate this: C8 &mdash; 64K b&ge;256, 128K b&ge;128, 512K b&ge;32, 1M b&ge;16; C6 (less free HBM) &mdash; 64K b&ge;128, 128K b&ge;64, 512K b&ge;16, 1M b&ge;8. Long-context max-batch rows are therefore optimistic; the iso-latency mid-ladder rows are largely clean.</li>
