@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWE-bench on a CPU-only Box — Task Taxonomy & Tool-Cost Profiling Plan</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  .tag.warn{background:var(--warn-bg);color:var(--warn);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  pre.cmd{background:var(--code);color:#e6edf7;border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.83rem;line-height:1.5;margin:12px 0;}
+  pre.cmd .c{color:#7d8aa5;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .ok{color:var(--good);font-weight:700;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .steps{counter-reset:step;list-style:none;padding-left:0;margin:8px 0;}
+  .steps>li{position:relative;padding:10px 0 10px 42px;border-bottom:1px solid var(--border);}
+  .steps>li:last-child{border-bottom:0;}
+  .steps>li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:10px;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;font-size:.85rem;display:flex;align-items:center;justify-content:center;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#overview">Overview</a>
+    <a href="#why">1 · Why SWE-bench, CPU-only</a>
+    <a href="#setup">2 · Setup &amp; dataset download</a>
+    <a href="#taxonomy">3 · Task taxonomy (Verified 500)</a>
+    <a href="#lightheavy">4 · Light vs heavy tool mass</a>
+    <a href="#profiling">5 · Tool-cost profiling design</a>
+    <a href="#blockers">6 · Machine gates &amp; runbook</a>
+    <a href="#next">7 · Next steps (2–5)</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>SWE-bench on a CPU-only Box — Task Taxonomy &amp; Tool-Cost Profiling Plan</h1>
+      <p class="sub">Everything in SWE-bench except the model's thinking runs on CPU: dataset, Docker task images, test execution, gold-patch validation. This report covers the completed step&nbsp;1 (install + download + full task analysis of <b>Verified&nbsp;500</b> and <b>Lite&nbsp;300</b>), the per-tool CPU/memory profiling design that feeds a <b>resource-faithful replay harness</b>, and the exact runbook for the Docker-gated steps.</p>
+      <div class="tags">
+        <span class="tag live">Step 1 complete</span>
+        <span class="tag">swebench 4.1.0</span>
+        <span class="tag">Verified 500 · Lite 300</span>
+        <span class="tag warn">Steps 2–4 gated on Docker relocation</span>
+      </div>
+    </header>
+
+    <section class="card" id="overview">
+      <h2>Overview</h2>
+      <p class="lead">Companion to the <a href="../000_traclab/report.html">TraceLab reproduction</a>. TraceLab showed <i>when</i> tool waits and human idle stress the KV cache; SWE-bench supplies the missing other half — <i>what the tools actually cost</i> in CPU time and memory bandwidth, measured on a real benchmark with known-correct (gold) patches, no model required.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">500 / 300</div><div class="l">Verified / Lite tasks downloaded, counts asserted</div></div>
+        <div class="kpi"><div class="v">12</div><div class="l">repositories (django = 46%)</div></div>
+        <div class="kpi"><div class="v">52</div><div class="l">median tests run per task</div></div>
+        <div class="kpi"><div class="v">7</div><div class="l">median gold-patch lines</div></div>
+        <div class="kpi"><div class="v">2,488</div><div class="l">max tests in one task</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="why">
+      <h2><span class="num">1</span>Why SWE-bench, and why CPU-only is enough</h2>
+      <p>SWE-bench tasks are real GitHub issues: a repo at a buggy commit, the issue text, a hidden human fix (the <b>gold patch</b>), and the tests that must flip from fail to pass. The benchmark splits cleanly into two halves:</p>
+      <table>
+        <thead><tr><th>Half</th><th>What it needs</th><th>This machine</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Solving (model thinks)</td><td>GPU or API inference</td><td>API only (no GPU)</td></tr>
+          <tr><td class="rowlabel">Environment &amp; tools</td><td>CPU + disk + Docker: checkout, patch, pytest</td><td class="ok">64 cores / 251 GB RAM ✓</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><b>The gold patch is a free workload generator.</b> Applying the known-correct fix and running the harness exercises the complete tool loop (checkout &rarr; apply patch &rarr; run tests) with zero model involvement — a realistic, reproducible tool-execution workload whose CPU/bandwidth cost can be measured per invocation. That per-tool cost is the number no serving paper reports, and it is exactly the input a resource-faithful replay needs to replace a <code class="k">sleep()</code> with real STREAM-style memory load.</div>
+    </section>
+
+    <section class="card" id="setup">
+      <h2><span class="num">2</span>Setup &amp; dataset download (done)</h2>
+      <p class="lead">Workspace on the 17&nbsp;TB volume (<code class="k">02_aa/001_swebench/</code>), venv via <code class="k">uv</code>, HF cache kept inside the workspace so nothing touches the nearly-full root disk.</p>
+      <pre class="cmd">uv venv .venv &amp;&amp; uv pip install swebench datasets pandas matplotlib pyarrow
+<span class="c"># swebench 4.1.0 · datasets 5.0.1 · pandas 3.0.5 (Python 3.14)</span>
+HF_HOME=./hf_cache  load_dataset("SWE-bench/SWE-bench_Verified", split="test")  <span class="c"># 500 rows ✓ asserted</span>
+                    load_dataset("princeton-nlp/SWE-bench_Lite",  split="test")  <span class="c"># 300 rows ✓ asserted</span></pre>
+      <p>Each instance carries: <code class="k">instance_id</code>, <code class="k">repo</code>, <code class="k">base_commit</code>, <code class="k">patch</code> (gold), <code class="k">test_patch</code>, <code class="k">problem_statement</code>, <code class="k">version</code>, <code class="k">environment_setup_commit</code>, and the test lists <code class="k">FAIL_TO_PASS</code> / <code class="k">PASS_TO_PASS</code>. Verified additionally ships a human <code class="k">difficulty</code> label: 194 tasks &lt;15&nbsp;min, 261 at 15&nbsp;min–1&nbsp;h, 42 at 1–4&nbsp;h, 3 &gt;4&nbsp;h.</p>
+    </section>
+
+    <section class="card" id="taxonomy">
+      <h2><span class="num">3</span>Task taxonomy — Verified 500</h2>
+      <p class="lead">All numbers computed from the downloaded instances (<code class="k">outputs/instances.csv</code>, <code class="k">repo_summary_verified.csv</code>).</p>
+      <figure>
+        <img src="assets/repo_counts.png" alt="Instances per repository in SWE-bench Verified: django 231, sympy 75, sphinx 44, matplotlib 34, scikit-learn 32, xarray 22, astropy 22, pytest 19, pylint 10, requests 8, seaborn 2, flask 1">
+        <figcaption class="cap">django alone is 46% of Verified; the top 4 repos cover 77%.</figcaption>
+      </figure>
+      <table>
+        <thead><tr><th>Repo</th><th class="num">Tasks</th><th class="num">Median tests</th><th class="num">p90 tests</th><th class="num">Median patch lines</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">django</td><td class="num">231</td><td class="num">53</td><td class="num">169</td><td class="num">6</td></tr>
+          <tr><td class="rowlabel">sympy</td><td class="num">75</td><td class="num">41</td><td class="num">109</td><td class="num">7</td></tr>
+          <tr><td class="rowlabel">sphinx</td><td class="num">44</td><td class="num">24</td><td class="num">46</td><td class="num">7.5</td></tr>
+          <tr><td class="rowlabel">matplotlib</td><td class="num">34</td><td class="num">182</td><td class="num">806</td><td class="num">7</td></tr>
+          <tr><td class="rowlabel">scikit-learn</td><td class="num">32</td><td class="num">49.5</td><td class="num">170</td><td class="num">8</td></tr>
+          <tr><td class="rowlabel">xarray</td><td class="num">22</td><td class="num">398</td><td class="num">1,687</td><td class="num">7</td></tr>
+          <tr><td class="rowlabel">astropy</td><td class="num">22</td><td class="num">76.5</td><td class="num">419</td><td class="num">8</td></tr>
+          <tr><td class="rowlabel">pytest</td><td class="num">19</td><td class="num">64</td><td class="num">125</td><td class="num">7</td></tr>
+        </tbody>
+      </table>
+      <p class="cap">Remaining: pylint 10, requests 8, seaborn 2, flask 1. Full table in <code class="k">outputs/repo_summary_verified.csv</code>.</p>
+      <p>The gold patches are strikingly small — <b>median 7 lines changed in 1 file</b> (p90: 33 lines) — while the tests that must run to validate them span <b>1 to 2,488</b>. The tool cost of a task is set by its <i>test suite</i>, not its fix size.</p>
+      <figure>
+        <img src="assets/patch_size_hist.png" alt="Histogram of gold-patch size in lines changed, log scale; median 7 lines, tail to about 200 lines">
+        <figcaption class="cap">Gold-patch size distribution (Verified). Tiny edits validated by potentially huge test runs.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="lightheavy">
+      <h2><span class="num">4</span>Light vs heavy tool mass — the structure the replay harness needs</h2>
+      <p class="lead">Bucketing tasks by how many tests the harness runs (<code class="k">FAIL_TO_PASS + PASS_TO_PASS</code>) gives the light-mass / heavy-tail split directly:</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">24%</div><div class="l">tasks run &le;20 tests (light)</div></div>
+        <div class="kpi"><div class="v">48%</div><div class="l">run 21–100 tests (medium)</div></div>
+        <div class="kpi"><div class="v">28%</div><div class="l">run &gt;100 tests (heavy)</div></div>
+        <div class="kpi"><div class="v">5%</div><div class="l">run &gt;500 tests (tail)</div></div>
+      </div>
+      <figure>
+        <img src="assets/test_buckets.png" alt="Share of Verified tasks by tests run per task: 1-5 tests 6%, 6-20 tests 18%, 21-100 tests 48%, 101-500 tests 24%, over 500 tests 5%">
+        <figcaption class="cap">Test-count buckets (Verified 500). The &gt;500 bucket is the heavy tail to profile carefully.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/test_count_cdf.png" alt="CDF of tests run per task for Verified and Lite; log x-axis from 1 to about 2500 tests; the two curves are similar with Verified slightly heavier">
+        <figcaption class="cap">Tests-per-task CDF, Verified vs Lite. Lite trims the tail (max 1,690 vs 2,488) — good first build target.</figcaption>
+      </figure>
+      <p>The heavy tail is also <i>repo-structured</i>, which makes it samplable: <b>xarray</b> (median 398 tests) and <b>matplotlib</b> (median 182, p90 806) are the heavy-integration repos, while <b>sphinx</b> (median 24) and <b>pylint</b> (median 18.5) are the light-unit end — a stratified profiling sample can cover the whole spectrum with a few dozen instances.</p>
+      <div class="callout"><b>Echo of TraceLab.</b> This is the same shape as the trace finding that 0.26% of tool calls own 84.8% of tool time: most agent tool invocations are cheap, a structured minority is enormously expensive. SWE-bench now lets us attach <i>hardware cost</i> (CPU-s, GB/s) to each part of that shape.</div>
+    </section>
+
+    <section class="card" id="profiling">
+      <h2><span class="num">5</span>Tool-cost profiling design (특성 4 measurement)</h2>
+      <p class="lead">Written and ready at <code class="k">scripts/profile_tool_cost.py</code>: it wraps the gold-patch harness and samples each evaluation container's cgroup-v2 counters while tests run.</p>
+      <table>
+        <thead><tr><th>Metric</th><th>Source</th><th>Needs root?</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">CPU user/system seconds</td><td><code class="k">cpu.stat</code> (cgroup v2, per container)</td><td class="ok">No</td></tr>
+          <tr><td class="rowlabel">Peak memory (RSS)</td><td><code class="k">memory.peak</code></td><td class="ok">No</td></tr>
+          <tr><td class="rowlabel">Wall time per instance</td><td>container lifetime</td><td class="ok">No</td></tr>
+          <tr><td class="rowlabel"><b>Memory bandwidth (GB/s)</b></td><td><code class="k">perf</code> uncore IMC CAS counters, or Intel PCM</td><td><b>Yes</b> (install perf, lower <code class="k">perf_event_paranoid</code>)</td></tr>
+        </tbody>
+      </table>
+      <p>The bandwidth row is the STREAM-style number: <code class="k">(cas_read + cas_write) &times; 64&nbsp;B / elapsed</code>. Per tool invocation, the recorded triple <b>(duration, CPU-s, GB/s)</b> becomes the replay harness's input — each replayed tool call generates an actual memory load of the measured intensity for the measured duration instead of sleeping, so KV offload/prefetch policies are evaluated under true memory-bandwidth contention.</p>
+      <p>Profiling protocol: <code class="k">--max_workers 1</code> for uncontended per-instance numbers; stratified sample across the §4 buckets (light sphinx/pylint &rarr; heavy xarray/matplotlib); repeat runs to separate image-pull/build cost from steady-state test cost.</p>
+    </section>
+
+    <section class="card" id="blockers">
+      <h2><span class="num">6</span>Machine gates &amp; runbook</h2>
+      <p class="lead">Verified on this box: 64 cores, 251&nbsp;GB RAM, no GPU, DockerHub + HuggingFace reachable, cgroup&nbsp;v2 present. Two one-time root actions gate the remaining steps (full commands in <code class="k">001_swebench/RUNBOOK.md</code>):</p>
+      <table>
+        <thead><tr><th>Gate</th><th>Problem</th><th>Fix (root, one time)</th><th>Unblocks</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">1 · Docker data-root</td><td><code class="k">/var/lib/docker</code> is on <code class="k">/</code> — 64&nbsp;GB, ~93% full; SWE-bench needs &ge;120&nbsp;GB</td><td>move data-root to <code class="k">/home/docker-data</code> via <code class="k">daemon.json</code> + restart</td><td>steps 2, 3, 4, 5</td></tr>
+          <tr><td class="rowlabel">2 · perf / PCM</td><td>no <code class="k">perf</code>; <code class="k">perf_event_paranoid=4</code></td><td>install linux-tools; <code class="k">sysctl kernel.perf_event_paranoid=1</code></td><td>bandwidth (GB/s) measurement</td></tr>
+        </tbody>
+      </table>
+      <div class="callout warn"><b>Nothing was run as root.</b> The CPU-time/RSS profiler works as soon as Gate&nbsp;1 is done; Gate&nbsp;2 only gates the bandwidth number. Prebuilt x86_64 images pull from DockerHub (default <code class="k">--namespace swebench</code>), so no local image builds are needed for most instances.</div>
+    </section>
+
+    <section class="card" id="next">
+      <h2><span class="num">7</span>Next steps (the remaining 2–5)</h2>
+      <ol class="steps">
+        <li><b>Gate 1, then gold sanity.</b> Relocate Docker; run 3 Lite instances with <code class="k">--predictions_path gold</code>; expect resolved = 3/3.</li>
+        <li><b>Scale gold validation.</b> All of Lite (300) at <code class="k">--max_workers 24</code>, <code class="k">--cache_level env --clean True</code> to bound disk.</li>
+        <li><b>Profile.</b> Stratified sample across test buckets with <code class="k">profile_tool_cost.py</code> (workers=1); add Gate&nbsp;2 for GB/s. Output: per-bucket (duration, CPU-s, GB/s) table.</li>
+        <li><b>Own agent traces.</b> Claude Code (API inference, local tools) on SWE-bench tasks, captured with the TraceLab pipeline — cross-validation against the released 4,265-session corpus.</li>
+        <li><b>Feed the replay harness.</b> The per-tool profile replaces <code class="k">sleep()</code> with measured STREAM-style load — the resource-faithful replay for KV offload/prefetch policy evaluation.</li>
+      </ol>
+    </section>
+
+    <footer class="footer">
+      <p>author : yang-gon kim &nbsp;·&nbsp; email : yanggon@g.ucla.edu</p>
+      <p>benchmark : <a href="https://github.com/princeton-nlp/SWE-bench">princeton-nlp/SWE-bench</a> &nbsp;·&nbsp; companion : <a href="../000_traclab/report.html">TraceLab reproduction</a> &nbsp;·&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
