@@ -1016,9 +1016,9 @@
     </p>
     <h3>Recommended next steps (in value order)</h3>
     <ol>
-      <li><b>Scale study</b> — rerun the battery at 2&times;/4&times;/8&times; system size
-        (the v3 ladder) to test whether the latency-floor story and the B8-vs-B9 margin
-        survive at full-GPU scale.</li>
+      <li><b>Scale study</b> — rerun the battery at 2&times;/4&times;/8&times; system size:
+        <b>done</b> — see <a href="report_v3.html">the v3 scale-ladder report</a>; the
+        story survives, and the distance share of the gap grows with the die.</li>
       <li>Hardware microbenchmarks on a real GPU (queue round trip, DSM window, victim
         curves) to calibrate the latency floor that carries the conclusion.</li>
       <li>An Accel-Sim case study of W4/W7/W11-like pipelines with real warps/occupancy.</li>
@@ -1074,7 +1074,7 @@
   <footer class="site-footer">
     <p>author : yang-gon kim</p>
     <p>email : yanggon@g.ucla.edu</p>
-    <p><a href="report_v1.html">v1 (mesh-era) report</a> &middot; <a href="../../index.html">&larr; back to the report archive</a></p>
+    <p><a href="report_v3.html">v3 (scale-ladder) report</a> &middot; <a href="report_v1.html">v1 (mesh-era) report</a> &middot; <a href="../../index.html">&larr; back to the report archive</a></p>
   </footer>
 </main>
 </body>

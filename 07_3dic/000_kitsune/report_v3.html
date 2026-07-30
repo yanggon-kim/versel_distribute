@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kitsune 3D-IC Queue Fabric — v3 Scale-Ladder Study (16 → 128 SMs)</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #647083;
+      --accent: #1f6feb;
+      --border: #d8dee8;
+      --good: #1a7f37;
+      --bad: #cf222e;
+      --warn: #9a6700;
+      --code-bg: #f6f8fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 40px 24px;
+      line-height: 1.65;
+    }
+    main { width: min(100%, 1060px); margin: 0 auto; }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15; margin: 0 0 10px; }
+    h2 {
+      font-size: 1.45rem; margin: 0 0 16px; padding-bottom: 8px;
+      border-bottom: 2px solid var(--accent);
+    }
+    h3 { font-size: 1.12rem; margin: 26px 0 8px; }
+    h4 { font-size: 1rem; margin: 18px 0 6px; }
+    p { margin: 0 0 12px; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 51, 0.08); padding: 28px; margin-top: 24px;
+    }
+    .subtitle { color: var(--muted); font-size: 1.02rem; margin-top: 8px; }
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.82rem;
+      font-weight: 700; border: 1px solid var(--border); background: #fbfcff; margin-right: 6px;
+    }
+    .badge.b-blue { color: var(--accent); border-color: #b6d0f7; background: #eef5ff; }
+    .badge.b-green { color: var(--good); border-color: #b4dfc4; background: #ecf7f0; }
+    .badge.b-amber { color: var(--warn); border-color: #eed888; background: #fff8e5; }
+    .badge.b-red { color: var(--bad); border-color: #f0b3b8; background: #fdeef0; }
+    table {
+      border-collapse: collapse; width: 100%; margin: 14px 0 20px; font-size: 0.92rem;
+    }
+    th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: right; }
+    th { background: #eef2f7; text-align: center; }
+    td:first-child, th:first-child { text-align: left; }
+    tr:nth-child(even) td { background: #fafbfd; }
+    .num-good { color: var(--good); font-weight: 700; }
+    .num-bad { color: var(--bad); font-weight: 700; }
+    .num-warn { color: var(--warn); font-weight: 700; }
+    figure { margin: 18px 0; }
+    figure img {
+      max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px;
+      background: #fff;
+    }
+    figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 8px; line-height: 1.55; }
+    .fig-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 800px) { .fig-row { grid-template-columns: 1fr; } }
+    .diagram { width: 100%; overflow-x: auto; margin: 16px 0; }
+    .diagram svg { display: block; margin: 0 auto; }
+    code, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em; background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 5px;
+    }
+    dl.gloss { display: grid; grid-template-columns: 220px 1fr; gap: 6px 18px; margin: 0; }
+    dl.gloss dt { font-weight: 700; color: var(--accent); }
+    dl.gloss dd { margin: 0 0 6px; }
+    @media (max-width: 720px) { dl.gloss { grid-template-columns: 1fr; } dl.gloss dd { margin-bottom: 12px; } }
+    .callout {
+      border-left: 4px solid var(--accent); background: #eef5ff; border-radius: 0 6px 6px 0;
+      padding: 12px 16px; margin: 14px 0;
+    }
+    .callout.warn { border-left-color: var(--warn); background: #fff8e5; }
+    .callout.neg { border-left-color: var(--bad); background: #fdeef0; }
+    .callout.good { border-left-color: var(--good); background: #ecf7f0; }
+    nav.toc ol { columns: 2; gap: 32px; margin: 0; padding-left: 20px; }
+    @media (max-width: 720px) { nav.toc ol { columns: 1; } }
+    nav.toc a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    nav.toc a:hover { text-decoration: underline; }
+    .term { border-bottom: 1px dotted var(--accent); cursor: help; }
+    .site-footer {
+      margin-top: 28px; padding: 20px 4px 0; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 0.92rem;
+    }
+    .small { font-size: 0.87rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+
+  <header>
+    <h1>Does the Kitsune 3D-IC Story Survive System Scale?</h1>
+    <p class="subtitle">
+      <b>v3 — the scale-ladder study.</b> The v2 pilot modeled ~1/8 of a large GPU. This
+      study reruns the <em>entire</em> v2 experiment battery at 1&times;, 2&times;,
+      4&times;, and 8&times; system size — 16 to 128 SMs, 8 to 64 MiB L2 — to answer one
+      question: is the latency-floor story, the mechanism attribution, and the 3D-vs-planar
+      margin scale-invariant, or an artifact of the small model?
+      &nbsp;<span class="badge b-blue">16 experiments &times; 4 scales</span>
+      <span class="badge b-blue">&asymp;1,600 simulation runs</span>
+      <span class="badge b-blue">4 platforms</span>
+      <span class="badge b-green">pre-registered predictions</span>
+      <span class="badge b-amber">Verdict: same story, slightly stronger for 3D</span>
+    </p>
+    <p class="subtitle">
+      Companion pages: <a href="report_v2.html">v2 — the realistic-model report</a> (the
+      s=1 baseline of everything here) and <a href="report_v1.html">v1 — the mesh-era
+      study</a>. Every number is <strong>simulated or calculated</strong> on assumed,
+      source-anchored parameters; no hardware calibration.
+    </p>
+  </header>
+
+  <section aria-labelledby="toc-h">
+    <h2 id="toc-h">Contents</h2>
+    <nav class="toc">
+      <ol>
+        <li><a href="#tldr">Executive summary</a></li>
+        <li><a href="#method">How the model scales (the ladder rules)</a></li>
+        <li><a href="#verdict">The headline verdict table</a></li>
+        <li><a href="#attrib">Attribution vs scale — distance takes over</a></li>
+        <li><a href="#axes">Axis by axis across the ladder</a></li>
+        <li><a href="#region">Workload grid &amp; benefit region at scale</a></li>
+        <li><a href="#valid">Cross-simulator checks &amp; pre-registered predictions</a></li>
+        <li><a href="#limits">Threats to validity &amp; reproducibility</a></li>
+      </ol>
+    </nav>
+  </section>
+
+  <section aria-labelledby="tldr-h" id="tldr">
+    <h2 id="tldr-h">1&nbsp;&middot;&nbsp;Executive summary</h2>
+    <div class="callout good">
+      <strong>Same story at every scale — and the physics sharpens it.</strong>
+      (1)&nbsp;The queue tax stays a latency floor: P<sub>C</sub> = 38% at 16 SMs &rarr;
+      43% at 128 SMs; with die distances frozen (ablation A14) it is flat at ~37% — the
+      growth is purely the bigger die's longer wires.
+      (2)&nbsp;<b>Partition crossing overtakes payload transport as the #1 mechanism</b>
+      at 4&times; scale and reaches 61% of the queue-heavy gap at full scale: on a big
+      die the gap is increasingly <em>pure distance</em>.
+      (3)&nbsp;Design ordering is scale-invariant (B7 &asymp; 0.42 recovery everywhere;
+      DSM-class B9 0.68&rarr;0.80; 3D 0.96&rarr;0.98), and the margins move exactly as
+      distance physics predicts: 3D-over-B7 <em>grows</em> (1.18&rarr;1.20&times;),
+      3D-over-B9 <em>narrows</em> (1.09&rarr;1.06&times;) because a cluster-local DSM hop,
+      like a vertical hop, does not lengthen with die size.
+      (4)&nbsp;<b>The one reversal:</b> a single global stacked portal (3D-F), tolerable at
+      16 SMs, is catastrophic at 128 SMs — recovery &minus;0.67, and 5&times; slower than
+      the plain L2 queue at 4 KiB payloads. Vertical bandwidth must be per-SM/TPC.
+      (5)&nbsp;The 3D requirement gets <em>easier</em> with scale: vertical bandwidth/latency
+      sensitivity shrinks to 4.5%/2.5% spans at s=8.
+      (6)&nbsp;All three pre-registered analytical predictions (P<sub>C</sub>&nbsp;&uarr;,
+      B8/B7&nbsp;&uarr;, B8/B9&nbsp;&darr;) verified in direction by the DES.
+    </div>
+    <p>
+      The s=1 rung is not merely similar to v2 — it is <b>bit-identical</b> (the scale
+      machinery is a provable no-op at s=1, checked value-by-value against the v2 battery
+      and byte-by-byte on the BookSim topology files), so every cross-scale difference is
+      attributable to scale alone.
+    </p>
+  </section>
+
+  <section aria-labelledby="method-h" id="method">
+    <h2 id="method-h">2&nbsp;&middot;&nbsp;How the model scales (the ladder rules)</h2>
+    <p>
+      One parameter <code>s ∈ {1, 2, 4, 8}</code> derives everything, in all four
+      simulators (custom DES, analytical, SST, BookSim). The rules separate three kinds of
+      quantity:
+    </p>
+    <table>
+      <tr><th style="text-align:left">Kind</th><th style="text-align:left">Rule</th><th style="text-align:left">Quantities</th><th style="text-align:left">s=8 example</th></tr>
+      <tr><td style="text-align:left"><b>Extensive</b> (grow with the chip)</td><td style="text-align:left">&times; s</td><td style="text-align:left">SMs, L2 slices (16s), GPCs/MPs (4s), HBM channels (4s), trunk bandwidth, L2 capacity (8s MiB), stacked banks, CTAs (weak scaling: per-agent work constant), queues, items, working set</td><td style="text-align:left">128 SMs, 128 slices, 64 MiB L2, 32 HBM ch., 192+192 CTAs</td></tr>
+      <tr><td style="text-align:left"><b>Intensive</b> (per-node/per-item)</td><td style="text-align:left">unchanged</td><td style="text-align:left">per-port bandwidths (network-wall ratios invariant by construction), payload, queue depth, MLP, compute/item, partitions (2, as on A100/H100)</td><td style="text-align:left">24 B/cyc SM ports, 512-B payloads</td></tr>
+      <tr><td style="text-align:left"><b>Distance</b> (grow with die edge)</td><td style="text-align:left">&times; &radic;s</td><td style="text-align:left">latency spreads a/b, partition-crossing penalty, DSM spread (die area &prop; s &rArr; linear dimension &prop; &radic;s); base round trip fixed (pipeline depth, not wire); MSHRs track the grown bandwidth-delay product</td><td style="text-align:left">far&minus;near gap &asymp; 149 &rarr; 421 cycles</td></tr>
+    </table>
+    <div class="callout">
+      <strong>The &radic;s assumption is bracketed, not asserted.</strong> Real
+      cross-generation latency growth mixes wire distance, clocking, and pipeline changes,
+      so every scale experiment also runs ablation <b>A14</b> — die distances frozen at
+      s=1 values — as the planar-optimistic bracket. Real dies lie between the two
+      curves; the qualitative conclusions hold on both.
+    </div>
+  </section>
+
+  <section aria-labelledby="verdict-h" id="verdict">
+    <h2 id="verdict-h">3&nbsp;&middot;&nbsp;The headline verdict table</h2>
+    <table>
+      <tr><th style="text-align:left">Metric (W1 default point)</th><th>s=1 (16 SM)</th><th>s=2</th><th>s=4</th><th>s=8 (128 SM)</th><th style="text-align:left">under A14</th></tr>
+      <tr><td style="text-align:left">P<sub>C</sub> — queue tax vs ideal</td><td>38.3%</td><td>38.6%</td><td>41.0%</td><td class="num-bad">42.9%</td><td style="text-align:left">flat 37&ndash;38%</td></tr>
+      <tr><td style="text-align:left">Recovery: B7 (slice-side planar)</td><td>0.42</td><td>0.42</td><td>0.43</td><td>0.42</td><td style="text-align:left">flat</td></tr>
+      <tr><td style="text-align:left">Recovery: B9 (DSM, co-scheduled)</td><td>0.68</td><td>0.70</td><td>0.75</td><td class="num-good">0.80</td><td style="text-align:left">&mdash;</td></tr>
+      <tr><td style="text-align:left">Recovery: B9i (idealized DSM)</td><td>0.79</td><td>0.81</td><td>0.83</td><td>0.86</td><td style="text-align:left">&mdash;</td></tr>
+      <tr><td style="text-align:left">Recovery: B8 (3D per-SM)</td><td class="num-good">0.96</td><td class="num-good">0.97</td><td class="num-good">0.97</td><td class="num-good">0.98</td><td style="text-align:left">&mdash;</td></tr>
+      <tr><td style="text-align:left">B8 / B7</td><td>1.18&times;</td><td>1.18&times;</td><td>1.19&times;</td><td class="num-good">1.20&times;</td><td style="text-align:left">flat 1.17&times;</td></tr>
+      <tr><td style="text-align:left">B8 / B9</td><td>1.09&times;</td><td>1.08&times;</td><td>1.07&times;</td><td>1.06&times;</td><td style="text-align:left">&mdash;</td></tr>
+      <tr><td style="text-align:left">Kitsune vs bulk (exec basis)</td><td>4.3&times;</td><td>4.0&times;</td><td>3.5&times;</td><td>3.0&times;</td><td style="text-align:left">&mdash;</td></tr>
+      <tr><td style="text-align:left">Weak-scaling efficiency (B2)</td><td>1.00</td><td>0.93</td><td>0.82</td><td>0.70</td><td style="text-align:left">&mdash;</td></tr>
+    </table>
+    <div class="fig-row">
+      <figure>
+        <img src="assets_s/01_pc_vs_scale.png" alt="P_C vs scale">
+        <figcaption><b>The penalty vs scale, with its bracket.</b> Solid: &radic;s die
+          distances; dashed: A14 frozen distances. The gap between the curves <em>is</em>
+          the cost of the bigger die's wires.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets_s/02_recovery_vs_scale.png" alt="recovery vs scale">
+        <figcaption><b>Design recovery vs scale.</b> Slice-side planar is flat at 0.42;
+          DSM climbs (its cluster-local path doesn't stretch); 3D sits at 0.96&ndash;0.98
+          throughout.</figcaption>
+      </figure>
+    </div>
+    <div class="fig-row">
+      <figure>
+        <img src="assets_s/03_margin_vs_scale.png" alt="margins vs scale">
+        <figcaption><b>The honest margins vs scale.</b> B8/B7 grows, B8/B9 and B8/B9i
+          narrow — both movements are the same fact (what stretches with the die loses;
+          what doesn't, keeps up).</figcaption>
+      </figure>
+      <figure>
+        <img src="assets_s/04_weak_scaling_efficiency.png" alt="weak scaling efficiency">
+        <figcaption><b>Weak-scaling efficiency.</b> Per-agent throughput falls ~30% over
+          the ladder for every design — the grown latencies stretch each item; designs
+          differ in how much of that stretch they remove.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="attrib-h" id="attrib">
+    <h2 id="attrib-h">4&nbsp;&middot;&nbsp;Attribution vs scale — distance takes over</h2>
+    <table>
+      <tr><th style="text-align:left">Idealized mechanism (recovery of the W4 gap)</th><th>s=1</th><th>s=2</th><th>s=4</th><th>s=8</th></tr>
+      <tr><td style="text-align:left">A5 — payload transport free</td><td class="num-good">0.47</td><td>0.43</td><td>0.42</td><td>0.42</td></tr>
+      <tr><td style="text-align:left"><b>A12 — partition penalty removed</b></td><td>0.31</td><td>0.36</td><td class="num-good">0.48</td><td class="num-good"><b>0.61</b></td></tr>
+      <tr><td style="text-align:left">A4 — metadata free</td><td>0.29</td><td>0.30</td><td>0.31</td><td>0.31</td></tr>
+      <tr><td style="text-align:left">A2 — infinite fabric bandwidth</td><td>0.08</td><td>0.07</td><td>0.05</td><td>0.05</td></tr>
+      <tr><td style="text-align:left">A14 — no &radic;s distance growth</td><td>0.00</td><td>0.13</td><td>0.30</td><td>0.50</td></tr>
+    </table>
+    <figure>
+      <img src="assets_s/06_attribution_vs_scale.png" alt="attribution vs scale">
+      <figcaption><b>The mechanism league table flips with scale.</b> At 16 SMs, payload
+        transport leads; at 128 SMs, the die-partition crossing does (0.61), and half the
+        total gap is attributable to grown distances alone (A14 row). Bandwidth stays
+        irrelevant at every scale — the fabric is provisioned; the wires are just long.</figcaption>
+    </figure>
+    <div class="callout">
+      <strong>Why this is the architectural crux:</strong> every mechanism that grows with
+      scale is a <em>distance</em> mechanism, and every planar remedy leaves distance
+      intact (B7) or fixes it only within a cluster's reach (B9). The one design whose
+      queue path length is independent of die size — the vertical hop — is the one whose
+      margin grows.
+    </div>
+  </section>
+
+  <section aria-labelledby="axes-h" id="axes">
+    <h2 id="axes-h">5&nbsp;&middot;&nbsp;Axis by axis across the ladder</h2>
+    <div class="fig-row">
+      <figure>
+        <img src="assets_s/05_pc_vs_payload_by_scale.png" alt="P_C vs payload by scale">
+        <figcaption><b>Intensity axis (exp203):</b> the P<sub>C</sub>-vs-payload curve
+          keeps its shape and shifts up uniformly with scale — a floor at every size.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets_s/07_placement_vs_scale.png" alt="placement vs scale">
+        <figcaption><b>Placement axis (exp208):</b> cross-partition stays the worst planar
+          case and worsens with scale; hotspot/camping stay mild — the v2 ordering is
+          scale-stable.</figcaption>
+      </figure>
+    </div>
+    <table>
+      <tr><th style="text-align:left">Axis</th><th style="text-align:left">Scale behavior</th></tr>
+      <tr><td style="text-align:left">Pollution (exp204)</td><td style="text-align:left">exactly scale-invariant: miss cliff at the same footprint ratios (0.35&rarr;0.98) at every s; bypass fixes it everywhere</td></tr>
+      <tr><td style="text-align:left">Design ladder vs load (exp205)</td><td style="text-align:left">ordering B7 &lt; B9 &lt; B8 at all loads and scales; B9 recovery climbs with s</td></tr>
+      <tr><td style="text-align:left">Imbalance / metadata (exp206/207)</td><td style="text-align:left">unchanged: imbalance hides the cost; no atomic saturation at any scale</td></tr>
+      <tr><td style="text-align:left">3D design space (exp213)</td><td style="text-align:left">per-SM/TPC designs 0.92&ndash;0.98 at every scale; payload-only stacking ties full stacking; <b>3D-F global portal collapses at s=8</b> (below)</td></tr>
+      <tr><td style="text-align:left">Vertical-link sensitivity (exp214)</td><td style="text-align:left">shrinks with scale: bandwidth span 6.3%&rarr;4.5%, latency span 3.7%&rarr;2.5% — the 3D requirement gets easier</td></tr>
+    </table>
+    <div class="callout neg">
+      <strong>The scale reversal: a global stacked tier is worse than nothing — again.</strong>
+      3D-F (one vertical access point for the whole chip) was tolerable at 16 SMs
+      (0.31&ndash;0.73 recovery in v2). At 128 SMs its recovery is <b>&minus;0.67</b> at
+      1 KiB payloads, and at 4 KiB it runs <b>5&times; slower than the plain L2 queue</b>
+      (it could not finish its run within the cycle cap). v1 called this design "worse
+      than doing nothing"; v2 softened that on the small model; v3 reinstates it at
+      realistic size. Vertical bandwidth must be provisioned per SM or per TPC — a
+      centralized "3D cache on top" does not work for queue traffic.
+    </div>
+  </section>
+
+  <section aria-labelledby="region-h" id="region">
+    <h2 id="region-h">6&nbsp;&middot;&nbsp;Workload grid &amp; benefit region at scale</h2>
+    <p>
+      The two heaviest experiments (752 runs between them) close the loop: the v2 region
+      table's <em>structure</em> is scale-invariant, and the maps shift exactly as the
+      headline metrics said they would.
+    </p>
+    <table>
+      <tr><th style="text-align:left">Quantity (over the payload &times; depth plane / 11 workloads)</th><th>s=1</th><th>s=8</th><th style="text-align:left">Reading</th></tr>
+      <tr><td style="text-align:left">P<sub>C</sub> range</td><td>0.37&ndash;0.64</td><td>0.42&ndash;0.63</td><td style="text-align:left">floor rises, overflow corner unchanged</td></tr>
+      <tr><td style="text-align:left">S<sub>3D</sub> = T<sub>B2</sub>/T<sub>B8</sub></td><td>1.36&ndash;1.49&times;</td><td class="num-good">1.40&ndash;1.53&times;</td><td style="text-align:left">the 3D dividend grows with the die</td></tr>
+      <tr><td style="text-align:left">B8/B7 over the plane</td><td>1.16&ndash;1.18&times;</td><td class="num-good">1.19&ndash;1.20&times;</td><td style="text-align:left">slice-side planar loses ground uniformly</td></tr>
+      <tr><td style="text-align:left">B8/B9 over the plane</td><td>1.08&ndash;1.18&times;</td><td>1.05&ndash;1.10&times;</td><td style="text-align:left">DSM keeps up in benign cells; its 4-KiB deep-queue funnel cells stay B8's largest wins</td></tr>
+      <tr><td style="text-align:left">B8 recovery across W1&ndash;W11</td><td>0.81&ndash;1.01</td><td>0.87&ndash;1.01</td><td style="text-align:left">uniform at both ends of the ladder</td></tr>
+      <tr><td style="text-align:left">B9 recovery across W1&ndash;W11</td><td>0.55&ndash;0.79</td><td>0.66&ndash;0.85</td><td style="text-align:left">climbs everywhere (cluster paths don't stretch)</td></tr>
+      <tr><td style="text-align:left">Kitsune vs bulk (exec basis)</td><td>3.6&ndash;9.3&times; (W9: 1.18&times;)</td><td>2.5&ndash;6.8&times; (W9: 1.26&times;)</td><td style="text-align:left">compresses with scale, stays decisively positive</td></tr>
+    </table>
+    <div class="fig-row">
+      <figure>
+        <img src="assets_s/08_region_pc_s8.png" alt="region P_C at s=8">
+        <figcaption><b>The penalty map at full scale (128 SMs).</b> Same shape as v2's
+          s=1 map (<code>assets_s/08_region_pc_s1.png</code>), floor shifted up.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets_s/09_region_3d_vs_dsm_s8.png" alt="B8/B9 region at s=8">
+        <figcaption><b>The honest margin at full scale:</b> B8/B9 over the plane — 1.05&ndash;1.07&times;
+          where DSM's co-scheduled cluster paths keep up, 1.10&times;+ where its home-SM
+          funnel binds.</figcaption>
+      </figure>
+    </div>
+    <figure>
+      <img src="assets_s/10_kitsune_speedup_by_scale.png" alt="kitsune speedup by scale">
+      <figcaption><b>Kitsune vs bulk across workloads and scales.</b> The execution-model
+        win compresses as latencies grow but never inverts; W9 (naive 3-stage split)
+        remains the thin case at every scale.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="valid-h" id="valid">
+    <h2 id="valid-h">7&nbsp;&middot;&nbsp;Cross-simulator checks &amp; pre-registered predictions</h2>
+    <table>
+      <tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>
+      <tr><td style="text-align:left">s=1 regression vs the v2 battery</td><td style="text-align:left"><b>bit-exact</b> (exp202 vs exp102: max relative difference 0.0); BookSim s=1 topology files byte-identical to committed v2 files</td></tr>
+      <tr><td style="text-align:left">Pre-registered analytical predictions (recorded before any DES scale run)</td><td style="text-align:left">P<sub>C</sub> rises with s ✓ &middot; B8/B7 grows ✓ &middot; B8/B9 narrows ✓ — all three directions confirmed by the DES</td></tr>
+      <tr><td style="text-align:left">SST at scale (independent codebase)</td><td style="text-align:left">scale-stable P<sub>C</sub> (0.22&ndash;0.26 &rarr; 0.63&ndash;0.67 across payloads at every s); having no distance-growth model, SST independently reproduces the A14 bracket. A scale-up fidelity bug (single memory controller throttling s&ge;2) was caught and fixed with interleaved scale-proportional directories/MCs — the "memory wall" sibling of the network-wall pitfall.</td></tr>
+      <tr><td style="text-align:left">BookSim at scale</td><td style="text-align:left">per-TPC portals flat at every scale (s=8: 8.9&rarr;9.4 cycles over a 16&times; rate sweep); tight planar tree saturates earlier as s grows; global portal saturates immediately at 128 SMs</td></tr>
+    </table>
+  </section>
+
+  <section aria-labelledby="lim-h" id="limits">
+    <h2 id="lim-h">8&nbsp;&middot;&nbsp;Threats to validity &amp; reproducibility</h2>
+    <ol>
+      <li>The &radic;s distance growth is an assumption (real latency growth mixes wires,
+        clocks, pipelines) — bracketed by A14; conclusions hold on both brackets, with
+        flat instead of growing magnitudes on the optimistic one.</li>
+      <li>Weak scaling (per-agent work constant) is one of two reasonable scaling
+        disciplines; strong scaling is untested.</li>
+      <li>Partitions fixed at 2; 4-partition B200-class dies would push the partition
+        share higher (direction unambiguous, magnitude untested).</li>
+      <li>One exp213 s=8 3D-F cell hit the cycle cap (37k/64k items) — reported as
+        measured; longer runs would only worsen 3D-F.</li>
+      <li>All v2 caveats carry over: no hardware calibration, synthetic workloads, B9's
+        stated fairness favors.</li>
+    </ol>
+    <p>
+      Reproducibility: experiments <code>exp201&ndash;216</code> with configs, seeds, and
+      commit hashes; launcher <code>run_scale_battery.sh</code>; plots regenerate via
+      <code>final_plots_s.py</code>; 29-test gate suite including scale-ladder
+      construction checks. Full details in the research repository's
+      <code>results/SCALING_REPORT.md</code> and <code>DECISIONS.md</code> (D8).
+    </p>
+  </section>
+
+  <footer class="site-footer">
+    <p>author : yang-gon kim</p>
+    <p>email : yanggon@g.ucla.edu</p>
+    <p><a href="report_v2.html">v2 report</a> &middot; <a href="report_v1.html">v1 report</a> &middot; <a href="../../index.html">&larr; back to the report archive</a></p>
+  </footer>
+</main>
+</body>
+</html>
