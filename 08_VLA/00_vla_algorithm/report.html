@@ -90,7 +90,7 @@
 
     <section class="card" id="overview">
       <h2>Overview</h2>
-      <p class="lead">Part I of a three-part series. This page explains the algorithm; <a href="../01_stock_aim_offload/report.html">Part II</a> offloads its memory-bound half onto stock LPDDR5-AiM processing-in-memory, and <a href="../02_extended_isa/report.html">Part III</a> fixes the ISA so the offload actually wins.</p>
+      <p class="lead">Part I of a four-part series. This page explains the algorithm; <a href="../01_stock_aim_offload/report.html">Part II</a> offloads its memory-bound half onto stock LPDDR5-AiM processing-in-memory, and <a href="../02_extended_isa/report.html">Part III</a> fixes the ISA so the offload actually wins; <a href="../03_deployment_platforms/report.html">Part IV</a> surveys deployment platforms and baselines.</p>
       <div class="headline">
         <div class="kpi"><div class="v">18 + 18</div><div class="l">VLM layers (gemma_2b, d=2048) + Action-Expert layers (gemma_300m, d=1024)</div></div>
         <div class="kpi"><div class="v">51</div><div class="l">suffix tokens per denoising step (1 state + 50 noisy actions)</div></div>
@@ -445,6 +445,7 @@
         <li><b>Part I (this page)</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module.</li>
         <li><a href="../01_stock_aim_offload/report.html"><b>Part II</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM: ISA, mapping, and why it loses 5.8&times;</a></li>
         <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 36.7 ms to 4.81 ms per step</a></li>
+              <li><a href="../03_deployment_platforms/report.html"><b>Part IV</b> &mdash; Deployment platforms: where robots actually run VLAs &amp; the speed/energy baseline matrix</a></li>
       </ul>
       <p class="cap">Sources: openpi @ <code class="k">15a9616</code> (model code, all dims verified with file:line references and an abstract-shape trace); &ldquo;Characterizing Vision-Language-Action Models across XPUs&rdquo; (arXiv:2604.24447) for measured Orin latency splits and utilization; our operator trace (38.70&nbsp;GFLOPs/step) matches the paper&rsquo;s implied AE numerator (64.5&nbsp;FLOPs/B &times; 600&nbsp;MB = 38.7&nbsp;G) exactly.</p>
       <footer class="footer">

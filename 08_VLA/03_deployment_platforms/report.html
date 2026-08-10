@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VLA Part IV — Deployment Platforms: Where Robots Actually Run VLAs, and Which Baselines Matter</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  .tag.warn{background:var(--warn-bg);color:var(--warn);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .scroll{overflow-x:auto;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#overview">Overview</a>
+    <a href="#landscape">1 &middot; The platform landscape</a>
+    <a href="#lpddr">2 &middot; LPDDR is the deployment reality</a>
+    <a href="#ladder">3 &middot; The AE ladder per platform</a>
+    <a href="#matrix">4 &middot; Speed &amp; energy matrix</a>
+    <a href="#anchors">5 &middot; The three anchor baselines</a>
+    <a href="#beyond">6 &middot; Beyond NVIDIA</a>
+    <a href="#series">Series &amp; sources</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Deployment Platforms: Where Robots Actually Run VLAs, and Which Baselines Matter</h1>
+      <p class="sub">Parts I&ndash;III built and accelerated the &pi;<sub>0</sub> Action Expert against Jetson AGX Orin. This part surveys <b>what robots actually carry in 2025&ndash;26</b> &mdash; Orin NX inside shipping Unitree G1 humanoids, AGX Orin on research arms, Jetson Thor on NVIDIA&rsquo;s GR00T reference humanoid &mdash; and evaluates our design against each platform&rsquo;s full baseline ladder in <b>both latency and energy</b>. Key facts: every deployable platform is <b>LPDDR-based</b> (AiM&rsquo;s home), and <b>energy favors our design in 11 of 12 matrix cells</b>, including against two of the three theoretical floors.</p>
+      <div class="tags">
+        <span class="tag">Orin NX &middot; AGX Orin &middot; Thor &middot; IQ10 &middot; Ascend</span>
+        <span class="tag live">energy favorable in 11 / 12 cells</span>
+        <span class="tag live">NX anchor: 1.66&times; speed &middot; 1.93&times; energy</span>
+        <span class="tag warn">more LPDDR &ne; better baseline (shown)</span>
+      </div>
+    </header>
+
+    <section class="card" id="overview">
+      <h2>Overview</h2>
+      <p class="lead">A design is judged by its baseline. This page fixes the baseline question rigorously: which platforms are deployment-real, what each one&rsquo;s ladder (<a href="../01_stock_aim_offload/report.html#ladder">definitions in Part II &sect;7</a>) looks like, and where our extended-AiM design lands on speed <i>and</i> energy at each platform&rsquo;s own memory budget.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">3 + 2</div><div class="l">NVIDIA deployment tiers (NX / AGX / Thor) + non-NVIDIA entrants (Qualcomm IQ10, Ascend)</div></div>
+        <div class="kpi"><div class="v">100%</div><div class="l">of battery-deployable VLA platforms are LPDDR-based &mdash; AiM&rsquo;s host memory</div></div>
+        <div class="kpi"><div class="v">28&times; / 24&times;</div><div class="l">speed / energy vs. the measured AGX Orin stack (the research workhorse)</div></div>
+        <div class="kpi"><div class="v">1.82&times;</div><div class="l">energy win on Thor even at latency parity with its hypothetical best</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="landscape">
+      <h2><span class="num">1</span>The platform landscape (2025&ndash;26)</h2>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Platform</th><th>Memory system</th><th class="num">BW (GB/s)</th><th>Compute</th><th class="num">Power</th><th>Who deploys it</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Jetson Orin NX 16GB</td><td>16 GB LPDDR5, 128-bit (8 &times; x16 ch)</td><td class="num">102.4</td><td>1024 CUDA / 32 TC, 100 TOPS</td><td class="num">10&ndash;25 W</td><td><b>Inside shipping humanoids</b>: Unitree G1 EDU (Orin NX), G1 Comp (157-TOPS Orin variant)</td></tr>
+          <tr><td class="rowlabel">Jetson AGX Orin 64GB</td><td>64 GB LPDDR5, 256-bit (16 &times; x16 ch)</td><td class="num">204.8</td><td>2048 CUDA / 64 TC, 42 TFLOP/s bf16</td><td class="num">15&ndash;60 W</td><td>The research workhorse: arms, quadrupeds, the characterization paper&rsquo;s reference edge platform</td></tr>
+          <tr><td class="rowlabel">Jetson AGX Thor</td><td>128 GB <b>LPDDR5X</b>, 256-bit</td><td class="num">273</td><td>2560 Blackwell CUDA / 96 TC, 2070 FP4 TFLOPS</td><td class="num">40&ndash;130 W</td><td>The 2025 flagship: NVIDIA GR00T reference humanoid (Unitree H2+, late 2026); $3,499 devkit</td></tr>
+          <tr><td class="rowlabel">Qualcomm Dragonwing IQ10</td><td>64 GB <b>LPDDR5X</b> ECC</td><td class="num">n/a</td><td>18 Oryon cores + NPU, 700 TOPS</td><td class="num">edge-class</td><td>Robotics reference design (Computex 2026); NEURA Robotics partnership</td></tr>
+          <tr><td class="rowlabel">Huawei Ascend 310P (Atlas)</td><td>48 GB LPDDR4X</td><td class="num">204.8</td><td>88 TFLOP/s fp16 NPU</td><td class="num">edge-class</td><td>The paper&rsquo;s cost-priority pick for Gr00t-class models; measured &pi;<sub>0</sub>: 818 ms</td></tr>
+          <tr><td class="rowlabel">RTX 4090 tower</td><td>24 GB <b>GDDR6X</b></td><td class="num">1000</td><td>330 TFLOP/s bf16</td><td class="num">450 W</td><td>Lab rigs / fixed-base demos only &mdash; not battery-deployable, and <b>not LPDDR</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">Specs from NVIDIA data sheets / technical briefs (Orin family spec-verified against the AGX Orin Technical Brief in Part I&rsquo;s study), Thor product pages, Qualcomm Computex 2026 announcements, and the characterization paper&rsquo;s Table 10.</p>
+    </section>
+
+    <section class="card" id="lpddr">
+      <h2><span class="num">2</span>LPDDR is the deployment reality &mdash; and AiM&rsquo;s home turf</h2>
+      <ul class="notes">
+        <li><b>Every platform a battery-powered robot can carry is LPDDR-based.</b> The whole Jetson line, Thor&rsquo;s LPDDR5X, Qualcomm&rsquo;s robotics parts, Ascend&rsquo;s Atlas edge modules. The one machine that beats our design on raw floor (the 4090) is the one nobody puts inside a humanoid &mdash; and it has no LPDDR, hence no AiM story at all.</li>
+        <li><b>AiM ports across the family unchanged.</b> LPDDR5X&rsquo;s faster pins (Thor) speed only the external bus &mdash; the XPU&rsquo;s side &mdash; not the in-bank MAC path, so AiM in Thor&rsquo;s 16 channels performs like our 16-channel results while consuming none of the 2,070-TFLOP Blackwell silicon.</li>
+        <li><b>Why &ldquo;just add more LPDDR&rdquo; is not a legitimate baseline change:</b> the XPU shares the memory system, and its weight-streaming floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while our AiM curve scales sub-linearly (broadcast terms, <a href="../02_extended_isa/report.html#bcast">Part III &sect;7</a>). A fair 32-channel comparison is XPU 1.57 vs. ours 3.38 ms &mdash; adding memory helps the baseline more than the design. The honest comparisons are same-memory-system ones, at each platform&rsquo;s own budget.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="ladder">
+      <h2><span class="num">3</span>The Action-Expert ladder on each platform</h2>
+      <p class="lead">Each platform&rsquo;s ladder (floor / realistic 2&times; / measured; <a href="../01_stock_aim_offload/report.html#ladder">definitions</a>) with our design evaluated at that platform&rsquo;s channel budget: 7.58 ms at 8 channels (64-vec GB tier; token-parallel is counter-productive at 8 ch), 4.81 ms at 16 channels.</p>
+      <figure>
+        <img src="assets/platforms.png" alt="Grouped bar chart, log scale, of AE step latency per platform. Orin NX: floor 6.30, realistic 12.61, ours 7.58 ms. AGX Orin: floor 3.15, realistic 6.30, measured 136, ours 4.81 ms. Jetson Thor: floor 2.36, realistic 4.73, measured 36, ours 4.81 ms. Our green bars beat the realistic tier on NX and AGX and match it on Thor, and beat every measured stack by large factors.">
+        <figcaption class="cap">Fig. 1 &mdash; The ladder per platform. Ours (green) beats the realistic tier on NX (1.66&times;) and AGX (1.31&times;), matches it on Thor (0.98&times;), and beats every <i>measured</i> stack by 7.5&ndash;28&times;. Thor&rsquo;s measured AE (&asymp;36 ms/step) derives from the paper&rsquo;s 246 ms end-to-end &times; the 59% AE share; NX was not measured by the paper.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="matrix">
+      <h2><span class="num">4</span>The deployment-baseline matrix: speed and energy together</h2>
+      <p class="lead">Cells are <b>our speedup&times; / energy&times;</b> vs. each baseline (energy via the Part III &sect;9 model; host power 15 / 20 / 40 W per platform [ASSUMPTION]; ours: 133 mJ/step at 8 ch, 137 mJ at 16 ch).</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Baseline tier</th><th>Orin NX (8 ch)</th><th>AGX Orin (16 ch)</th><th>Thor (16 ch)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">measured stack</td><td class="num">n/a</td><td class="num"><b>28.3&times; / 24.3&times;</b> (136 ms, 3335 mJ)</td><td class="num"><b>7.5&times; / 11.9&times;</b> (36 ms, 1633 mJ)</td></tr>
+          <tr><td class="rowlabel">realistic 4&times;</td><td class="num">3.33&times; / 3.55&times; (25.2 ms, 473 mJ)</td><td class="num">2.62&times; / 2.53&times; (12.6 ms, 347 mJ)</td><td class="num">1.96&times; / 3.34&times; (9.45 ms, 459 mJ)</td></tr>
+          <tr><td class="rowlabel">realistic 2&times;</td><td class="num"><b>1.66&times; / 1.93&times;</b> (12.6 ms, 257 mJ)</td><td class="num">1.31&times; / 1.41&times; (6.30 ms, 194 mJ)</td><td class="num">0.98&times; / <b>1.82&times;</b> (4.73 ms, 251 mJ)</td></tr>
+          <tr><td class="rowlabel">theoretical floor</td><td class="num">0.83&times; / 1.12&times; (6.30 ms, 149 mJ)</td><td class="num">0.65&times; / 0.86&times; (3.15 ms, 118 mJ)</td><td class="num">0.49&times; / 1.06&times; (2.36 ms, 146 mJ)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <figure>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ, extended AiM 137 mJ, broken into DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 2 &mdash; The AGX-Orin energy components behind the matrix&rsquo;s middle column (model in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>).</figcaption>
+      </figure>
+      <div class="callout win"><b>Energy is favorable in 11 of 12 cells</b> &mdash; including against the NX and Thor <i>theoretical floors</i>: a GPU babysitting a memory-bound loop costs more than our entire per-step budget. The single losing cell is the AGX floor (0.86&times;).</div>
+    </section>
+
+    <section class="card" id="anchors">
+      <h2><span class="num">5</span>The three anchor baselines (and the scale-down story)</h2>
+      <ul class="notes">
+        <li><b>Orin NX, realistic band &mdash; the unassailable favorable anchor.</b> 1.66&times; faster and 1.93&times; less energy than <i>hypothetical-best</i> software on the exact module inside a shipping Unitree G1; 3.33&times;/3.55&times; against an ordinary compiled stack. No cherry-pick exposure: the platform is deployment ground truth and the baseline software is more generous than anything that exists.</li>
+        <li><b>AGX Orin, measured &mdash; the headline, honestly labeled.</b> 28.3&times;/24.3&times; against what the characterization paper actually measured on today&rsquo;s research workhorse. At 136 ms/step the baseline burns 3.3 J per step &mdash; slowness is an energy disaster.</li>
+        <li><b>Thor &mdash; lead with energy.</b> Latency parity with its hypothetical best (0.98&times;), yet 1.82&times; less energy &mdash; and the 2,070-TFLOP Blackwell GPU is entirely free during denoising. Against Thor&rsquo;s measured stack: 7.5&times;/11.9&times;. The pitch: <i>same speed as the best possible Thor software, half the energy, GPU freed</i>.</li>
+        <li><b>Scale-down:</b> an NX-class module with AiM (7.58 ms) delivers AGX-class realistic AE latency (6.30 ms) at ~40% of module cost &mdash; &ldquo;smaller XPU + smart memory &ge; bigger XPU&rdquo; &mdash; with the AE hidden behind the VLM under stale-KV overlap (<a href="../02_extended_isa/report.html#system">Part III &sect;8</a>), which an XPU-only NX cannot do.</li>
+      </ul>
+      <div class="callout warn"><b>The two comparisons to avoid as headlines:</b> Thor realistic-2&times; on latency (parity &mdash; carry it on energy instead), and the RTX 4090 entirely (not deployable, not LPDDR, and the paper&rsquo;s own CET leaderboard already shows it is rarely the right robot choice).</div>
+    </section>
+
+    <section class="card" id="beyond">
+      <h2><span class="num">6</span>Beyond NVIDIA: the LPDDR-robotics class is broadening</h2>
+      <p>Qualcomm&rsquo;s <b>Dragonwing IQ10</b> robotics reference design (700-TOPS NPU, 64 GB LPDDR5X ECC, Computex 2026) and the NEURA Robotics partnership signal a second major vendor building humanoid-class compute on LPDDR; Huawei&rsquo;s <b>Ascend 310P</b> Atlas modules already appear in the characterization paper&rsquo;s leaderboard (818 ms measured &pi;<sub>0</sub>; the cost-priority pick for Gr00t). Two implications for this research: (a) every such platform is a potential AiM host &mdash; the extended-ISA design is vendor-neutral at the memory level; (b) the software-stack fragmentation these platforms suffer for VLA inference (compilation effectiveness varied 1.5&ndash;2.9&times; across vendors in the paper) does not touch a PIM Action Expert, whose &ldquo;kernel&rdquo; is an ISR trace independent of the host&rsquo;s ML stack.</p>
+    </section>
+
+    <section class="card" id="series">
+      <h2>Series &amp; sources</h2>
+      <ul class="notes">
+        <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
+        <li><a href="../01_stock_aim_offload/report.html"><b>Part II</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM (and why it loses 5.8&times;)</a></li>
+        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: 36.7 &rarr; 4.81 ms per step</a></li>
+        <li><b>Part IV (this page)</b> &mdash; Deployment platforms and the baseline matrix.</li>
+      </ul>
+      <p class="cap">Sources: NVIDIA Jetson Thor product pages and 2025 dev-kit coverage (128 GB 256-bit LPDDR5X, 273 GB/s, 2070 FP4 TFLOPS, 130 W); NVIDIA GR00T reference humanoid announcement (Unitree H2+ &times; Thor, late 2026); Unitree G1 EDU / Comp listings (Orin NX / 157-TOPS Orin onboard); NVIDIA Jetson AGX Orin Technical Brief v1.2 and Orin NX data sheet (spec-verified in the study); Qualcomm Dragonwing IQ10 Computex 2026 announcements and the NEURA partnership; &ldquo;Characterizing VLA Models across XPUs&rdquo; (arXiv:2604.24447) Tables 1/9/10 for measured latencies and the Ascend/Intel entries. Energy cells from the study&rsquo;s Phase-8 model (CENT power-calculator constants; assumptions tagged there).</p>
+      <footer class="footer">
+        <p>author : yang-gon kim &nbsp;&middot;&nbsp; email : yanggon@g.ucla.edu</p>
+        <p><a href="../02_extended_isa/report.html">&larr; Part III</a> &nbsp;&middot;&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+      </footer>
+    </section>
+  </main>
+</div>
+</body>
+</html>

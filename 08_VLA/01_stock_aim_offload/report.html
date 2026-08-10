@@ -92,7 +92,7 @@
 
     <section class="card" id="overview">
       <h2>Overview</h2>
-      <p class="lead">Part II of three. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../02_extended_isa/report.html">Part III</a> fixes it.</p>
+      <p class="lead">Part II of four. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../02_extended_isa/report.html">Part III</a> fixes it.</p>
       <div class="headline">
         <div class="kpi"><div class="v">36.7 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
         <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / realistic 2&times;</div></div>
@@ -407,6 +407,7 @@ AiM RD_MAC 0 0xffff
         <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
         <li><b>Part II (this page)</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM.</li>
         <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 36.7 ms to 4.81 ms per step</a></li>
+              <li><a href="../03_deployment_platforms/report.html"><b>Part IV</b> &mdash; Deployment platforms: where robots actually run VLAs &amp; the speed/energy baseline matrix</a></li>
       </ul>
       <p class="cap">Sources: arkhadem/aim_simulator @ <code class="k">0f28a07</code> (CENT, ASPLOS&rsquo;25; MIT); SK hynix AiM: HC34 poster + ISSCC&rsquo;22/JSSC&rsquo;23 papers; NVIDIA Jetson AGX Orin Technical Brief v1.2 (42 TFLOP/s bf16, 204.8 GB/s, spec-verified); trace generator, sweep scripts, and CSVs in the study workspace &mdash; every number regenerates from committed traces.</p>
       <footer class="footer">

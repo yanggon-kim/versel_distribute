@@ -52,6 +52,9 @@ from the published site.
   - `08_VLA/02_extended_isa/report.html`: Part III — eight problems, six ISA
     extensions (36.7 -> 4.81 ms/step), energy analysis, and the
     deployment-baseline matrix.
+  - `08_VLA/03_deployment_platforms/report.html`: Part IV — deployment-platform
+    survey (Orin NX / AGX Orin / Thor / Qualcomm IQ10 / Ascend), the per-platform
+    AE ladder, and the speed+energy baseline matrix.
 
 ## Editing Rules
 
