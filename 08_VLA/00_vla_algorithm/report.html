@@ -213,6 +213,40 @@
       <p>The time embedding sweeps geometric periods from 4&times;10<sup>&minus;3</sup> to 4.0 so the network can resolve both early (coarse) and late (fine) integration times:</p>
       <div class="eq">&phi;(t) = [ sin(2&pi;t/T<sub>1</sub>) &hellip; sin(2&pi;t/T<sub>512</sub>), cos(2&pi;t/T<sub>1</sub>) &hellip; cos(2&pi;t/T<sub>512</sub>) ],&nbsp;&nbsp;T<sub>i</sub> = T<sub>min</sub>&middot;(T<sub>max</sub>/T<sub>min</sub>)<sup>(i&minus;1)/511</sup></div>
       <p>The suffix is then <code class="k">[state_token ; action_tokens] = [51, 1024]</code>. The attention mask makes it a <b>block</b>: prefix tokens never see the suffix (their KV was computed without it); the state token attends to the prefix and itself; the 50 action tokens attend to everything &mdash; prefix, state, and each other (full attention inside the block, no causal ordering between actions).</p>
+
+      <div class="fig" id="fig-mask">
+        <svg viewBox="0 0 760 260" role="img" aria-label="Attention mask structure: rows are query tokens (816 prefix, 1 state, 50 actions), columns are key tokens. The prefix block attends only within itself; the state row attends to prefix plus itself; action rows attend to everything. During denoising only the 51 suffix rows are computed, against 867 key columns.">
+          <!-- column headers -->
+          <text x="235" y="26" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">keys: prefix (816)</text>
+          <text x="475" y="26" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">state (1)</text>
+          <text x="597" y="26" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">actions (50)</text>
+          <!-- row labels -->
+          <text x="120" y="88" text-anchor="end" font-size="10.5" fill="#172033">prefix queries (816)</text>
+          <text x="120" y="152" text-anchor="end" font-size="10.5" fill="#172033">state query (1)</text>
+          <text x="120" y="205" text-anchor="end" font-size="10.5" fill="#172033">action queries (50)</text>
+          <!-- prefix row: prefix visible only -->
+          <rect x="130" y="40" width="210" height="80" fill="#1f6feb" opacity="0.75"/>
+          <rect x="344" y="40" width="262" height="80" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="235" y="84" text-anchor="middle" font-size="9.5" fill="#fff">bidirectional (image&#8596;text)</text>
+          <text x="475" y="84" text-anchor="middle" font-size="9" fill="#647083">never sees the suffix</text>
+          <!-- state row -->
+          <rect x="130" y="128" width="210" height="36" fill="#1a7f37" opacity="0.75"/>
+          <rect x="344" y="128" width="128" height="36" fill="#1a7f37" opacity="0.75"/>
+          <rect x="476" y="128" width="130" height="36" fill="#eef2f7" stroke="#d8dee8"/>
+          <!-- action rows -->
+          <rect x="130" y="172" width="210" height="60" fill="#eb6834" opacity="0.8"/>
+          <rect x="344" y="172" width="128" height="60" fill="#eb6834" opacity="0.8"/>
+          <rect x="476" y="172" width="130" height="60" fill="#eb6834" opacity="0.8"/>
+          <text x="368" y="205" text-anchor="middle" font-size="9.5" fill="#fff">full attention: every action token sees prefix + state + all actions</text>
+          <!-- denoising bracket -->
+          <path d="M 622 128 L 634 128 L 634 232 L 622 232" fill="none" stroke="#647083" stroke-width="1.4"/>
+          <text x="644" y="168" font-size="9" fill="#647083">only these 51</text>
+          <text x="644" y="182" font-size="9" fill="#647083">rows run per</text>
+          <text x="644" y="196" font-size="9" fill="#647083">denoising step</text>
+          <text x="644" y="210" font-size="9" fill="#647083">(867 keys)</text>
+        </svg>
+        <p class="cap">Fig. 2 &mdash; The block attention mask. During denoising the prefix rows are frozen (cached KV); only the 51 suffix queries execute, so the score matrix is [8 heads, 51, 867].</p>
+      </div>
       <p class="cap">Variant note: &pi;<sub>0.5</sub> moves the state into the discrete prompt and injects t through adaptive RMSNorm (a learned scale/shift/gate per norm site) instead of the concat-MLP. Same layer skeleton otherwise; &pi;<sub>0</sub> is the target throughout this series.</p>
     </section>
 
@@ -287,7 +321,7 @@
           <path d="M 55 176 L 55 142 L 496 142 L 496 178" fill="none" stroke="#1a7f37" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
           <text x="80" y="139" font-size="9" fill="#1a7f37">residual</text>
         </svg>
-        <p class="cap">Fig. 2 &mdash; One of 18 identical Action-Expert layers. Blue boxes are weight matrix multiplies (per-layer weights: W<sub>Q</sub> 4.19&nbsp;MB, W<sub>KV</sub> 1.05&nbsp;MB, W<sub>O</sub> 4.19&nbsp;MB, GeGLU 25.2&nbsp;MB = 34.6&nbsp;MB total &times; 18 layers = 623&nbsp;MB). Green is elementwise/residual work; orange is attention over the cached prefix.</p>
+        <p class="cap">Fig. 3 &mdash; One of 18 identical Action-Expert layers. Blue boxes are weight matrix multiplies (per-layer weights: W<sub>Q</sub> 4.19&nbsp;MB, W<sub>KV</sub> 1.05&nbsp;MB, W<sub>O</sub> 4.19&nbsp;MB, GeGLU 25.2&nbsp;MB = 34.6&nbsp;MB total &times; 18 layers = 623&nbsp;MB). Green is elementwise/residual work; orange is attention over the cached prefix.</p>
       </div>
 
       <h3>The math of each block</h3>
@@ -358,6 +392,10 @@
         <div class="kpi"><div class="v">I &asymp; 840 vs 60</div><div class="l">arithmetic intensity: VLM layer vs AE step</div></div>
         <div class="kpi"><div class="v">2.9&ndash;3.2 ms</div><div class="l">AE step floor from bandwidth alone: ~620&ndash;645 MB &divide; 204.8 GB/s</div></div>
       </div>
+      <figure>
+        <img src="assets/roofline.png" alt="Log-log roofline of Jetson AGX Orin (42 TFLOP/s peak, 204.8 GB/s bandwidth, ridge point at 205 FLOPs per byte) with pi0 modules placed: softmax/norms/RoPE at intensity 0.8, AE projections at 51 and the AE full step at 60 sit deep in the memory-bound region reaching only about 10-12 TFLOP/s attainable; AE attention at 408, vision encoder near 733 and the VLM prefill layer at 840 sit on the compute-bound plateau.">
+        <figcaption class="cap">Fig. 4 &mdash; The Orin roofline with &pi;<sub>0</sub>&rsquo;s modules placed by measured arithmetic intensity. The Action Expert (orange) sits deep in the memory-bound region at I&nbsp;&asymp;&nbsp;51&ndash;60 &mdash; capped at ~12&nbsp;TFLOP/s of the 42 available &mdash; while the VLM and vision encoder ride the compute plateau.</figcaption>
+      </figure>
       <p>The Action Expert dominates latency while starving the GPU: each of its N serial steps must stream 623&nbsp;MB of weights through a 204.8&nbsp;GB/s interface to do only 38.7&nbsp;GFLOPs of work. No amount of extra compute helps &mdash; only more effective memory bandwidth, or removing the weight traffic altogether by computing where the weights live. That is the premise <a href="../01_stock_aim_offload/report.html">Part II</a> puts to the test with LPDDR5 processing-in-memory.</p>
     </section>
 

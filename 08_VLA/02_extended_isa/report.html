@@ -111,7 +111,7 @@
           <tr><td class="rowlabel">P1</td><td>GEMV-only compute: one GB vector, one accumulator/bank &rarr; no multi-token reuse</td><td>5.10 M MAC16 commands = 42%; 84 k blocking RD_MACs; 100 k WR_BIAS re-inits</td><td><code class="k">MAC_ABK_MV</code> + accumulator file + big GB, <code class="k">RD_MACB</code></td><td>implemented &mdash; the big one</td></tr>
           <tr><td class="rowlabel">P2</td><td>No reduction / softmax primitives &rarr; every partial exits via blocking reads; softmax round-trips 2.1 MB/layer to host</td><td>blocking+drain 13%; softmax host segment + SYNC each layer</td><td><code class="k">RD_MAC_SUM</code>, <code class="k">AF_SCALED</code>, <code class="k">WR_AFLUT</code> presets (exp, rsqrt)</td><td>implemented</td></tr>
           <tr><td class="rowlabel">P3</td><td>AiM/normal traffic mutual exclusion blocks concurrent use</td><td>structural (enables &sect;8, not layer latency)</td><td>per-channel mode-partition CFR</td><td>implemented</td></tr>
-          <tr><td class="rowlabel">P4</td><td>Host-issued ISRs, no loop control &rarr; 56.6 k trace lines/layer, launch overhead per segment</td><td>step grows 36.0&rarr;40.0 ms over 5&rarr;50 &micro;s overhead</td><td><code class="k">LOOP n</code>/<code class="k">ENDLOOP</code> controller macros</td><td>implemented</td></tr>
+          <tr><td class="rowlabel">P4</td><td>Host-issued ISRs, no loop control &rarr; 56.6 k trace lines/layer, launch overhead per segment</td><td>step grows 35.0&rarr;40.0 ms over 5&rarr;50 &micro;s overhead</td><td><code class="k">LOOP n</code>/<code class="k">ENDLOOP</code> controller macros</td><td>implemented</td></tr>
           <tr><td class="rowlabel">P5</td><td>fp16 MACs are area-hungry; INT8/MX would halve weight residency</td><td>&mdash; (success-rate impact unverifiable without GPU eval)</td><td>documented design only</td><td>not implemented, honest scope</td></tr>
           <tr><td class="rowlabel">P6</td><td>No lane shuffle for RoPE&rsquo;s pair rotation</td><td>RoPE &asymp; 20 &micro;s/layer on host &lt; 1.5% post-P1</td><td>&mdash;</td><td><b>rejected with numbers</b></td></tr>
           <tr><td class="rowlabel">P7</td><td>1 ISR per 32 B write: activation tile loads are 8.2 k single-column ISRs/layer</td><td>loads 4&ndash;8%; fixed floor after P1</td><td><code class="k">WR_TILE</code> descriptor (1 ISR &rarr; opsize columns)</td><td>implemented</td></tr>
@@ -285,6 +285,10 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
       </table>
       </div>
       <div class="callout warn"><b>G = 4 is a kept negative result.</b> Fills drop 4&times; as designed &mdash; but each group drains its accumulators with its own blocking <code class="k">RD_MACB</code>, and blocking instructions stall the single in-order DMA <i>globally</i>. Four groups quadruple the serialization points and the stall time triples. Token-parallelism has a sweet spot at G=2; going further needs per-group DMA queues or non-blocking accumulator reads (a P4-class controller extension), multi-port GBs, or activation compression &mdash; the concrete hardware agenda this measurement produces.</div>
+      <figure>
+        <img src="assets/scaling.png" alt="Line chart of AE step latency versus active channels 8, 16, 32 on a log axis. Stock AiM: 68.45, 36.71, 21.73 ms. Extended ISA with 64-vector GB: 7.58, 5.58, 4.59 ms, flattening because broadcast terms do not scale. With dedup and token-parallel x2: 7.72, 4.81, 3.38 ms, restoring scaling toward the dashed XPU floor at 3.15 ms; the XPU realistic 2x reference is 6.30 ms.">
+        <figcaption class="cap">Fig. 2 &mdash; Channel scaling per tier. The extended-ISA curve (yellow) flattens at high channel counts because the broadcast terms are channel-independent; the token-parallel fix (green) restores scaling and closes to within 7% of the XPU floor at 32 channels.</figcaption>
+      </figure>
       <p><b>Net:</b> 4.81 ms at Orin parity (1.31&times; faster than the realistic XPU), and 3.38 ms at 32 channels &mdash; within 7% of the XPU&rsquo;s <i>theoretical</i> bandwidth floor, from a machine that started 11.6&times; behind it.</p>
     </section>
 
@@ -302,6 +306,47 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <tr><td class="rowlabel"><b>extended AiM + stale-KV overlap</b></td><td class="num">19.3 (hidden)</td><td class="num"><b>368</b></td><td class="num"><b>2.7 Hz</b></td><td class="num"><b>~0%</b></td></tr>
         </tbody>
       </table>
+      </div>
+      <div class="fig" id="fig-overlap">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Two Gantt timelines of one control cycle. Serial: XPU runs vision (110 ms) then VLM (258 ms), then the AiM runs the Action Expert (19 ms), total 387 ms at 2.6 Hz; the AiM is idle 95% of the time. Overlapped: while the XPU runs vision and VLM for observation t, the AiM simultaneously denoises actions for observation t using the stale KV cache of observation t-1; the 19 ms AE fits far inside the 258 ms VLM window, so the cycle shrinks to 368 ms at 2.7 Hz and the Action Expert contributes zero critical-path latency.">
+          <defs>
+            <marker id="arr6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- scale: 1 ms = 2.07 px, origin x=90 -->
+          <text x="14" y="26" font-size="12" font-weight="bold" fill="#172033">serial (no P3): 387 ms cycle &middot; 2.6 Hz</text>
+          <text x="82" y="56" text-anchor="end" font-size="10" fill="#647083">XPU</text>
+          <rect x="90" y="42" width="228" height="22" rx="4" fill="#2a78d6"/>
+          <text x="204" y="57" text-anchor="middle" font-size="9.5" fill="#fff">vision 110</text>
+          <rect x="318" y="42" width="534" height="22" rx="4" fill="#1f6feb" opacity="0.75"/>
+          <text x="585" y="57" text-anchor="middle" font-size="9.5" fill="#fff">VLM prefill 258 ms &rarr; KV cache</text>
+          <text x="82" y="90" text-anchor="end" font-size="10" fill="#647083">AiM</text>
+          <rect x="90" y="76" width="762" height="22" rx="4" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="460" y="91" text-anchor="middle" font-size="9" fill="#647083">idle 95% of the cycle</text>
+          <rect x="852" y="76" width="40" height="22" rx="4" fill="#1baf7a"/>
+          <text x="872" y="91" text-anchor="middle" font-size="8.5" fill="#fff">AE 19</text>
+          <line x1="90" y1="110" x2="892" y2="110" stroke="#647083" stroke-width="1"/>
+          <text x="491" y="126" text-anchor="middle" font-size="9" fill="#647083">action chunk ready after vision + VLM + AE</text>
+          <!-- overlapped -->
+          <text x="14" y="168" font-size="12" font-weight="bold" fill="#172033">stale-KV overlap (P3 + double-buffered KV): 368 ms cycle &middot; 2.7 Hz</text>
+          <text x="82" y="198" text-anchor="end" font-size="10" fill="#647083">XPU</text>
+          <rect x="90" y="184" width="228" height="22" rx="4" fill="#2a78d6"/>
+          <text x="204" y="199" text-anchor="middle" font-size="9.5" fill="#fff">vision(t) 110</text>
+          <rect x="318" y="184" width="534" height="22" rx="4" fill="#1f6feb" opacity="0.75"/>
+          <text x="585" y="199" text-anchor="middle" font-size="9.5" fill="#fff">VLM(t) 258 ms &mdash; writes fresh KV into partitioned channels (74 &micro;s)</text>
+          <text x="82" y="232" text-anchor="end" font-size="10" fill="#647083">AiM</text>
+          <rect x="90" y="218" width="228" height="22" rx="4" fill="#eef2f7" stroke="#d8dee8"/>
+          <rect x="318" y="218" width="40" height="22" rx="4" fill="#1baf7a"/>
+          <text x="338" y="233" text-anchor="middle" font-size="8.5" fill="#fff">AE(t) 19</text>
+          <rect x="358" y="218" width="494" height="22" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="605" y="233" text-anchor="middle" font-size="9" fill="#1a7f37">denoises on STALE KV of obs t&minus;1 &mdash; hidden entirely inside the VLM window</text>
+          <line x1="358" y1="240" x2="358" y2="256" stroke="#647083" stroke-width="1"/>
+          <text x="362" y="254" font-size="8.5" fill="#647083">AE done long before the VLM &mdash; zero critical-path contribution</text>
+          <line x1="90" y1="272" x2="852" y2="272" stroke="#647083" stroke-width="1"/>
+          <text x="471" y="288" text-anchor="middle" font-size="9" fill="#647083">cycle = vision + VLM only = 368 ms &middot; the same trade V-AEFusion validates (SR cost of one-cycle-old visual context)</text>
+        </svg>
+        <p class="cap">Fig. 3 &mdash; Macro-scale concurrency. Serial vs. stale-KV-overlapped control cycle: with the extended-AiM AE at 19 ms against a 258 ms VLM window, the Action Expert vanishes from the critical path.</p>
       </div>
       <ul class="notes">
         <li><b>Stale-KV pipelining (needs P3):</b> denoise for observation t against the cached KV of observation t&minus;1 while the XPU runs vision+VLM on t. Because AE (19 ms) &laquo; VLM (258 ms), the AE hides <i>completely</i> &mdash; fresh KV streams into partitioned channels (74 &micro;s against a 258 ms window) and a double-buffered KV region (2&times;15 MB in 4 GB banks) flips at a step boundary. The same trade V-AEFusion validates on GPUs (their AE is 2&times; their VLM, so they can hide only half; ours vanishes).</li>

@@ -244,6 +244,54 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
       <h2><span class="num">5</span>Instruction-level mapping</h2>
       <p class="lead">A GEMM has two mappings onto AiM, differing in <i>what stays in banks</i> and <i>what streams through the GB</i>. We generate real traces for both (plus the attention path) and simulate them.</p>
 
+      <div class="fig" id="fig-strategies">
+        <svg viewBox="0 0 900 270" role="img" aria-label="Strategy A versus Strategy B data placement. Strategy A: weight rows resident in the 16 banks, the per-token activation vector broadcast through the Global Buffer, one output element per bank; the whole weight set is re-read for each of the 51 tokens. Strategy B: 16 activation tokens resident in banks, weight columns streamed one at a time through the Global Buffer via COPY_BKGB; weights pass the GB once per layer but through a serial one-vector port, and 51 tokens still need 4 accumulator drain groups.">
+          <defs>
+            <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- Strategy A -->
+          <text x="14" y="24" font-size="12" font-weight="bold" fill="#172033">Strategy A &mdash; weight-stationary</text>
+          <rect x="14" y="38" width="128" height="40" rx="7" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="78" y="55" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">GB: activation x&#8339;</text>
+          <text x="78" y="70" text-anchor="middle" font-size="8.5" fill="#647083">re-broadcast per token &times;51</text>
+          <rect x="14" y="104" width="400" height="118" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+          <text x="26" y="124" font-size="9.5" font-weight="bold" fill="#172033">16 banks: weight ROWS resident</text>
+          <g font-size="8.2" fill="#647083">
+            <rect x="26" y="134" width="88" height="26" rx="4" fill="#e7f0fe" stroke="#1f6feb"/><text x="70" y="151" text-anchor="middle">w row 0</text>
+            <rect x="122" y="134" width="88" height="26" rx="4" fill="#e7f0fe" stroke="#1f6feb"/><text x="166" y="151" text-anchor="middle">w row 1</text>
+            <rect x="218" y="134" width="88" height="26" rx="4" fill="#e7f0fe" stroke="#1f6feb"/><text x="262" y="151" text-anchor="middle">&hellip;</text>
+            <rect x="314" y="134" width="88" height="26" rx="4" fill="#e7f0fe" stroke="#1f6feb"/><text x="358" y="151" text-anchor="middle">w row 15</text>
+          </g>
+          <text x="26" y="184" font-size="8.8" fill="#172033">MAC_ABK: acc&#7495; += w&#7495;&middot;x&#8339; &rarr; 16 outputs/pass</text>
+          <text x="26" y="200" font-size="8.8" fill="#b54708">weights re-read from banks for EVERY token: 51&times;</text>
+          <text x="26" y="214" font-size="8.8" fill="#b54708">+ WR_GB per token over the external bus</text>
+          <line x1="78" y1="78" x2="120" y2="102" stroke="#b54708" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr5)"/>
+          <!-- divider -->
+          <line x1="452" y1="14" x2="452" y2="256" stroke="#d8dee8" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <!-- Strategy B -->
+          <text x="470" y="24" font-size="12" font-weight="bold" fill="#172033">Strategy B &mdash; activation-stationary</text>
+          <rect x="470" y="38" width="150" height="40" rx="7" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="545" y="55" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">GB: weight column w&#8345;</text>
+          <text x="545" y="70" text-anchor="middle" font-size="8.5" fill="#647083">COPY_BKGB &mdash; serial, 1 vector at a time</text>
+          <rect x="470" y="104" width="416" height="118" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+          <text x="482" y="124" font-size="9.5" font-weight="bold" fill="#172033">16 banks: activation TOKENS resident (tokens 0&ndash;15 of 51)</text>
+          <g font-size="8.2" fill="#647083">
+            <rect x="482" y="134" width="88" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/><text x="526" y="151" text-anchor="middle">x&#8320; (rows 0-3)</text>
+            <rect x="578" y="134" width="88" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/><text x="622" y="151" text-anchor="middle">x&#8321;</text>
+            <rect x="674" y="134" width="88" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/><text x="718" y="151" text-anchor="middle">&hellip;</text>
+            <rect x="770" y="134" width="88" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/><text x="814" y="151" text-anchor="middle">x&#8321;&#8325;</text>
+          </g>
+          <text x="482" y="184" font-size="8.8" fill="#172033">MAC_ABK: acc&#7495; += x&#7495;&middot;w&#8345; &rarr; 16 token-results/pass</text>
+          <text x="482" y="200" font-size="8.8" fill="#b54708">weights cross the GB once &mdash; but through a 1-vector serial port,</text>
+          <text x="482" y="214" font-size="8.8" fill="#b54708">and 51 tokens = 4 groups &times; blocking RD_MAC drain each</text>
+          <line x1="545" y1="78" x2="580" y2="102" stroke="#b54708" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr5)"/>
+          <text x="14" y="248" font-size="9.5" fill="#172033">Simulated: A and B land within 2% of each other &mdash; both hit the same per-command wall. The hybrid uses B for projections, A for attention (KV resident).</text>
+        </svg>
+        <p class="cap">Fig. 2 &mdash; The two stock mappings differ in <i>what</i> is resident and <i>what</i> streams, but share the fatal constraint: one GB vector and one accumulator per bank.</p>
+      </div>
+
       <h3>Strategy A &mdash; weight-stationary (the native AiM GEMV pattern)</h3>
       <p>Weight rows live across banks/channels; each token's activation vector is broadcast via the GB; every bank accumulates one output element. Used for <b>attention</b>, where the resident data is the prefix K/V written once per control cycle:</p>
       <pre class="cmd"><span class="c"># attention scores for one (token, head): q has 256 values = 16 columns</span>
@@ -298,13 +346,13 @@ AiM RD_MAC 0 0xffff
         <thead><tr><th>Config (20 &micro;s overhead)</th><th class="num">step (ms)</th><th class="num">AE N=4 (ms)</th><th class="num">AE N=10 (ms)</th><th class="num">vs XPU floor</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">XPU-only floor / 2&times; / 4&times;</td><td class="num">3.15 / 6.30 / 12.61</td><td class="num">12.6 / 25.2 / 50.4</td><td class="num">31.5 / 63.0 / 126.1</td><td class="num">1&times;</td></tr>
-          <tr><td class="rowlabel">AiM hybrid-B, 8 ch</td><td class="num">68.45</td><td class="num">273.9</td><td class="num">684.7</td><td class="num">21.7&times; slower</td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 8 ch</td><td class="num">68.45</td><td class="num">274.0</td><td class="num">684.7</td><td class="num">21.7&times; slower</td></tr>
           <tr><td class="rowlabel">AiM hybrid-B, 16 ch (Orin parity)</td><td class="num"><b>36.71</b></td><td class="num">146.9</td><td class="num">367.2</td><td class="num"><b>11.6&times; slower</b></td></tr>
-          <tr><td class="rowlabel">AiM hybrid-B, 32 ch</td><td class="num">21.73</td><td class="num">87.0</td><td class="num">217.3</td><td class="num">6.9&times; slower</td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 32 ch</td><td class="num">21.73</td><td class="num">86.9</td><td class="num">217.3</td><td class="num">6.9&times; slower</td></tr>
         </tbody>
       </table>
       </div>
-      <p class="cap">KV-load (once per control cycle): 74 &micro;s at 16 ch &mdash; negligible. Launch-overhead sweep 5&rarr;50 &micro;s moves the 16-ch step 36.0&rarr;40.0 ms: host overhead is not the story.</p>
+      <p class="cap">KV-load (once per control cycle): 74 &micro;s at 16 ch &mdash; negligible. Launch-overhead sweep 5&rarr;50 &micro;s moves the 16-ch step 35.0&rarr;40.0 ms: host overhead is not the story.</p>
     </section>
 
     <section class="card" id="limits">
@@ -324,6 +372,10 @@ AiM RD_MAC 0 0xffff
         <li><b>Crossover law.</b> Stock AiM beats the XPU floor when S &le; ~16 (bank parallelism covers the token count &mdash; the batch-1 LLM-decode regime AiM was designed for). At S = 51 it loses by &asymp; 51/16 = 3.2&times; before overheads; TMOD churn, blocking drains, and row thrash widen it to the measured 5.8&ndash;11.6&times;.</li>
         <li><b>Each limitation exists for a hardware reason.</b> One GB vector: the GB is a 2 KB broadcast SRAM sized for GEMV. One accumulator/bank: a single 16-bit MAC register minimizes area in DRAM periphery. TMOD: the shared datapath multiplexes array and register access. Blocking reads: the single in-order DMA is the hazard mechanism. All are sensible for S = 1 &mdash; and all are wrong for S = 51.</li>
       </ul>
+      <figure>
+        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 36.7 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 4.81 ms.">
+        <figcaption class="cap">Fig. 3 &mdash; The crossover, drawn. Ideal resource bounds (lines) vs. measured points (squares) at S = 51. Stock AiM wins the S &le; ~14 GEMV regime it was designed for and loses linearly beyond it; the extended ISA of Part III (green) restores fetch-bound scaling.</figcaption>
+      </figure>
       <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../02_extended_isa/report.html">Part III</a> adds the missing amortization to the AiM ISA and flips the result.</div>
     </section>
 
