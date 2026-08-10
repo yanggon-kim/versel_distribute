@@ -436,7 +436,7 @@
         </tbody>
       </table>
       </div>
-      <div class="callout"><b>Why this breakdown motivates Parts II&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../01_stock_aim_offload/report.html">Part II</a>) attacks the physics; making it 7.6&times; faster (<a href="../02_extended_isa/report.html">Part III</a>) shrinks it to 19&nbsp;ms &mdash; small enough to vanish completely inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into total hiding.</div>
+      <div class="callout"><b>Why this breakdown motivates Parts II&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../01_stock_aim_offload/report.html">Part II</a>) attacks the physics; making it 7.6&times; faster (<a href="../02_extended_isa/report.html">Part III</a>) shrinks it to 19&nbsp;ms &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (378 ms cycle, 2.65 Hz).</div>
     </section>
 
     <section class="card" id="series">

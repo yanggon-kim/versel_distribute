@@ -74,7 +74,7 @@
     <a href="#validate">5 &middot; Validation</a>
     <a href="#ablation">6 &middot; Ablation results</a>
     <a href="#bcast">7 &middot; The last bottleneck: activation broadcast</a>
-    <a href="#system">8 &middot; System view: hiding the AE entirely</a>
+    <a href="#system">8 &middot; System view: hiding the AE (almost) entirely</a>
     <a href="#energy">9 &middot; Energy &amp; fair baselines</a>
     <a href="#series">Series &amp; sources</a>
   </nav>
@@ -82,7 +82,7 @@
   <main>
     <header class="page">
       <h1>Eight Problems, Six ISA Extensions: 36.7 ms &rarr; 4.81 ms per Step</h1>
-      <p class="sub"><a href="../01_stock_aim_offload/report.html">Part II</a> measured <i>why</i> stock LPDDR5-AiM loses on the &pi;<sub>0</sub> Action Expert: every in-bank fetch feeds one vector, one accumulator, one register mode. This page turns that breakdown into eight problem statements, implements six ISA/controller extensions on a simulator branch (<code class="k">vla-aim-ext</code>), and measures each: <b>36.71 &rarr; 4.81 ms per step at Orin memory parity (7.6&times;)</b>, and <b>3.38 ms at 32 channels &mdash; within 7% of the XPU&rsquo;s theoretical bandwidth floor</b>. With stale-KV pipelining, the Action Expert leaves the robot&rsquo;s critical path entirely.</p>
+      <p class="sub"><a href="../01_stock_aim_offload/report.html">Part II</a> measured <i>why</i> stock LPDDR5-AiM loses on the &pi;<sub>0</sub> Action Expert: every in-bank fetch feeds one vector, one accumulator, one register mode. This page turns that breakdown into eight problem statements, implements six ISA/controller extensions on a simulator branch (<code class="k">vla-aim-ext</code>), and measures each: <b>36.71 &rarr; 4.81 ms per step at Orin memory parity (7.6&times;)</b>, and <b>3.38 ms at 32 channels &mdash; within 7% of the XPU&rsquo;s theoretical bandwidth floor</b>. With hybrid stale/fresh pipelining, all but the final fresh-KV denoising steps leave the robot&rsquo;s critical path (378 ms cycle, 2.65 Hz).</p>
       <div class="tags">
         <span class="tag live">7.6&times; vs stock &middot; 1.3&times; vs realistic XPU</span>
         <span class="tag">6 ISA extensions + 2 SW scheduling fixes</span>
@@ -98,7 +98,7 @@
         <div class="kpi"><div class="v">36.71 &rarr; 4.81 ms</div><div class="l">AE step, 16 channels, stock &rarr; all features (20 &micro;s overhead)</div></div>
         <div class="kpi"><div class="v">3.38 ms</div><div class="l">at 32 channels &mdash; XPU theoretical floor is 3.15 ms</div></div>
         <div class="kpi"><div class="v">4.8&times;</div><div class="l">unit-trace speedup of the P1 MAC pattern on identical math</div></div>
-        <div class="kpi"><div class="v">2.7 Hz</div><div class="l">control rate with the AE fully hidden behind the VLM</div></div>
+        <div class="kpi"><div class="v">2.65 Hz</div><div class="l">control rate with all but 2 fresh-KV steps hidden behind the VLM</div></div>
       </div>
     </section>
 
@@ -304,7 +304,8 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <tr><td class="rowlabel">optimized XPU (2&times; floor)</td><td class="num">25.2</td><td class="num">393</td><td class="num">2.5 Hz</td><td class="num">6.4%</td></tr>
           <tr><td class="rowlabel">stock AiM, 16 ch</td><td class="num">146.9</td><td class="num">515</td><td class="num">1.9 Hz</td><td class="num">29%</td></tr>
           <tr><td class="rowlabel">extended AiM, 16 ch, serial</td><td class="num">19.3</td><td class="num">387</td><td class="num">2.6 Hz</td><td class="num">5.0%</td></tr>
-          <tr><td class="rowlabel"><b>extended AiM + stale-KV overlap</b></td><td class="num">19.3 (hidden)</td><td class="num"><b>368</b></td><td class="num"><b>2.7 Hz</b></td><td class="num"><b>~0%</b></td></tr>
+          <tr><td class="rowlabel">extended AiM + full-stale overlap (upper bound, SR-risky)</td><td class="num">19.3 (hidden)</td><td class="num">368</td><td class="num">2.7 Hz</td><td class="num">~0%</td></tr>
+          <tr><td class="rowlabel"><b>extended AiM + hybrid stale/fresh overlap</b></td><td class="num">19.3 (9.6 exposed)</td><td class="num"><b>378</b></td><td class="num"><b>2.65 Hz</b></td><td class="num"><b>2.5%</b></td></tr>
         </tbody>
       </table>
       </div>
@@ -330,7 +331,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <line x1="90" y1="110" x2="892" y2="110" stroke="#647083" stroke-width="1"/>
           <text x="491" y="126" text-anchor="middle" font-size="9" fill="#647083">action chunk ready after vision + VLM + AE</text>
           <!-- overlapped -->
-          <text x="14" y="168" font-size="12" font-weight="bold" fill="#172033">stale-KV overlap (P3 + double-buffered KV): 368 ms cycle &middot; 2.7 Hz</text>
+          <text x="14" y="168" font-size="12" font-weight="bold" fill="#172033">hybrid stale/fresh overlap (P3 + double-buffered KV): 378 ms cycle &middot; 2.65 Hz</text>
           <text x="82" y="198" text-anchor="end" font-size="10" fill="#647083">XPU</text>
           <rect x="90" y="184" width="228" height="22" rx="4" fill="#2a78d6"/>
           <text x="204" y="199" text-anchor="middle" font-size="9.5" fill="#fff">vision(t) 110</text>
@@ -338,19 +339,22 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <text x="585" y="199" text-anchor="middle" font-size="9.5" fill="#fff">VLM(t) 258 ms &mdash; writes fresh KV into partitioned channels (74 &micro;s)</text>
           <text x="82" y="232" text-anchor="end" font-size="10" fill="#647083">AiM</text>
           <rect x="90" y="218" width="228" height="22" rx="4" fill="#eef2f7" stroke="#d8dee8"/>
-          <rect x="318" y="218" width="40" height="22" rx="4" fill="#1baf7a"/>
-          <text x="338" y="233" text-anchor="middle" font-size="8.5" fill="#fff">AE(t) 19</text>
-          <rect x="358" y="218" width="494" height="22" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
-          <text x="605" y="233" text-anchor="middle" font-size="9" fill="#1a7f37">denoises on STALE KV of obs t&minus;1 &mdash; hidden entirely inside the VLM window</text>
-          <line x1="358" y1="240" x2="358" y2="256" stroke="#647083" stroke-width="1"/>
-          <text x="362" y="254" font-size="8.5" fill="#647083">AE done long before the VLM &mdash; zero critical-path contribution</text>
-          <line x1="90" y1="272" x2="852" y2="272" stroke="#647083" stroke-width="1"/>
-          <text x="471" y="288" text-anchor="middle" font-size="9" fill="#647083">cycle = vision + VLM only = 368 ms &middot; the same trade V-AEFusion validates (SR cost of one-cycle-old visual context)</text>
+          <rect x="318" y="218" width="22" height="22" rx="4" fill="#1baf7a"/>
+          <text x="329" y="233" text-anchor="middle" font-size="7.5" fill="#fff">stale</text>
+          <rect x="342" y="218" width="490" height="22" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="590" y="233" text-anchor="middle" font-size="9" fill="#1a7f37">first &lceil;N/2&rceil; steps on STALE KV of obs t&minus;1, hidden inside the VLM window (8-ch AiM partition)</text>
+          <rect x="854" y="218" width="24" height="22" rx="4" fill="#1baf7a"/>
+          <text x="866" y="233" text-anchor="middle" font-size="7" fill="#fff">fresh</text>
+          <line x1="854" y1="240" x2="854" y2="256" stroke="#647083" stroke-width="1"/>
+          <text x="620" y="254" font-size="8.5" fill="#647083">last &lceil;N/2&rceil; steps on fresh KV(t): +9.6 ms exposed</text>
+          <line x1="90" y1="272" x2="878" y2="272" stroke="#647083" stroke-width="1"/>
+          <text x="481" y="288" text-anchor="middle" font-size="9" fill="#647083">cycle = vision + VLM + fresh tail = 378 ms &middot; staleness kept in V-AEFusion&rsquo;s measured-safe regime (&le;&frac12; of steps)</text>
         </svg>
-        <p class="cap">Fig. 3 &mdash; Macro-scale concurrency. Serial vs. stale-KV-overlapped control cycle: with the extended-AiM AE at 19 ms against a 258 ms VLM window, the Action Expert vanishes from the critical path.</p>
+        <p class="cap">Fig. 3 &mdash; Macro-scale concurrency. Serial vs. hybrid stale/fresh pipelined control cycle: the coarse early denoising steps hide inside the VLM window on an 8-channel AiM partition; only the final fresh-KV steps (9.6 ms at N=4) remain on the critical path &mdash; 97% of the full-overlap win, inside the staleness regime V-AEFusion measured as SR-safe.</p>
       </div>
       <ul class="notes">
-        <li><b>Stale-KV pipelining (needs P3):</b> denoise for observation t against the cached KV of observation t&minus;1 while the XPU runs vision+VLM on t. Because AE (19 ms) &laquo; VLM (258 ms), the AE hides <i>completely</i> &mdash; fresh KV streams into partitioned channels (74 &micro;s against a 258 ms window) and a double-buffered KV region (2&times;15 MB in 4 GB banks) flips at a step boundary. The same trade V-AEFusion validates on GPUs (their AE is 2&times; their VLM, so they can hide only half; ours vanishes).</li>
+        <li><b>Stale-KV pipelining (needs P3) &mdash; with an honest staleness budget.</b> Denoise chunk t on AiM while the XPU runs vision+VLM on the next observation. Because AE (19 ms) &laquo; VLM (258 ms) the AE <i>could</i> hide completely &mdash; but running <i>every</i> step stale is SR-risky: V-AEFusion&rsquo;s own ablation (paper Table 7) holds at ~5 of 10 stale steps (&minus;0.3% SR) and <b>collapses beyond ~6</b> (88&rarr;80&rarr;50&rarr;10% as stale steps go 5&rarr;6&rarr;7&rarr;9). The adopted scheme is <b>hybrid</b>: the first &lceil;N/2&rceil; coarse steps run stale inside the VLM window, the last &lceil;N/2&rceil; on fresh KV &mdash; at N=4 the exposed fresh tail is 2&times;4.81 = 9.6 ms &rArr; cycle 378 ms, 2.65 Hz, keeping 97% of the win inside the measured-safe regime. Our P3 address-mapped KV streaming beats the GPU version structurally: fresh K/V rows land in banks <i>layer-by-layer as the VLM computes them</i>, so fresh conditioning can begin before prefill finishes. Note only vision context is ever stale &mdash; the state token re-embeds fresh every step.</li>
+        <li><b>Contention: static 8+8 channel partition.</b> During the overlap, 8 channels in AiM mode run the AE at 7.58 ms (still &laquo; the window) while the XPU keeps 8 channels = 102.4 GB/s &mdash; far above the compute-bound VLM&rsquo;s ~10&ndash;20 GB/s demand. System requirement: the XPU&rsquo;s address interleave is confined to its channel group during the window (memory-controller carve-out, statically schedulable in a deterministic control loop). KV double-buffering: 2&times;15 MB regions in 4 GB banks, row-pointer flip at the cycle boundary.</li>
         <li><b>Dual-use memory:</b> the AiM channels ARE the platform LPDDR. With P3 partitioning the XPU keeps full-bandwidth access for the 95% of the cycle the AE is idle &mdash; the difference between &ldquo;adding a PIM accelerator&rdquo; and &ldquo;the memory you already have can denoise.&rdquo;</li>
         <li><b>Micro-pipelining:</b> host post-processing of layer &#8467; overlaps AiM&rsquo;s layer &#8467;+1 (disjoint data) &mdash; a further &minus;10% if wanted.</li>
       </ul>
