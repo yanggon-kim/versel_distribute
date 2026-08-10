@@ -332,7 +332,22 @@ AiM RD_MAC 0 0xffff
 
     <section class="card" id="results">
       <h2><span class="num">7</span>Results</h2>
-      <p class="lead">Cycle-accurate AiM segments + an analytic Orin host model (roofline + 5&ndash;50&nbsp;&micro;s launch overhead, swept). One layer simulated, composed &times;18 layers &times;N steps. XPU baselines: bandwidth floor (645&nbsp;MB / 204.8&nbsp;GB/s = 3.15&nbsp;ms) and realistic 2&times;/4&times; bands.</p>
+      <p class="lead">Cycle-accurate AiM segments + an analytic Orin host model (roofline + 5&ndash;50&nbsp;&micro;s launch overhead, swept). One layer simulated, composed &times;18 layers &times;N steps.</p>
+
+      <h3 id="ladder">First, the baseline ladder: what &ldquo;XPU floor&rdquo; and &ldquo;realistic 2&times;&rdquo; mean</h3>
+      <p>All XPU baselines in this series are rungs on one ladder &mdash; estimates of how fast the Action Expert <i>could</i> run on Orin&rsquo;s GPU, from physically impossible to actually measured:</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Rung</th><th class="num">step (ms)</th><th>Definition</th><th>Exists?</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">theoretical floor</td><td class="num">3.15</td><td>roofline physics: <code class="k">max(645.4&nbsp;MB / 204.8&nbsp;GB/s, 38.7&nbsp;G / 42&nbsp;T) = max(3.15, 0.92)&nbsp;ms</code>. The 623&nbsp;MB of weights are 150&times; Orin&rsquo;s 4&nbsp;MB L2, so every step must re-stream them across the bus; even a perfect implementation (bus 100% busy, compute fully hidden, zero launch gaps) takes 3.15&nbsp;ms. Unbeatable by any software &mdash; it is the memory interface, not an implementation.</td><td>no &mdash; an ideal bound</td></tr>
+          <tr><td class="rowlabel">realistic 2&times;</td><td class="num">6.30</td><td>a <i>well-engineered real</i> stack sustaining ~50% of peak bandwidth end-to-end: fused kernels, tuned layouts, CUDA-graph launches. 2&ndash;4&times; floor is the standard empirical band for memory-bound transformer inference (heroic hand-tuned decoders reach ~1.3&ndash;1.7&times;).</td><td>hypothetical &mdash; no such public stack exists for &pi;<sub>0</sub> on Orin</td></tr>
+          <tr><td class="rowlabel">realistic 4&times;</td><td class="num">12.61</td><td>an ordinary well-compiled implementation.</td><td>plausible</td></tr>
+          <tr><td class="rowlabel">measured stack</td><td class="num">&asymp;136</td><td>the characterization paper&rsquo;s actual &pi;<sub>0</sub> on Orin: 543&nbsp;ms per N=4 inference = <b>43&times; above the floor</b>, at 22% SM utilization (unoptimized JAX/PyTorch).</td><td><b>yes &mdash; the only measured number</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout"><b>Comparison discipline.</b> Our AiM numbers are cycle-simulated with all overheads included, yet we hold them against the XPU&rsquo;s <i>hypothetical best</i> (the 2&times; rung), not against what actually runs today &mdash; so every speedup this series claims is a conservative lower bound. Against the measured stack, even stock AiM (36.7&nbsp;ms) would look 3.7&times; faster.</div>
       <figure>
         <img src="assets/phase3_step_latency.png" alt="Horizontal bar chart of Action Expert step latency: XPU floor 3.2 ms, XPU 2x 6.3 ms, XPU 4x 12.6 ms; AiM Strategy-A at 8/16/32 channels: 68.6/36.0/20.6 ms; AiM hybrid Strategy-B at 8/16/32 channels: 68.5/36.7/21.7 ms. Stock AiM is far slower than every XPU baseline.">
         <figcaption class="cap">Step latency: the stock offload loses at every channel count &mdash; 11.6&times; above the XPU floor at Orin parity (16 ch), and still 6.9&times; above it with double the memory system (32 ch). A-only &asymp; hybrid-B confirms the bound is the ISA, not the mapping.</figcaption>
@@ -375,6 +390,13 @@ AiM RD_MAC 0 0xffff
       <figure>
         <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 36.7 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 4.81 ms.">
         <figcaption class="cap">Fig. 3 &mdash; The crossover, drawn. Ideal resource bounds (lines) vs. measured points (squares) at S = 51. Stock AiM wins the S &le; ~14 GEMV regime it was designed for and loses linearly beyond it; the extended ISA of Part III (green) restores fetch-bound scaling.</figcaption>
+      </figure>
+
+      <h3>Stock AiM loses on energy too</h3>
+      <p>Slowness is itself an energy cost: during the 36.7&nbsp;ms step the whole 16-channel memory system burns standby power (131&nbsp;mJ), and the per-command overheads (TMOD churn, blocking drains, row thrash) add array traffic on top. Modeled with the CENT per-command energy constants shipped with the simulator (DQ 5.5&nbsp;pJ/bit; 20&nbsp;W AE-phase GPU assumption, swept 15&ndash;30&nbsp;W &mdash; full model and assumptions in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>):</p>
+      <figure>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ dominated by DRAM array and standby energy, extended AiM 137 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 4 &mdash; Energy per denoising step. Stock AiM costs <b>510&nbsp;mJ vs. the realistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.6&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part III&rsquo;s extensions flip both verdicts (137&nbsp;mJ, 1.41&times; better than the XPU).</figcaption>
       </figure>
       <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../02_extended_isa/report.html">Part III</a> adds the missing amortization to the AiM ISA and flips the result.</div>
     </section>
