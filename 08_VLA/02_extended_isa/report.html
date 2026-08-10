@@ -389,6 +389,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="energy">
       <h2><span class="num">9</span>Energy, and what a fair baseline looks like</h2>
       <p class="lead">Latency is half the deployment story on a battery-powered robot. Per-command energy follows the CENT power calculator shipped with the simulator (GDDR6-AiM constants, conservative for LPDDR5): array/activate/MAC energies from command counts, DQ at 5.5&nbsp;pJ/bit, controller and standby power, and an AE-phase GPU power of 20&nbsp;W [ASSUMPTION; the paper measures 20&ndash;40% SM utilization; swept 15&ndash;30&nbsp;W].</p>
+      <h3>Energy per step</h3>
       <figure>
         <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ dominated by DRAM array and standby energy, extended AiM 137 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
         <figcaption class="cap">Fig. 4 &mdash; Energy per denoising step. The extensions flip the energy verdict exactly as they flip latency: stock AiM is 2.6&times; <i>worse</i> than the realistic XPU; extended AiM is <b>1.41&times; better</b> (1.2&ndash;1.8&times; across the GPU-power sweep). Per N=4 inference: 549 vs 776 mJ.</figcaption>
@@ -396,6 +397,10 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
       <ul class="notes">
         <li><b>Why stock AiM loses on energy too:</b> 36.7 ms of standby burn (131 mJ) plus per-command overhead traffic. Slowness is itself an energy cost.</li>
         <li><b>Honest caveat:</b> against the <i>theoretical-floor</i> XPU, extended AiM is &asymp;1.17&times; worse on energy &mdash; in-DRAM fp16 MACs cost more per op than tensor cores (3.5 pJ/MAC here), and MV still re-fetches weights 4&times; (16-slot accumulator file). The 64-slot file from &sect;7&rsquo;s agenda would cut the dominant 83 mJ MAC term ~4&times;. Combined figure of merit today: <b>1.31&times; latency &times; 1.41&times; energy &asymp; 1.85&times; energy-delay product</b> &mdash; plus the freed XPU.</li>
+      </ul>
+
+      <h3>What makes a baseline fair</h3>
+      <ul class="notes">
         <li><b>What a fair baseline is NOT: more LPDDR.</b> The XPU shares the memory system, and its floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while the AiM curve scales sub-linearly &mdash; adding channels helps the baseline more than the design. The legitimate framings are the three-tier baseline (vs measured 543 ms stack &rArr; <b>28&times;</b>; vs realistic 2&times; &rArr; <b>1.31&times;</b>; vs theoretical floor &rArr; 0.65&times; at 16 ch, 0.93&times; at 32 ch &mdash; rung definitions in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>), energy &amp; EDP (above), and iso-platform (same channels, plain vs AiM LPDDR; marginal cost = PIM die area).</li>
         <li><b>Iso-cost scale-down (Orin NX, 102.4 GB/s = 8 channels):</b> NX AE floor 6.30 ms, realistic 2&times; 12.61 ms. Our best 8-channel config (7.58 ms, 64-vec GB; token-parallel is counter-productive at 8 ch) is <b>1.66&times; faster than the realistic NX baseline</b> and matches AGX-class realistic latency on a ~40%-cost module &mdash; with the AE hidden behind the VLM under stale-KV overlap, which an XPU-only NX cannot do.</li>
       </ul>
@@ -414,6 +419,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
       </table>
       </div>
       <div class="callout win"><b>Energy is favorable in 11 of 12 cells</b> &mdash; including against the NX and Thor <i>theoretical floors</i>, because a GPU babysitting a memory-bound loop costs more than our whole budget; the single losing cell is the AGX floor (0.86&times;). The three anchors: <b>NX realistic</b> (1.66&times;/1.93&times; on the module inside real humanoids, vs hypothetical-best software &mdash; unassailable), <b>AGX measured</b> (28&times;/24&times; vs today&rsquo;s actual deployed software), and <b>Thor</b> (latency parity with its hypothetical best, yet 1.82&times; less energy with the 2,070-TFLOP Blackwell GPU entirely freed; 7.5&times;/11.9&times; vs its measured stack &mdash; and LPDDR5X&rsquo;s faster pins speed only the XPU&rsquo;s bus, not the in-bank MAC path, so AiM ports to Thor&rsquo;s memory unchanged).</div>
+      <p class="cap">The full deployment-platform survey &mdash; the landscape table, per-platform AE ladders, and the compiled-stack rung &mdash; is <a href="../03_deployment_platforms/report.html">Part IV</a>.</p>
     </section>
 
     <section class="card" id="series">
