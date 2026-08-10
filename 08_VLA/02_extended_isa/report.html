@@ -75,6 +75,7 @@
     <a href="#ablation">6 &middot; Ablation results</a>
     <a href="#bcast">7 &middot; The last bottleneck: activation broadcast</a>
     <a href="#system">8 &middot; System view: hiding the AE entirely</a>
+    <a href="#energy">9 &middot; Energy &amp; fair baselines</a>
     <a href="#series">Series &amp; sources</a>
   </nav>
 
@@ -354,6 +355,21 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
         <li><b>Micro-pipelining:</b> host post-processing of layer &#8467; overlaps AiM&rsquo;s layer &#8467;+1 (disjoint data) &mdash; a further &minus;10% if wanted.</li>
       </ul>
       <div class="callout win"><b>Bottom line of the series.</b> A flow-matching VLA&rsquo;s Action Expert is mis-matched to both a GPU (too little reuse) and to GEMV-era PIM (too much). Six ISA extensions sized for S=51 &mdash; a multi-vector MAC with an accumulator file, in-memory softmax primitives, controller macros, mode partitioning, tile descriptors, and a write-back path &mdash; make LPDDR-PIM 7.6&times; faster than its stock self, 1.3&times; faster than a realistic XPU at equal memory budget, and, with pipelining, remove action generation from the robot&rsquo;s critical path entirely.</div>
+    </section>
+
+    <section class="card" id="energy">
+      <h2><span class="num">9</span>Energy, and what a fair baseline looks like</h2>
+      <p class="lead">Latency is half the deployment story on a battery-powered robot. Per-command energy follows the CENT power calculator shipped with the simulator (GDDR6-AiM constants, conservative for LPDDR5): array/activate/MAC energies from command counts, DQ at 5.5&nbsp;pJ/bit, controller and standby power, and an AE-phase GPU power of 20&nbsp;W [ASSUMPTION; the paper measures 20&ndash;40% SM utilization; swept 15&ndash;30&nbsp;W].</p>
+      <figure>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ dominated by DRAM array and standby energy, extended AiM 137 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 4 &mdash; Energy per denoising step. The extensions flip the energy verdict exactly as they flip latency: stock AiM is 2.6&times; <i>worse</i> than the realistic XPU; extended AiM is <b>1.41&times; better</b> (1.2&ndash;1.8&times; across the GPU-power sweep). Per N=4 inference: 549 vs 776 mJ.</figcaption>
+      </figure>
+      <ul class="notes">
+        <li><b>Why stock AiM loses on energy too:</b> 36.7 ms of standby burn (131 mJ) plus per-command overhead traffic. Slowness is itself an energy cost.</li>
+        <li><b>Honest caveat:</b> against the <i>theoretical-floor</i> XPU, extended AiM is &asymp;1.17&times; worse on energy &mdash; in-DRAM fp16 MACs cost more per op than tensor cores (3.5 pJ/MAC here), and MV still re-fetches weights 4&times; (16-slot accumulator file). The 64-slot file from &sect;7&rsquo;s agenda would cut the dominant 83 mJ MAC term ~4&times;. Combined figure of merit today: <b>1.31&times; latency &times; 1.41&times; energy &asymp; 1.85&times; energy-delay product</b> &mdash; plus the freed XPU.</li>
+        <li><b>What a fair baseline is NOT: more LPDDR.</b> The XPU shares the memory system, and its floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while the AiM curve scales sub-linearly &mdash; adding channels helps the baseline more than the design. The legitimate framings are the three-tier baseline (vs measured 543 ms stack &rArr; <b>28&times;</b>; vs realistic 2&times; &rArr; <b>1.31&times;</b>; vs theoretical floor &rArr; 0.65&times; at 16 ch, 0.93&times; at 32 ch), energy &amp; EDP (above), and iso-platform (same channels, plain vs AiM LPDDR; marginal cost = PIM die area).</li>
+        <li><b>Iso-cost scale-down (Orin NX, 102.4 GB/s = 8 channels):</b> NX AE floor 6.30 ms, realistic 2&times; 12.61 ms. Our best 8-channel config (7.58 ms, 64-vec GB; token-parallel is counter-productive at 8 ch) is <b>1.66&times; faster than the realistic NX baseline</b> and matches AGX-class realistic latency on a ~40%-cost module &mdash; with the AE hidden behind the VLM under stale-KV overlap, which an XPU-only NX cannot do.</li>
+      </ul>
     </section>
 
     <section class="card" id="series">
