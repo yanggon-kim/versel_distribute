@@ -33,6 +33,25 @@ from the published site.
   DDR/HBM memory controllers are implemented (Synopsys uMCTL2 & HBM3 controller,
   AMD/Xilinx AXI HBM IP, JEDEC HBM3, Ramulator 2), with confidence labels and how
   each fact maps onto the bit-exact controller in this project.
+- `02_HBM_MC/02_basedie/report.html`: HBM base-die page.
+- `03_ITEM/`: compression studies (kernel/LLM data compression, bit-plane,
+  gzip/zstd/bzip2/xz), one numbered report area each (`00_compression` ...
+  `06_xz`).
+- `04_sparse_attn/`: the sparse-attention / DeepSeek series, Parts I-XII
+  (`00_part1_characterization` ... `11_part12_dsv32_roofline`).
+- `05_ramulator/`: Ramulator 2 pages (flat files: `report.html`,
+  `language_basics.html`, `hbm_lpddr_best_ratio.html`).
+- `06_agentic_ai/`: agentic-AI workload studies (`000_traclab`, `001_swebench`).
+- `07_3dic/`: Kitsune 3D-IC queue-fabric study (`000_kitsune/report_v1..v3.html`).
+- `08_VLA/`: the VLA x LPDDR-PIM series:
+  - `08_VLA/00_vla_algorithm/report.html`: Part I — anatomy of the flow-matching
+    pi0 VLA, module by module (shapes, FLOPs, arithmetic intensity, math).
+  - `08_VLA/01_stock_aim_offload/report.html`: Part II — offloading the Action
+    Expert to stock LPDDR5-AiM (ISA, simulator, mapping, baseline ladder, and
+    why it loses 5.8x).
+  - `08_VLA/02_extended_isa/report.html`: Part III — eight problems, six ISA
+    extensions (36.7 -> 4.81 ms/step), energy analysis, and the
+    deployment-baseline matrix.
 
 ## Editing Rules
 
