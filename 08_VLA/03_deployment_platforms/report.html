@@ -138,6 +138,7 @@
         <thead><tr><th>Baseline tier</th><th>Orin NX (8 ch)</th><th>AGX Orin (16 ch)</th><th>Thor (16 ch)</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">measured stack</td><td class="num">n/a</td><td class="num"><b>28.3&times; / 24.3&times;</b> (136 ms, 3335 mJ)</td><td class="num"><b>7.5&times; / 11.9&times;</b> (36 ms, 1633 mJ)</td></tr>
+          <tr><td class="rowlabel">compiled stack (semi-measured)</td><td class="num">n/a</td><td class="num">n/a (not reported)</td><td class="num"><b>&asymp;5.0&times; / &asymp;8&times;</b> (&asymp;24 ms, &asymp;1094 mJ)</td></tr>
           <tr><td class="rowlabel">realistic 4&times;</td><td class="num">3.33&times; / 3.55&times; (25.2 ms, 473 mJ)</td><td class="num">2.62&times; / 2.53&times; (12.6 ms, 347 mJ)</td><td class="num">1.96&times; / 3.34&times; (9.45 ms, 459 mJ)</td></tr>
           <tr><td class="rowlabel">realistic 2&times;</td><td class="num"><b>1.66&times; / 1.93&times;</b> (12.6 ms, 257 mJ)</td><td class="num">1.31&times; / 1.41&times; (6.30 ms, 194 mJ)</td><td class="num">0.98&times; / <b>1.82&times;</b> (4.73 ms, 251 mJ)</td></tr>
           <tr><td class="rowlabel">theoretical floor</td><td class="num">0.83&times; / 1.12&times; (6.30 ms, 149 mJ)</td><td class="num">0.65&times; / 0.86&times; (3.15 ms, 118 mJ)</td><td class="num">0.49&times; / 1.06&times; (2.36 ms, 146 mJ)</td></tr>
@@ -149,6 +150,7 @@
         <figcaption class="cap">Fig. 2 &mdash; The AGX-Orin energy components behind the matrix&rsquo;s middle column (model in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>).</figcaption>
       </figure>
       <div class="callout win"><b>Energy is favorable in 11 of 12 cells</b> &mdash; including against the NX and Thor <i>theoretical floors</i>: a GPU babysitting a memory-bound loop costs more than our entire per-step budget. The single losing cell is the AGX floor (0.86&times;).</div>
+      <div class="callout"><b>The compiled rung is the strongest semi-measured comparison.</b> The paper actually compiled Thor (246 &rarr; 163 ms end-to-end, 1.51&times;) &mdash; the measured effect of the &ldquo;just use torch.compile&rdquo; rebuttal. Against it: our AE is <b>&asymp;5&times; faster and &asymp;8&times; less energy</b> per step (23.8 ms [uniform-share assumption &mdash; only the e2e number was reported] vs 4.81; 1094 vs 137 mJ), and end-to-end with pipelining <b>&asymp;2.1&times;</b> (163 vs &asymp;77 ms: compiled vision+VLM &asymp;67 ms + the 9.6 ms fresh-KV tail &rarr; &asymp;13 Hz). Revealing: even compiled, Thor&rsquo;s AE runs 10&times; above its own physics floor &mdash; on edge silicon the software path is empirically stubborn (1.51&times; recovery vs 2.90&times; on a 4090), which is precisely the case for fixing the AE in the memory instead.</div>
     </section>
 
     <section class="card" id="anchors">
