@@ -72,6 +72,7 @@
     <a href="#layer">4 &middot; Inside one Action-Expert layer</a>
     <a href="#dims">5 &middot; Every module: shapes, FLOPs, intensity</a>
     <a href="#twophase">6 &middot; The two-phase signature</a>
+    <a href="#breakdown">7 &middot; Measured breakdown (from the papers)</a>
     <a href="#series">Series &amp; sources</a>
   </nav>
 
@@ -398,6 +399,44 @@
       </figure>
       <p>(&ldquo;Floor&rdquo; here means the roofline minimum &mdash; bytes that must cross the memory interface divided by its bandwidth. The weights are 150&times; larger than Orin&rsquo;s 4&nbsp;MB L2 cache, so no software can avoid re-streaming them every step; the full baseline ladder from this ideal bound up to the measured 136&nbsp;ms/step stack is defined in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>.)</p>
       <p>The Action Expert dominates latency while starving the GPU: each of its N serial steps must stream 623&nbsp;MB of weights through a 204.8&nbsp;GB/s interface to do only 38.7&nbsp;GFLOPs of work. No amount of extra compute helps &mdash; only more effective memory bandwidth, or removing the weight traffic altogether by computing where the weights live. That is the premise <a href="../01_stock_aim_offload/report.html">Part II</a> puts to the test with LPDDR5 processing-in-memory.</p>
+    </section>
+
+    <section class="card" id="breakdown">
+      <h2><span class="num">7</span>Measured execution breakdown, from the papers</h2>
+      <p class="lead">Everything above is the algorithm on paper; this is how it actually spends its time. The characterization study (arXiv:2604.24447; local copy in the study workspace) profiled &pi;<sub>0</sub> end-to-end with Nsight on three NVIDIA platforms &mdash; phase shares hold at <b>vision 12% / VLM 28&plusmn;1% / Action Expert 59&plusmn;1%</b> everywhere, with the AE always at the <i>lowest</i> hardware utilization.</p>
+
+      <figure>
+        <img src="assets/paper_breakdown.png" alt="Percentage-stacked bars of pi0 end-to-end latency on RTX 4090 (102 ms total: vision 12 ms at 46% SM, VLM 29 ms at 90% SM, Action Expert 60 ms at 22% SM), Jetson Thor (246 ms: 30/69/145 ms at 77/95/39% SM) and AGX Orin (920 ms: 110/258/543 ms at 69/98/22% SM). The Action Expert takes 59% of latency at 22-39% utilization on every platform.">
+        <figcaption class="cap">Fig. 5 &mdash; Measured &pi;<sub>0</sub> phase breakdown (paper Fig. 5 shares &times; Table 1 end-to-end latencies; SM utilizations as profiled). The pattern is platform-independent: the compute-starved Action Expert costs ~2&times; the VLM while using a fifth to a third of the hardware.</figcaption>
+      </figure>
+
+      <h3>The same breakdown in numbers (N = 4 denoising steps)</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Platform</th><th class="num">end-to-end (ms)</th><th class="num">vision (ms / SM%)</th><th class="num">VLM (ms / SM%)</th><th class="num">Action Expert (ms / SM%)</th><th class="num">control rate</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">RTX 4090 (lab rig)</td><td class="num">102.3</td><td class="num">12 / 46%</td><td class="num">29 / 90%</td><td class="num">60 / 22%</td><td class="num">9.8 Hz</td></tr>
+          <tr><td class="rowlabel">Jetson Thor</td><td class="num">246.0</td><td class="num">30 / 77%</td><td class="num">69 / 95%</td><td class="num">145 / 39%</td><td class="num">4.1 Hz</td></tr>
+          <tr><td class="rowlabel">AGX Orin</td><td class="num">920.0</td><td class="num">110 / 69%</td><td class="num">258 / 98%</td><td class="num">543 / 22%</td><td class="num">1.1 Hz</td></tr>
+          <tr><td class="rowlabel">Intel B60 Pro</td><td class="num">306.5</td><td class="num" colspan="3">shares not profiled (leaderboard entry)</td><td class="num">3.3 Hz</td></tr>
+          <tr><td class="rowlabel">Ascend 310P</td><td class="num">818.0</td><td class="num" colspan="3">shares not profiled (leaderboard entry)</td><td class="num">1.2 Hz</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">Phase milliseconds = paper&rsquo;s measured shares &times; measured end-to-end latency; SM utilizations from the paper&rsquo;s profiling traces. Our operator trace (&sect;5) reproduces the AE column analytically: 38.70 GFLOPs and 645 MB per step is exactly the paper&rsquo;s implied AE numerator (64.5&nbsp;FLOPs/B &times; 600&nbsp;MB nominal).</p>
+
+      <h3>How much of the AE the paper&rsquo;s own software optimizations recover</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Optimization (paper, &pi;<sub>0</sub>)</th><th>Mechanism</th><th class="num">Speedup (platform)</th><th>What it says about the breakdown</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Model compilation</td><td>torch.compile / ATC kernel fusion</td><td class="num">2.90&times; (4090) &middot; 1.51&times; (Thor) &middot; 2.34&times; (310P)</td><td>most of the measured stack&rsquo;s 43&times;-above-floor gap is launch/fusion overhead &mdash; but compilation effectiveness is strongly hardware-dependent</td></tr>
+          <tr><td class="rowlabel">DP-Cache (S=4)</td><td>skip redundant mid-trajectory denoising steps</td><td class="num">1.29&times; (4090), &minus;0.6% SR</td><td>reduces N, not the per-step cost &mdash; each remaining step still re-streams all 623 MB</td></tr>
+          <tr><td class="rowlabel">V-AEFusion</td><td>overlap stale-KV denoising with the next VLM pass</td><td class="num">1.32&times; (4090) &middot; 1.14&times; (Orin) &middot; 1.04&times; (Thor)</td><td>hiding is capped because their AE (2&times; the VLM) doesn&rsquo;t fit in the VLM window &mdash; only ~5 of 10 steps overlap</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout"><b>Why this breakdown motivates Parts II&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../01_stock_aim_offload/report.html">Part II</a>) attacks the physics; making it 7.6&times; faster (<a href="../02_extended_isa/report.html">Part III</a>) shrinks it to 19&nbsp;ms &mdash; small enough to vanish completely inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into total hiding.</div>
     </section>
 
     <section class="card" id="series">
