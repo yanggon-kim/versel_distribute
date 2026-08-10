@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VLA Part II — Offloading the Action Expert to Stock LPDDR5-AiM (and Why It Loses 5.8&times;)</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  .tag.warn{background:var(--warn-bg);color:var(--warn);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  pre.cmd{background:var(--code);color:#e6edf7;border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.83rem;line-height:1.5;margin:12px 0;}
+  pre.cmd .c{color:#7d8aa5;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .scroll{overflow-x:auto;}
+  .fig{margin:18px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .fig .cap{color:var(--muted);font-size:.85rem;margin:6px 2px 8px;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#overview">Overview</a>
+    <a href="#aim">1 &middot; LPDDR5-AiM: the machine</a>
+    <a href="#isa">2 &middot; The ISR instruction set</a>
+    <a href="#sim">3 &middot; The simulator</a>
+    <a href="#what">4 &middot; What to offload, and why</a>
+    <a href="#mapping">5 &middot; Instruction-level mapping</a>
+    <a href="#exec">6 &middot; Cycle-level execution walk-through</a>
+    <a href="#results">7 &middot; Results</a>
+    <a href="#limits">8 &middot; Limitations &amp; root causes</a>
+    <a href="#series">Series &amp; sources</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Offloading the Action Expert to Stock LPDDR5-AiM &mdash; and Why It Loses 5.8&times;</h1>
+      <p class="sub"><a href="../00_vla_algorithm/report.html">Part I</a> showed the &pi;<sub>0</sub> Action Expert is memory-bound: 623&nbsp;MB of weights re-streamed for 38.7&nbsp;GFLOPs, every step. Processing-in-memory should fix exactly this. We map the AE onto a cycle-level SK&nbsp;hynix AiM-style <b>LPDDR5-PIM simulator</b> at Jetson-Orin memory parity (16 &times; x16 LPDDR5-6400 channels = 204.8&nbsp;GB/s) &mdash; and the stock offload <b>loses</b>: <b>36.7&nbsp;ms per denoising step vs. 6.3&nbsp;ms</b> for a realistic XPU baseline. This page explains the machine, the mapping, the measured breakdown, and the crossover law that makes a &ldquo;memory-bound&rdquo; workload lose on PIM.</p>
+      <div class="tags">
+        <span class="tag">aim_simulator @ 0f28a07 (Ramulator 2.0)</span>
+        <span class="tag">LPDDR5-6400, 16 banks/ch, 32-ch device</span>
+        <span class="tag warn">stock AiM: 5.8&times; slower than XPU</span>
+        <span class="tag live">cycle-accurate traces, reproducible</span>
+      </div>
+    </header>
+
+    <section class="card" id="overview">
+      <h2>Overview</h2>
+      <p class="lead">Part II of three. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../02_extended_isa/report.html">Part III</a> fixes it.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">36.7 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
+        <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / realistic 2&times;</div></div>
+        <div class="kpi"><div class="v">16&times;</div><div class="l">internal:external bandwidth ratio of AiM (real, and yet&hellip;)</div></div>
+        <div class="kpi"><div class="v">S &le; 16</div><div class="l">the token-count regime where stock AiM actually wins</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="aim">
+      <h2><span class="num">1</span>LPDDR5-AiM: the machine</h2>
+      <p class="lead">AiM (Accelerator-in-Memory, SK hynix HC34 / ISSCC&rsquo;22) puts a 16-lane fp16 multiply-accumulate unit <i>next to every DRAM bank</i>, plus a small per-channel Global Buffer (GB) that broadcasts one vector to all banks.</p>
+
+      <div class="fig" id="fig-aim">
+        <svg viewBox="0 0 900 330" role="img" aria-label="AiM channel architecture: a host DMA issues ISR instructions in order to 16-32 LPDDR5 channels. Inside a channel: 16 banks, each with a 16-lane fp16 MAC unit and one accumulator register; a 2 KB Global Buffer broadcasts a vector to all banks; GPRs and CFRs sit at the DMA. One MAC_ABK command makes all 16 banks each read 32 bytes and dot it with the same GB segment.">
+          <defs>
+            <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- host side -->
+          <rect x="10" y="20" width="150" height="70" rx="8" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="85" y="42" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#172033">host (XPU)</text>
+          <text x="85" y="58" text-anchor="middle" font-size="9.5" fill="#647083">issues ISR instructions</text>
+          <text x="85" y="72" text-anchor="middle" font-size="9.5" fill="#647083">gets results via GPRs</text>
+          <rect x="10" y="120" width="150" height="76" rx="8" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="85" y="140" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#172033">AiM DMA</text>
+          <text x="85" y="156" text-anchor="middle" font-size="9.5" fill="#647083">decodes 1 ISR/cycle, in order</text>
+          <text x="85" y="170" text-anchor="middle" font-size="9.5" fill="#647083">unrolls opsize &times; channel_mask</text>
+          <text x="85" y="184" text-anchor="middle" font-size="9.5" fill="#647083">GPRs (256 b) &middot; CFRs</text>
+          <line x1="85" y1="90" x2="85" y2="118" stroke="#647083" stroke-width="1.4" marker-end="url(#arr3)"/>
+          <!-- channels -->
+          <rect x="205" y="14" width="672" height="300" rx="10" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+          <text x="219" y="36" font-size="11" font-weight="bold" fill="#1f6feb">one of 16&ndash;32 LPDDR5 channels (x16, 6400 MT/s = 12.8 GB/s external each)</text>
+          <line x1="160" y1="158" x2="203" y2="158" stroke="#647083" stroke-width="1.4" marker-end="url(#arr3)"/>
+          <!-- controller -->
+          <rect x="222" y="50" width="146" height="66" rx="8" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="295" y="70" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">channel controller</text>
+          <text x="295" y="85" text-anchor="middle" font-size="9" fill="#647083">AiM FIFO + R/W buffers</text>
+          <text x="295" y="99" text-anchor="middle" font-size="9" fill="#647083">mutual exclusion between them</text>
+          <!-- GB -->
+          <rect x="222" y="150" width="146" height="56" rx="8" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="295" y="171" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">Global Buffer (2 KB)</text>
+          <text x="295" y="187" text-anchor="middle" font-size="9" fill="#647083">holds ONE vector &middot; broadcast</text>
+          <!-- banks -->
+          <g>
+            <rect x="420" y="52" width="430" height="246" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+            <text x="635" y="72" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">16 DRAM banks, each with a bank-level PU</text>
+            <!-- bank 0 detail -->
+            <rect x="436" y="86" width="188" height="88" rx="7" fill="#fff" stroke="#1f6feb"/>
+            <text x="530" y="104" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">bank 0 (open row: 32 KB)</text>
+            <rect x="448" y="112" width="76" height="24" rx="4" fill="#e7f0fe" stroke="#1f6feb"/>
+            <text x="486" y="128" text-anchor="middle" font-size="8.5" fill="#172033">row buffer</text>
+            <rect x="448" y="142" width="76" height="24" rx="4" fill="#fdf0e6" stroke="#b54708"/>
+            <text x="486" y="158" text-anchor="middle" font-size="8.5" fill="#172033">16&times;fp16 MAC</text>
+            <rect x="536" y="142" width="76" height="24" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+            <text x="574" y="154" text-anchor="middle" font-size="8.5" fill="#172033">1 accumulator</text>
+            <text x="574" y="163" text-anchor="middle" font-size="7.5" fill="#647083">(16 b MAC reg)</text>
+            <line x1="486" y1="136" x2="486" y2="140" stroke="#647083" stroke-width="1.2" marker-end="url(#arr3)"/>
+            <line x1="524" y1="154" x2="534" y2="154" stroke="#647083" stroke-width="1.2" marker-end="url(#arr3)"/>
+            <!-- more banks -->
+            <rect x="648" y="86" width="90" height="40" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="693" y="110" text-anchor="middle" font-size="9" fill="#647083">bank 1</text>
+            <rect x="752" y="86" width="90" height="40" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="797" y="110" text-anchor="middle" font-size="9" fill="#647083">bank 2</text>
+            <rect x="648" y="140" width="90" height="40" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="693" y="164" text-anchor="middle" font-size="9" fill="#647083">&hellip;</text>
+            <rect x="752" y="140" width="90" height="40" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="797" y="164" text-anchor="middle" font-size="9" fill="#647083">bank 15</text>
+            <!-- MAC_ABK annotation -->
+            <text x="440" y="212" font-size="9.5" fill="#172033"><tspan font-weight="bold">MAC_ABK</tspan> (one command): every bank reads 32 B from its open row</text>
+            <text x="440" y="228" font-size="9.5" fill="#172033">and dots it with the same 32 B GB segment &rarr; acc += &Sigma; (16 lanes)</text>
+            <text x="440" y="252" font-size="9.5" fill="#1a7f37">internal read rate: 16 banks &times; 32 B / column-slot = 204.8 GB/s per channel</text>
+            <text x="440" y="268" font-size="9.5" fill="#b54708">external bus: 32 B / column-slot = 12.8 GB/s per channel &mdash; a 16&times; gap</text>
+          </g>
+          <line x1="368" y1="178" x2="418" y2="178" stroke="#b54708" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr3)"/>
+          <text x="372" y="170" font-size="8.5" fill="#b54708">broadcast</text>
+          <line x1="368" y1="83" x2="418" y2="83" stroke="#647083" stroke-width="1.4" marker-end="url(#arr3)"/>
+        </svg>
+        <p class="cap">Fig. 1 &mdash; The AiM machine model. The 16&times; internal:external bandwidth ratio is the whole value proposition &mdash; but note the three scarcity points that will matter: ONE vector in the GB, ONE accumulator per bank, and ONE in-order instruction stream from the DMA.</p>
+      </div>
+
+      <p>Memory geometry (as configured in the simulator's LPDDR5-AiM device): 32-channel device, 4 bank-groups &times; 4 banks per channel, 32&nbsp;KB rows, 32&nbsp;B column granularity (= 16 fp16 values, matching the MAC lane width and the GPR width). We activate 8/16/32 channels by mask; <b>16 channels &times; 12.8&nbsp;GB/s = 204.8&nbsp;GB/s external = exactly the Jetson AGX Orin memory budget</b> (spec-verified: 256-bit LPDDR5-6400).</p>
+    </section>
+
+    <section class="card" id="isa">
+      <h2><span class="num">2</span>The ISR instruction set</h2>
+      <p class="lead">The host drives AiM with ISR (Instruction Set Register) commands. Each carries only the fields it needs, drawn from: <code class="k">opsize, GPR, channel_mask, bank, row</code>. <code class="k">opsize</code> unrolls an instruction over consecutive 32&nbsp;B columns; <code class="k">channel_mask</code> fans it out across channels in the same cycle.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>ISR</th><th>Operands</th><th>Semantics</th><th>DRAM command / cost class</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">WR_SBK</td><td>GPR, mask, bank, row</td><td>write one 32 B column from a GPR into one bank</td><td>WR (conventional write path)</td></tr>
+          <tr><td class="rowlabel">WR_ABK</td><td>GPR, mask(1ch), row</td><td>write the same 32 B to all 16 banks</td><td>WRA16</td></tr>
+          <tr><td class="rowlabel">WR_GB</td><td>opsize, GPR, mask</td><td>fill the Global Buffer from the host, opsize columns</td><td>WRGB &middot; reg-mode</td></tr>
+          <tr><td class="rowlabel">WR_BIAS</td><td>GPR, mask</td><td>initialize the 16 banks&rsquo; MAC accumulators</td><td>WRMAC16 &middot; reg-mode</td></tr>
+          <tr><td class="rowlabel">COPY_BKGB / COPY_GBBK</td><td>opsize, mask, bank, row</td><td>move opsize columns bank &harr; GB (no host traffic)</td><td>RDCP / WRCP</td></tr>
+          <tr><td class="rowlabel">MAC_SBK / MAC_ABK</td><td>opsize, mask, (bank,) row</td><td>MAC: bank row data &times; GB vector &rarr; per-bank accumulator; ABK = all 16 banks in parallel</td><td>MAC / MAC16, 1 per column slot (nCCD)</td></tr>
+          <tr><td class="rowlabel">AF</td><td>mask</td><td>apply LUT activation (gelu) to the accumulators</td><td>AF16</td></tr>
+          <tr><td class="rowlabel">EWMUL / EWADD</td><td>opsize, &hellip;</td><td>elementwise multiply (bank-group) / add (GPRs)</td><td>EWMUL16 / (DMA-internal)</td></tr>
+          <tr><td class="rowlabel">RD_MAC / RD_AF</td><td>GPR, mask</td><td>read 16 accumulators (one 32 B word/channel) to a GPR &mdash; <b>blocks the DMA</b> until complete</td><td>RDMAC16 / RDAF16 &middot; reg-mode &middot; blocking</td></tr>
+          <tr><td class="rowlabel">RD_SBK</td><td>GPR, mask, bank, row</td><td>read one column from a bank</td><td>RD (conventional read path)</td></tr>
+          <tr><td class="rowlabel">SYNC / EOC</td><td>&mdash;</td><td>barrier: drain all channels&rsquo; pending writes / end of compute</td><td>blocking, broadcast to all channels</td></tr>
+          <tr><td class="rowlabel">W CFR</td><td>addr, data</td><td>configuration registers: broadcast mode, EWMUL bank-group, AF LUT select</td><td>host-side, free</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <h3>Three semantics that dominate performance</h3>
+      <ul class="notes">
+        <li><b>Blocking reads.</b> <code class="k">RD_MAC</code>/<code class="k">RD_AF</code>/<code class="k">SYNC</code>/<code class="k">EOC</code> stall the (single, in-order) DMA until every sub-command completes &mdash; each result readback drains the pipeline.</li>
+        <li><b>Register-mode switching (TMOD).</b> The datapath is either in normal array mode or register-access mode; every transition between {<code class="k">WR_GB, WR_BIAS, RD_MAC, RD_AF</code>} and other AiM ops costs a 32-cycle <code class="k">TMOD</code> command.</li>
+        <li><b>All-rows-open precondition.</b> <code class="k">MAC_ABK</code>/<code class="k">AF</code>/<code class="k">EWMUL</code> require all 16 banks open at the <i>target row</i>; if any bank sits on a different row the controller must issue <code class="k">PREA</code> (precharge all) + <code class="k">ACT16</code> (activate all) first. Alternating between rows is expensive by construction.</li>
+        <li><b>AiM vs. normal traffic mutual exclusion.</b> Per channel, AiM commands are rejected while conventional reads/writes are buffered and vice versa &mdash; PIM compute and ordinary memory use of the same channel serialize.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="sim">
+      <h2><span class="num">3</span>The simulator</h2>
+      <p class="lead">We use the open-source <code class="k">aim_simulator</code> (CENT, ASPLOS&rsquo;25): Ramulator&nbsp;2.0 with the AiM ISA, an AiM DMA front-end, an AiM-aware channel controller, and full GDDR6-AiM / LPDDR5-AiM timing models.</p>
+      <pre class="cmd"><span class="c"># trace-driven flow: a text trace of ISR instructions in, cycles out</span>
+AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line...</span>
+&rarr; DMA decodes 1 ISR/cycle, unrolls opsize&times;channels into per-column requests
+&rarr; per-channel controller: AiM FIFO (strict order) | R/W buffers (FR-FCFS)
+&rarr; device model: preconditions (ACT/PRE), timing (nCCD, nRCD*, TMOD), state
+&rarr; memory_system_cycles &times; tCK  &rarr; time</pre>
+      <ul class="notes">
+        <li><b>Timing that matters:</b> one column command per <code class="k">nCCD</code>&nbsp;=&nbsp;4 cycles; MAC/AF/copy commands are 1-cycle issue events whose real cost is the column spacing plus row-activation preconditions; <code class="k">TMOD</code>&nbsp;=&nbsp;32 cycles.</li>
+        <li><b>Clock convention:</b> we convert cycles at tCK&nbsp;=&nbsp;0.625&nbsp;ns &mdash; calibrated so one channel&rsquo;s external burst rate equals real LPDDR5-6400 x16 (12.8&nbsp;GB/s). Documented assumption; all ratios are tCK-independent.</li>
+        <li><b>Validation:</b> the shipped micro-benchmarks and an all-ISR smoke trace run bit-identically before/after our study; a probe trace confirms the PREA&rarr;ACT16 row-management path fires as specified.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="what">
+      <h2><span class="num">4</span>What to offload, and why</h2>
+      <p class="lead">The roofline from Part I picks the split: everything whose cost is <i>streaming resident data</i> goes to PIM; everything small, nonlinear, or shuffle-shaped stays on the host.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Component</th><th class="num">Share of step FLOPs</th><th class="num">Share of step bytes</th><th>Placement</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">6 projections (Q/KV/O/gate/up/down)</td><td class="num">31.8 G (82%)</td><td class="num">622.9 MB (97%)</td><td><b>PIM</b></td><td>weights live in DRAM banks anyway; the whole point is to stop streaming them out</td></tr>
+          <tr><td class="rowlabel">attention scores + context</td><td class="num">6.5 G (17%)</td><td class="num">16.0 MB KV</td><td><b>PIM</b></td><td>prefix K/V written once per control cycle, kept resident in banks (MQA makes it tiny: 0.94 MB/channel)</td></tr>
+          <tr><td class="rowlabel">softmax, RMSNorm, RoPE, residuals, gate&#8857;up, Euler</td><td class="num">0.4 G (1%)</td><td class="num">~7 MB</td><td>host</td><td>stock AiM has no exp/rsqrt/reduction/shuffle primitives; these ops are &lt;1 FLOP/B and tiny</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout"><b>Expected win, on paper.</b> Weights resident in banks + MAC at the internal rate (16 ch &times; 204.8 GB/s = 3.28 TB/s) should crush the XPU's 204.8 GB/s external stream: 623 MB / 3.28 TB/s &asymp; 0.19 ms vs 3.15 ms. The rest of this page is about why that arithmetic silently assumes S = 1 token.</div>
+    </section>
+
+    <section class="card" id="mapping">
+      <h2><span class="num">5</span>Instruction-level mapping</h2>
+      <p class="lead">A GEMM has two mappings onto AiM, differing in <i>what stays in banks</i> and <i>what streams through the GB</i>. We generate real traces for both (plus the attention path) and simulate them.</p>
+
+      <h3>Strategy A &mdash; weight-stationary (the native AiM GEMV pattern)</h3>
+      <p>Weight rows live across banks/channels; each token's activation vector is broadcast via the GB; every bank accumulates one output element. Used for <b>attention</b>, where the resident data is the prefix K/V written once per control cycle:</p>
+      <pre class="cmd"><span class="c"># attention scores for one (token, head): q has 256 values = 16 columns</span>
+AiM WR_BIAS 0 0xffff          <span class="c"># zero the 16 accumulators           [reg-mode]</span>
+AiM WR_GB 16 0 0xffff         <span class="c"># broadcast q (16 cols) into every channel's GB</span>
+AiM MAC_ABK 16 0xffff 4000    <span class="c"># all banks: dot(my resident K-row, q) -&gt; acc</span>
+AiM RD_MAC 0 0xffff           <span class="c"># read 16 scores/channel   [reg-mode, BLOCKING]</span>
+<span class="c"># x 4 K-row-groups (867 rows over 256 bank slots) x 51 tokens x 8 heads</span></pre>
+
+      <h3>Strategy B &mdash; activation-stationary (invented for S = 51)</h3>
+      <p>The 51&times;1024 activation tile is loaded into banks (token t &rarr; bank t&nbsp;mod&nbsp;16, token-group tg&nbsp;=&nbsp;t/16 &rarr; row tg); weight columns stream <i>bank&rarr;GB</i> with <code class="k">COPY_BKGB</code> (no external traffic!); one <code class="k">MAC_ABK</code> then computes 16 token-dot-products at once. Used for the six projections:</p>
+      <pre class="cmd"><span class="c"># one output column of q_proj (K=1024 = 64 columns of 32 B)</span>
+AiM COPY_BKGB 64 0xffff 0 100 <span class="c"># stream weight column w_n from its bank into the GB</span>
+<span class="c"># -- for each of the 4 token-groups (one accumulator per bank!): --</span>
+AiM WR_BIAS 0 0xffff          <span class="c"># re-init accumulators                [TMOD switch]</span>
+AiM MAC_ABK 64 0xffff 0       <span class="c"># 16 tokens of group 0: dot(x_t, w_n)  [row 0 open]</span>
+AiM RD_MAC 0 0xffff           <span class="c"># drain 16 partial results  [TMOD, BLOCKING]</span>
+AiM WR_BIAS 0 0xffff
+AiM MAC_ABK 64 0xffff 1       <span class="c"># token-group 1 -&gt; PREA + ACT16 (row switch!)</span>
+AiM RD_MAC 0 0xffff
+<span class="c"># ... groups 2, 3 ... then next output column (2048 of them for W_Q)</span></pre>
+      <p>Around these, the trace carries the activation-tile loads (<code class="k">WR_SBK</code> streams, since each layer&rsquo;s input comes from the host-side residual stream), the once-per-cycle KV-load trace, <code class="k">AF</code> for gelu on the gate path, and a <code class="k">SYNC</code> at every host boundary (6 host segments per layer: norms, RoPE, softmax, gate&#8857;up, partial sums).</p>
+    </section>
+
+    <section class="card" id="exec">
+      <h2><span class="num">6</span>Cycle-level execution walk-through (why it&rsquo;s slow)</h2>
+      <p class="lead">Follow one Strategy-B output column through the machine, with the actual per-event costs from the LPDDR5-AiM timing model:</p>
+      <ol style="margin:8px 0;padding-left:22px;line-height:1.75;">
+        <li><b>Weight streaming:</b> <code class="k">COPY_BKGB 64</code> unrolls into 64 column reads, one per nCCD = 4 cycles &rarr; 256 cycles to move 2 KB into the GB. The GB holds one vector, so this repeats for <i>every</i> output column &mdash; 12,800 columns per layer.</li>
+        <li><b>Mode switch:</b> the next op is <code class="k">WR_BIAS</code>, a register-mode op &rarr; the controller inserts <code class="k">TMOD</code> (32 cycles). After the MAC, <code class="k">RD_MAC</code> forces another pair. Four token-groups &times; two switches each: <b>235,000 TMODs per layer</b>.</li>
+        <li><b>Row management:</b> <code class="k">MAC_ABK</code> for token-group 1 targets row 1 while the banks sit on row 0 &rarr; <code class="k">PREA</code> + two-phase <code class="k">ACT16</code> across all 16 banks, plus the ACT&rarr;MAC latency (nRCDRDMAC = 56 cycles). <b>112,000 PREA+ACT16 pairs per layer.</b></li>
+        <li><b>The MAC itself:</b> 64 MAC16 commands &times; 4 cycles = 256 cycles &mdash; doing 16 tokens&rsquo; worth of useful work, but only for <i>one</i> token-group of the four.</li>
+        <li><b>The drain:</b> <code class="k">RD_MAC</code> blocks the DMA until 16 accumulators &times; 16 channels land in GPRs. One accumulator per bank means this happens per (token-group &times; output column &times; K-chunk): <b>84,000 blocking reads per layer</b>.</li>
+        <li>At each of the 6 host boundaries, <code class="k">SYNC</code> drains every channel&rsquo;s write pipeline; the host does its 0.16 ms of softmax/norm/RoPE work; the next AiM segment restarts cold.</li>
+      </ol>
+      <p>Strategy A avoids the weight streaming but pays instead in per-token <code class="k">WR_GB</code> broadcasts (51 tokens &times; every layer input) and the same accumulator/blocking pattern. Simulated, the two strategies land within 2% of each other &mdash; <b>both are bound by the same per-command amortization, not by data movement</b>.</p>
+    </section>
+
+    <section class="card" id="results">
+      <h2><span class="num">7</span>Results</h2>
+      <p class="lead">Cycle-accurate AiM segments + an analytic Orin host model (roofline + 5&ndash;50&nbsp;&micro;s launch overhead, swept). One layer simulated, composed &times;18 layers &times;N steps. XPU baselines: bandwidth floor (645&nbsp;MB / 204.8&nbsp;GB/s = 3.15&nbsp;ms) and realistic 2&times;/4&times; bands.</p>
+      <figure>
+        <img src="assets/phase3_step_latency.png" alt="Horizontal bar chart of Action Expert step latency: XPU floor 3.2 ms, XPU 2x 6.3 ms, XPU 4x 12.6 ms; AiM Strategy-A at 8/16/32 channels: 68.6/36.0/20.6 ms; AiM hybrid Strategy-B at 8/16/32 channels: 68.5/36.7/21.7 ms. Stock AiM is far slower than every XPU baseline.">
+        <figcaption class="cap">Step latency: the stock offload loses at every channel count &mdash; 11.6&times; above the XPU floor at Orin parity (16 ch), and still 6.9&times; above it with double the memory system (32 ch). A-only &asymp; hybrid-B confirms the bound is the ISA, not the mapping.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/phase3_layer_breakdown.png" alt="Stacked bar chart of simulated per-layer AiM time at 8, 16, 32 channels. At 16 channels (1.88 ms): MAC column commands 42%, weight streaming 15%, activation loads 4%, TMOD mode switches 16%, row management 9%, blocking reads and other 13%.">
+        <figcaption class="cap">Where a 16-channel layer&rsquo;s 1.88 ms goes: <b>42% MAC commands</b> (one vector per fetch), <b>16% TMOD churn</b>, <b>15% serial GB weight streaming</b>, <b>13% blocking-read drains</b>, <b>9% row management</b> &mdash; every slice traces to one of the three scarcities in Fig. 1.</figcaption>
+      </figure>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Config (20 &micro;s overhead)</th><th class="num">step (ms)</th><th class="num">AE N=4 (ms)</th><th class="num">AE N=10 (ms)</th><th class="num">vs XPU floor</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">XPU-only floor / 2&times; / 4&times;</td><td class="num">3.15 / 6.30 / 12.61</td><td class="num">12.6 / 25.2 / 50.4</td><td class="num">31.5 / 63.0 / 126.1</td><td class="num">1&times;</td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 8 ch</td><td class="num">68.45</td><td class="num">273.9</td><td class="num">684.7</td><td class="num">21.7&times; slower</td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 16 ch (Orin parity)</td><td class="num"><b>36.71</b></td><td class="num">146.9</td><td class="num">367.2</td><td class="num"><b>11.6&times; slower</b></td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 32 ch</td><td class="num">21.73</td><td class="num">87.0</td><td class="num">217.3</td><td class="num">6.9&times; slower</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">KV-load (once per control cycle): 74 &micro;s at 16 ch &mdash; negligible. Launch-overhead sweep 5&rarr;50 &micro;s moves the 16-ch step 36.0&rarr;40.0 ms: host overhead is not the story.</p>
+    </section>
+
+    <section class="card" id="limits">
+      <h2><span class="num">8</span>Limitations &amp; root causes: the S = 16 crossover</h2>
+      <p class="lead">&ldquo;The AE is memory-bound and PIM fixes memory&rdquo; fails because <b>memory-bound is relative to the machine</b> &mdash; offloading changed which resource binds.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Resource</th><th>XPU (Orin)</th><th>Stock AiM, 16 ch</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">weight-read bandwidth</td><td>204.8 GB/s &mdash; <b>binds</b></td><td class="num">3.28 TB/s internal &mdash; idle headroom</td></tr>
+          <tr><td class="rowlabel">effective compute on this workload</td><td>12.3 TFLOP/s achieved (42 peak, loafing at the BW floor)</td><td><b>3.3 TFLOP/s &mdash; binds</b> (16 banks &times; 16 lanes &times; 2 FLOP per 4-cycle slot)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <ul class="notes">
+        <li><b>The XPU reuses; AiM cannot.</b> At I = 60 FLOPs/B the XPU reads each weight once and applies it to all 51 tokens from cache. The stock ISA gives each in-bank fetch exactly ONE GB vector and ONE accumulator: a fetch serves one token. The 16&times; internal bandwidth is real but <i>un-reusable</i>.</li>
+        <li><b>Crossover law.</b> Stock AiM beats the XPU floor when S &le; ~16 (bank parallelism covers the token count &mdash; the batch-1 LLM-decode regime AiM was designed for). At S = 51 it loses by &asymp; 51/16 = 3.2&times; before overheads; TMOD churn, blocking drains, and row thrash widen it to the measured 5.8&ndash;11.6&times;.</li>
+        <li><b>Each limitation exists for a hardware reason.</b> One GB vector: the GB is a 2 KB broadcast SRAM sized for GEMV. One accumulator/bank: a single 16-bit MAC register minimizes area in DRAM periphery. TMOD: the shared datapath multiplexes array and register access. Blocking reads: the single in-order DMA is the hazard mechanism. All are sensible for S = 1 &mdash; and all are wrong for S = 51.</li>
+      </ul>
+      <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../02_extended_isa/report.html">Part III</a> adds the missing amortization to the AiM ISA and flips the result.</div>
+    </section>
+
+    <section class="card" id="series">
+      <h2>Series &amp; sources</h2>
+      <ul class="notes">
+        <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
+        <li><b>Part II (this page)</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM.</li>
+        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 36.7 ms to 4.81 ms per step</a></li>
+      </ul>
+      <p class="cap">Sources: arkhadem/aim_simulator @ <code class="k">0f28a07</code> (CENT, ASPLOS&rsquo;25; MIT); SK hynix AiM: HC34 poster + ISSCC&rsquo;22/JSSC&rsquo;23 papers; NVIDIA Jetson AGX Orin Technical Brief v1.2 (42 TFLOP/s bf16, 204.8 GB/s, spec-verified); trace generator, sweep scripts, and CSVs in the study workspace &mdash; every number regenerates from committed traces.</p>
+      <footer class="footer">
+        <p>author : yang-gon kim &nbsp;&middot;&nbsp; email : yanggon@g.ucla.edu</p>
+        <p><a href="../00_vla_algorithm/report.html">&larr; Part I</a> &nbsp;&middot;&nbsp; <a href="../02_extended_isa/report.html">Part III &rarr;</a> &nbsp;&middot;&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+      </footer>
+    </section>
+  </main>
+</div>
+</body>
+</html>

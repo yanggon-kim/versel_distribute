@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VLA Part I — Anatomy of a Flow-Matching VLA: π0 Module by Module</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  .tag.warn{background:var(--warn-bg);color:var(--warn);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  pre.cmd{background:var(--code);color:#e6edf7;border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.83rem;line-height:1.5;margin:12px 0;}
+  pre.cmd .c{color:#7d8aa5;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .scroll{overflow-x:auto;}
+  .fig{margin:18px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .fig .cap{color:var(--muted);font-size:.85rem;margin:6px 2px 8px;}
+  .eq{background:#fbfcff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin:12px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92rem;overflow-x:auto;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#overview">Overview</a>
+    <a href="#pipeline">1 &middot; End-to-end pipeline</a>
+    <a href="#flow">2 &middot; Flow matching &amp; the denoising loop</a>
+    <a href="#embed">3 &middot; Suffix embedding (state, action, time)</a>
+    <a href="#layer">4 &middot; Inside one Action-Expert layer</a>
+    <a href="#dims">5 &middot; Every module: shapes, FLOPs, intensity</a>
+    <a href="#twophase">6 &middot; The two-phase signature</a>
+    <a href="#series">Series &amp; sources</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>Anatomy of a Flow-Matching VLA: &pi;<sub>0</sub> Module by Module</h1>
+      <p class="sub">A component-level walk through the &pi;<sub>0</sub> Vision-Language-Action model as it actually executes at inference: three SigLIP encoders and a PaliGemma VLM build a <b>prefix KV cache once per control cycle</b>, then a 311.5&nbsp;M-parameter <b>Action Expert</b> re-reads all of its weights <b>N&nbsp;=&nbsp;4&ndash;10 times</b> to integrate a flow-matching ODE over 51 suffix tokens. Every shape, FLOP count, and arithmetic intensity below is extracted from the openpi source (commit <code class="k">15a9616</code>) and validated with an abstract-shape trace &mdash; <b>38.70&nbsp;GFLOPs and 629&nbsp;MB of weight reads per denoising step</b>.</p>
+      <div class="tags">
+        <span class="tag live">verified vs openpi source</span>
+        <span class="tag">Gemma-300M expert &middot; 18 layers</span>
+        <span class="tag">MQA 8&times;256, 1 KV head</span>
+        <span class="tag warn">AE intensity &asymp; 60 FLOPs/B</span>
+      </div>
+    </header>
+
+    <section class="card" id="overview">
+      <h2>Overview</h2>
+      <p class="lead">Part I of a three-part series. This page explains the algorithm; <a href="../01_stock_aim_offload/report.html">Part II</a> offloads its memory-bound half onto stock LPDDR5-AiM processing-in-memory, and <a href="../02_extended_isa/report.html">Part III</a> fixes the ISA so the offload actually wins.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">18 + 18</div><div class="l">VLM layers (gemma_2b, d=2048) + Action-Expert layers (gemma_300m, d=1024)</div></div>
+        <div class="kpi"><div class="v">51</div><div class="l">suffix tokens per denoising step (1 state + 50 noisy actions)</div></div>
+        <div class="kpi"><div class="v">38.70 G / 629 MB</div><div class="l">FLOPs / weight bytes per denoising step (traced)</div></div>
+        <div class="kpi"><div class="v">N = 4&ndash;10</div><div class="l">serial Euler steps per action chunk (openpi default 10)</div></div>
+        <div class="kpi"><div class="v">15.0 MB</div><div class="l">prefix KV cache, written once per control cycle</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="pipeline">
+      <h2><span class="num">1</span>End-to-end pipeline</h2>
+      <p>One control cycle turns an observation (3 camera images + a language instruction + the robot state) into a <b>chunk of 50 future actions</b>. The model is a two-expert transformer: a large VLM expert reads the observation once, and a small Action Expert generates actions by iterative denoising, attending to the VLM's cached keys and values.</p>
+
+      <div class="fig" id="fig-pipeline">
+        <svg viewBox="0 0 900 380" role="img" aria-label="Pipeline: three 224x224 images pass through SigLIP encoders producing 256 tokens each; with up to 48 language tokens they form an 816-token prefix processed once by the PaliGemma VLM (18 layers, d=2048), writing a 15 MB KV cache. The Action Expert loop runs N=4-10 times: 51 suffix tokens (1 state + 50 noisy actions) pass through 18 Gemma-300M layers attending to the cache, producing a velocity that Euler-integrates the actions.">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- inputs -->
+          <rect x="10" y="18" width="118" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="69" y="37" text-anchor="middle" font-size="11" fill="#172033">image &times;3 (224&sup2;)</text>
+          <rect x="10" y="58" width="118" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="69" y="77" text-anchor="middle" font-size="11" fill="#172033">instruction text</text>
+          <rect x="10" y="98" width="118" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="69" y="117" text-anchor="middle" font-size="11" fill="#172033">robot state [32]</text>
+          <!-- encoders -->
+          <rect x="178" y="10" width="150" height="46" rx="8" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="253" y="29" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#172033">SigLIP So400m/14 &times;3</text>
+          <text x="253" y="45" text-anchor="middle" font-size="10" fill="#647083">3 &times; 256 vision tokens</text>
+          <rect x="178" y="66" width="150" height="34" rx="8" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="253" y="87" text-anchor="middle" font-size="11.5" fill="#172033">tokenizer (&le;48 tokens)</text>
+          <line x1="128" y1="33" x2="176" y2="33" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <line x1="128" y1="73" x2="176" y2="83" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <!-- VLM -->
+          <rect x="380" y="10" width="188" height="90" rx="8" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="474" y="32" text-anchor="middle" font-size="12" font-weight="bold" fill="#172033">PaliGemma VLM prefill</text>
+          <text x="474" y="50" text-anchor="middle" font-size="10" fill="#647083">gemma_2b expert: 18 layers</text>
+          <text x="474" y="65" text-anchor="middle" font-size="10" fill="#647083">d=2048, P = 816 prefix tokens</text>
+          <text x="474" y="80" text-anchor="middle" font-size="10" fill="#647083">runs ONCE per control cycle</text>
+          <line x1="328" y1="33" x2="378" y2="40" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <line x1="328" y1="83" x2="378" y2="70" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <!-- KV cache -->
+          <rect x="620" y="24" width="140" height="62" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="690" y="46" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#172033">prefix KV cache</text>
+          <text x="690" y="62" text-anchor="middle" font-size="10" fill="#647083">[18, 816, 1, 256] &times; K,V</text>
+          <text x="690" y="76" text-anchor="middle" font-size="10" fill="#647083">15.0 MB bf16</text>
+          <line x1="568" y1="55" x2="618" y2="55" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <!-- AE loop box -->
+          <rect x="120" y="160" width="640" height="170" rx="10" fill="none" stroke="#1f6feb" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text x="134" y="182" font-size="11.5" font-weight="bold" fill="#1f6feb">denoising loop &mdash; repeated N = 4&ndash;10 times, strictly serial</text>
+          <!-- loop contents -->
+          <rect x="138" y="196" width="128" height="58" rx="8" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="202" y="216" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">suffix embed</text>
+          <text x="202" y="231" text-anchor="middle" font-size="9.5" fill="#647083">state proj + action proj</text>
+          <text x="202" y="244" text-anchor="middle" font-size="9.5" fill="#647083">+ time MLP &rarr; [51,1024]</text>
+          <rect x="300" y="196" width="182" height="58" rx="8" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="391" y="214" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">Action Expert &times;18 layers</text>
+          <text x="391" y="229" text-anchor="middle" font-size="9.5" fill="#647083">gemma_300m: d=1024, GeGLU 4096</text>
+          <text x="391" y="243" text-anchor="middle" font-size="9.5" fill="#647083">MQA attends to prefix KV + itself</text>
+          <rect x="516" y="196" width="104" height="58" rx="8" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="568" y="219" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">action head</text>
+          <text x="568" y="235" text-anchor="middle" font-size="9.5" fill="#647083">[50,1024]&rarr;[50,32]</text>
+          <rect x="648" y="196" width="96" height="58" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="696" y="216" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">Euler step</text>
+          <text x="696" y="232" text-anchor="middle" font-size="9.5" fill="#647083">x &larr; x + &Delta;t&middot;v</text>
+          <text x="696" y="245" text-anchor="middle" font-size="9.5" fill="#647083">t &larr; t &minus; 1/N</text>
+          <line x1="266" y1="225" x2="298" y2="225" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <line x1="482" y1="225" x2="514" y2="225" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <line x1="620" y1="225" x2="646" y2="225" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <!-- KV into AE -->
+          <line x1="690" y1="86" x2="440" y2="194" stroke="#1a7f37" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+          <text x="600" y="140" font-size="9.5" fill="#1a7f37">read every layer, every step</text>
+          <!-- loop back -->
+          <path d="M 696 256 L 696 300 L 202 300 L 202 258" fill="none" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <text x="430" y="294" font-size="9.5" fill="#647083">x<tspan baseline-shift="sub" font-size="7.5">t</tspan> re-embedded with new timestep &mdash; the 623 MB of expert weights are re-read every iteration</text>
+          <!-- output -->
+          <rect x="778" y="196" width="112" height="58" rx="8" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="834" y="219" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">action chunk</text>
+          <text x="834" y="235" text-anchor="middle" font-size="9.5" fill="#647083">a [50 &times; 32] &rarr; robot</text>
+          <line x1="760" y1="225" x2="776" y2="225" stroke="#647083" stroke-width="1.4" marker-end="url(#arr)"/>
+          <text x="763" y="215" font-size="9" fill="#647083">t=0</text>
+        </svg>
+        <p class="cap">Fig. 1 &mdash; One control cycle of &pi;<sub>0</sub>. The prefix (vision + language) is processed once; the Action-Expert loop on the right is the latency hot spot: 59% of end-to-end time on Jetson AGX Orin despite holding only 311.5&nbsp;M of the ~3&nbsp;B total parameters.</p>
+      </div>
+
+      <h3>The two experts share one attention, not one width</h3>
+      <p>&pi;<sub>0</sub> is a <i>mixture-of-experts-over-tokens</i> transformer: prefix tokens flow through gemma_2b weights (d=2048), suffix tokens through gemma_300m weights (d=1024), and the two meet <b>only inside attention</b>, which requires matching head geometry &mdash; both experts use 8 query heads &times; head_dim 256 with a single shared KV head (multi-query attention). During denoising the prefix is frozen: its keys and values are served from the cache, so <b>no gemma_2b weight is touched in the loop</b>.</p>
+    </section>
+
+    <section class="card" id="flow">
+      <h2><span class="num">2</span>Flow matching &amp; the denoising loop</h2>
+      <p class="lead">The Action Expert is a conditional velocity field v<sub>&theta;</sub> trained by flow matching; inference is Euler integration of an ODE from noise to actions.</p>
+      <h3>Training objective (for context)</h3>
+      <p>Sample a time t&nbsp;&isin;&nbsp;(0,1], Gaussian noise &epsilon;, and construct the linear interpolation between noise and the ground-truth action chunk a:</p>
+      <div class="eq">x<sub>t</sub> = t&middot;&epsilon; + (1 &minus; t)&middot;a&nbsp;&nbsp;&nbsp;&nbsp;u<sub>t</sub> = &epsilon; &minus; a&nbsp;&nbsp;&nbsp;&nbsp;loss = &Vert; v<sub>&theta;</sub>(x<sub>t</sub>, t, obs) &minus; u<sub>t</sub> &Vert;&sup2;</div>
+      <p>The network learns the constant velocity that transports x<sub>t</sub> along the straight line from data to noise. (openpi uses the diffusion-style convention t=1 &harr; noise, t=0 &harr; data.)</p>
+      <h3>Inference: Euler integration</h3>
+      <div class="eq">x<sup>(0)</sup> = &epsilon; ~ N(0, I),&nbsp;&nbsp;t<sub>0</sub> = 1,&nbsp;&nbsp;&Delta;t = &minus;1/N<br>x<sup>(k+1)</sup> = x<sup>(k)</sup> + &Delta;t &middot; v<sub>&theta;</sub>(x<sup>(k)</sup>, t<sub>k</sub>, obs),&nbsp;&nbsp;t<sub>k+1</sub> = t<sub>k</sub> + &Delta;t&nbsp;&nbsp;&nbsp;&nbsp;(k = 0 &hellip; N&minus;1)</div>
+      <p>Each iteration is one full forward pass of the 18-layer expert over the 51 suffix tokens. Two properties drive everything downstream in this series:</p>
+      <ul class="notes">
+        <li><b>Serial dependence.</b> x<sup>(k+1)</sup> needs v<sub>&theta;</sub>(x<sup>(k)</sup>): the N steps cannot be batched or run in parallel. Latency is N &times; (one step).</li>
+        <li><b>Weight re-streaming.</b> Every step touches all 311.5&nbsp;M expert parameters (623&nbsp;MB in bf16) to process only 51 tokens &mdash; the source of the Action Expert's low arithmetic intensity (&sect;5, &sect;6).</li>
+      </ul>
+      <div class="callout"><b>N is a deployment knob.</b> The original openpi samples with N&nbsp;=&nbsp;10; the XPU characterization study (arXiv:2604.24447) runs &pi;<sub>0</sub> at N&nbsp;=&nbsp;4. All numbers in this series are parameterized over N&nbsp;&isin;&nbsp;{4,&nbsp;10}.</div>
+    </section>
+
+    <section class="card" id="embed">
+      <h2><span class="num">3</span>Suffix embedding: state, actions, and the timestep</h2>
+      <p class="lead">Before the transformer, the raw physical quantities become 51 tokens of width 1024. The timestep is injected here, once per step &mdash; not per layer.</p>
+      <table>
+        <thead><tr><th>Step</th><th>Operation</th><th>Shapes</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">state token</td><td><code class="k">state_proj</code>: linear on the robot state</td><td>[32] &rarr; [1, 1024]</td></tr>
+          <tr><td class="rowlabel">action tokens</td><td><code class="k">action_in_proj</code> on the current noisy chunk x<sup>(k)</sup></td><td>[50, 32] &rarr; [50, 1024]</td></tr>
+          <tr><td class="rowlabel">time embedding</td><td>sine&ndash;cosine positional embedding of the scalar t<sub>k</sub></td><td>t &rarr; [1024]</td></tr>
+          <tr><td class="rowlabel">mixing MLP</td><td>concat(action, time) &rarr; linear &rarr; swish &rarr; linear</td><td>[50, 2048] &rarr; [50, 1024]</td></tr>
+        </tbody>
+      </table>
+      <p>The time embedding sweeps geometric periods from 4&times;10<sup>&minus;3</sup> to 4.0 so the network can resolve both early (coarse) and late (fine) integration times:</p>
+      <div class="eq">&phi;(t) = [ sin(2&pi;t/T<sub>1</sub>) &hellip; sin(2&pi;t/T<sub>512</sub>), cos(2&pi;t/T<sub>1</sub>) &hellip; cos(2&pi;t/T<sub>512</sub>) ],&nbsp;&nbsp;T<sub>i</sub> = T<sub>min</sub>&middot;(T<sub>max</sub>/T<sub>min</sub>)<sup>(i&minus;1)/511</sup></div>
+      <p>The suffix is then <code class="k">[state_token ; action_tokens] = [51, 1024]</code>. The attention mask makes it a <b>block</b>: prefix tokens never see the suffix (their KV was computed without it); the state token attends to the prefix and itself; the 50 action tokens attend to everything &mdash; prefix, state, and each other (full attention inside the block, no causal ordering between actions).</p>
+      <p class="cap">Variant note: &pi;<sub>0.5</sub> moves the state into the discrete prompt and injects t through adaptive RMSNorm (a learned scale/shift/gate per norm site) instead of the concat-MLP. Same layer skeleton otherwise; &pi;<sub>0</sub> is the target throughout this series.</p>
+    </section>
+
+    <section class="card" id="layer">
+      <h2><span class="num">4</span>Inside one Action-Expert layer</h2>
+      <p class="lead">All 18 layers are identical in shape. Everything below the attention softmax is a skinny matrix product: M&nbsp;=&nbsp;51 rows against weight matrices of 1024&ndash;4096 columns.</p>
+
+      <div class="fig" id="fig-layer">
+        <svg viewBox="0 0 900 250" role="img" aria-label="Dataflow of one Gemma-300M decoder layer: RMSNorm, then Q projection 1024 to 2048 and KV projection 1024 to 512, RoPE on Q and K, MQA attention over 867 keys, output projection 2048 to 1024, residual add, second RMSNorm, GeGLU MLP with gate and up projections 1024 to 4096, elementwise product, down projection 4096 to 1024, residual add.">
+          <defs>
+            <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- attention row -->
+          <text x="12" y="30" font-size="11" font-weight="bold" fill="#172033">x [51,1024]</text>
+          <rect x="12" y="44" width="86" height="34" rx="7" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="55" y="65" text-anchor="middle" font-size="10.5" fill="#172033">RMSNorm</text>
+          <rect x="126" y="20" width="112" height="34" rx="7" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="182" y="36" text-anchor="middle" font-size="10.5" fill="#172033">W<tspan baseline-shift="sub" font-size="8">Q</tspan> [1024,2048]</text>
+          <text x="182" y="49" text-anchor="middle" font-size="9" fill="#647083">8 heads &times; 256</text>
+          <rect x="126" y="66" width="112" height="34" rx="7" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="182" y="82" text-anchor="middle" font-size="10.5" fill="#172033">W<tspan baseline-shift="sub" font-size="8">KV</tspan> [1024,512]</text>
+          <text x="182" y="95" text-anchor="middle" font-size="9" fill="#647083">1 shared KV head</text>
+          <rect x="266" y="42" width="76" height="34" rx="7" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="304" y="58" text-anchor="middle" font-size="10.5" fill="#172033">RoPE</text>
+          <text x="304" y="71" text-anchor="middle" font-size="9" fill="#647083">on q, k</text>
+          <rect x="372" y="28" width="150" height="62" rx="7" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="447" y="47" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">MQA attention</text>
+          <text x="447" y="62" text-anchor="middle" font-size="9" fill="#647083">scores [8,51,867] fp32</text>
+          <text x="447" y="76" text-anchor="middle" font-size="9" fill="#647083">softmax &rarr; probs &middot; V</text>
+          <rect x="552" y="42" width="118" height="34" rx="7" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="611" y="58" text-anchor="middle" font-size="10.5" fill="#172033">W<tspan baseline-shift="sub" font-size="8">O</tspan> [2048,1024]</text>
+          <text x="611" y="71" text-anchor="middle" font-size="9" fill="#647083">concat heads</text>
+          <circle cx="716" cy="59" r="13" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="716" y="63" text-anchor="middle" font-size="12" fill="#1a7f37">+</text>
+          <line x1="98" y1="61" x2="124" y2="40" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="98" y1="61" x2="124" y2="82" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="238" y1="45" x2="264" y2="55" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="238" y1="83" x2="264" y2="70" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="342" y1="59" x2="370" y2="59" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="522" y1="59" x2="550" y2="59" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="670" y1="59" x2="701" y2="59" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <!-- KV cache input -->
+          <rect x="372" y="118" width="150" height="30" rx="7" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="447" y="137" text-anchor="middle" font-size="9.5" fill="#172033">prefix K,V (cache) + suffix K,V</text>
+          <line x1="447" y1="116" x2="447" y2="92" stroke="#1a7f37" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+          <!-- mlp row -->
+          <rect x="12" y="176" width="86" height="34" rx="7" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="55" y="197" text-anchor="middle" font-size="10.5" fill="#172033">RMSNorm</text>
+          <rect x="126" y="156" width="118" height="32" rx="7" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="185" y="171" text-anchor="middle" font-size="10.5" fill="#172033">W<tspan baseline-shift="sub" font-size="8">gate</tspan> [1024,4096]</text>
+          <text x="185" y="184" text-anchor="middle" font-size="9" fill="#647083">&rarr; gelu</text>
+          <rect x="126" y="196" width="118" height="32" rx="7" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="185" y="216" text-anchor="middle" font-size="10.5" fill="#172033">W<tspan baseline-shift="sub" font-size="8">up</tspan> [1024,4096]</text>
+          <circle cx="286" cy="192" r="13" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="286" y="196" text-anchor="middle" font-size="11" fill="#b54708">&#8857;</text>
+          <rect x="330" y="176" width="122" height="34" rx="7" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="391" y="192" text-anchor="middle" font-size="10.5" fill="#172033">W<tspan baseline-shift="sub" font-size="8">down</tspan> [4096,1024]</text>
+          <text x="391" y="205" text-anchor="middle" font-size="9" fill="#647083">h [51,4096] in</text>
+          <circle cx="496" cy="193" r="13" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="496" y="197" text-anchor="middle" font-size="12" fill="#1a7f37">+</text>
+          <text x="536" y="197" font-size="11" font-weight="bold" fill="#172033">&rarr; x&prime; [51,1024] to layer &#8467;+1</text>
+          <line x1="98" y1="193" x2="124" y2="172" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="98" y1="193" x2="124" y2="212" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="244" y1="172" x2="274" y2="186" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="244" y1="212" x2="274" y2="199" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="299" y1="192" x2="328" y2="192" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <line x1="452" y1="193" x2="481" y2="193" stroke="#647083" stroke-width="1.3" marker-end="url(#arr2)"/>
+          <!-- residual paths -->
+          <path d="M 55 44 L 55 8 L 716 8 L 716 44" fill="none" stroke="#1a7f37" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+          <path d="M 55 176 L 55 142 L 496 142 L 496 178" fill="none" stroke="#1a7f37" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+          <text x="80" y="139" font-size="9" fill="#1a7f37">residual</text>
+        </svg>
+        <p class="cap">Fig. 2 &mdash; One of 18 identical Action-Expert layers. Blue boxes are weight matrix multiplies (per-layer weights: W<sub>Q</sub> 4.19&nbsp;MB, W<sub>KV</sub> 1.05&nbsp;MB, W<sub>O</sub> 4.19&nbsp;MB, GeGLU 25.2&nbsp;MB = 34.6&nbsp;MB total &times; 18 layers = 623&nbsp;MB). Green is elementwise/residual work; orange is attention over the cached prefix.</p>
+      </div>
+
+      <h3>The math of each block</h3>
+      <p><b>RMSNorm</b> (variance computed in fp32, learned scale s):</p>
+      <div class="eq">RMSNorm(x) = x &middot; rsqrt( mean(x&sup2;) + 10<sup>&minus;6</sup> ) &middot; (1 + s)</div>
+      <p><b>RoPE</b> rotates each (half-split) pair of query/key features by a position-dependent angle; with position p and per-pair timescale &tau;<sub>i</sub> = 10000<sup>2i/d<sub>h</sub></sup>:</p>
+      <div class="eq">[q&prime;<sub>i</sub>, q&prime;<sub>i+d/2</sub>] = [ q<sub>i</sub>&middot;cos(p/&tau;<sub>i</sub>) &minus; q<sub>i+d/2</sub>&middot;sin(p/&tau;<sub>i</sub>),&nbsp; q<sub>i+d/2</sub>&middot;cos(p/&tau;<sub>i</sub>) + q<sub>i</sub>&middot;sin(p/&tau;<sub>i</sub>) ]</div>
+      <p>Suffix positions continue after the prefix (p = 816 &hellip; 866), so relative offsets against cached prefix keys are meaningful. Q is additionally scaled by d<sub>h</sub><sup>&minus;1/2</sup> = 1/16.</p>
+      <p><b>MQA attention</b> &mdash; 8 query heads share ONE key/value head. Per head h, with the 867-long key sequence T = [prefix 816 ; suffix 51]:</p>
+      <div class="eq">scores<sub>h</sub> = q<sub>h</sub> K<sup>T</sup> &isin; [51, 867] (fp32)&nbsp;&nbsp;&rarr;&nbsp;&nbsp;probs = softmax(scores + mask)&nbsp;&nbsp;&rarr;&nbsp;&nbsp;ctx<sub>h</sub> = probs &middot; V &isin; [51, 256]</div>
+      <p>MQA is what keeps the KV cache small (15&nbsp;MB instead of 8&times; that) &mdash; and, in Part II, what makes the cache cheap to keep resident inside memory banks.</p>
+      <p><b>GeGLU MLP</b> &mdash; the gate path is nonlinear, the up path linear, their product goes down:</p>
+      <div class="eq">MLP(x) = ( gelu(x W<sub>gate</sub>) &#8857; x W<sub>up</sub> ) W<sub>down</sub></div>
+      <p>After layer 18: a final RMSNorm, then <code class="k">action_out_proj</code> maps the last 50 tokens [50,1024]&rarr;[50,32] = the velocity v<sub>&theta;</sub> for the Euler update.</p>
+    </section>
+
+    <section class="card" id="dims">
+      <h2><span class="num">5</span>Every module: shapes, FLOPs, bytes, arithmetic intensity</h2>
+      <p class="lead">Arithmetic intensity I = FLOPs &divide; bytes moved decides which hardware resource binds. Ridge point of Jetson AGX Orin (42&nbsp;TFLOP/s bf16, 204.8&nbsp;GB/s): <b>I&nbsp;&asymp;&nbsp;205</b>. Modules above it are compute-bound; below it, memory-bound.</p>
+
+      <h3>Cycle-level view (once per control cycle vs. once per step)</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Module</th><th>Runs</th><th>Input &rarr; output</th><th class="num">Params</th><th class="num">FLOPs</th><th class="num">Bytes read</th><th class="num">I (FLOPs/B)</th><th>Regime</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">SigLIP So400m/14 &times;3</td><td>1&times;/cycle</td><td>3&times;[224,224,3] &rarr; 3&times;[256, 1152] &rarr; project to [768, 2048]</td><td class="num">~428 M</td><td class="num">&asymp;3&times;0.22 T<sup>&dagger;</sup></td><td class="num">~0.9 GB</td><td class="num">~700<sup>&dagger;</sup></td><td>compute-bound</td></tr>
+          <tr><td class="rowlabel">VLM prefill (gemma_2b, per layer)</td><td>18&times;/cycle</td><td>[816, 2048] &rarr; [816, 2048]</td><td class="num">110.1 M</td><td class="num">185.1 G</td><td class="num">220 MB</td><td class="num">&asymp;840</td><td>compute-bound</td></tr>
+          <tr><td class="rowlabel">prefix KV cache write</td><td>1&times;/cycle</td><td>&rarr; [18, 816, 1, 256] &times; {K, V}</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">15.0 MB written</td><td class="num">&mdash;</td><td>&mdash;</td></tr>
+          <tr><td class="rowlabel">Action Expert (whole step)</td><td>N&times;/cycle</td><td>[51, 1024] through 18 layers</td><td class="num">311.5 M</td><td class="num">38.70 G</td><td class="num">645 MB</td><td class="num"><b>60.0</b></td><td><b>memory-bound</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap"><sup>&dagger;</sup>Vision estimated as 2&middot;params&middot;tokens; the characterization paper measures it compute-bound at &gt;90% SM utilization, 12% of end-to-end latency. VLM-layer figures (185.1&nbsp;GFLOPs, 220&nbsp;MB, I&asymp;840) are the paper's, and independently reproduce our verified per-layer parameter count (110.1&nbsp;M) at P&nbsp;=&nbsp;841; we use P&nbsp;=&nbsp;816 (&le;3% difference). The paper quotes AE intensity 64.5 using the nominal 600&nbsp;MB (&ldquo;300&nbsp;M params&rdquo;) footprint; exact bytes (622.9&nbsp;MB weights + 16&nbsp;MB KV + 6.6&nbsp;MB embed) give 60.0 for the same 38.70&nbsp;GFLOPs.</p>
+
+      <h3>Inside one Action-Expert denoising step (per layer &times;18, plus per-step ops)</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Op</th><th>GEMM [M&times;K]&middot;[K&times;N]</th><th class="num">FLOPs</th><th class="num">Weight/KV bytes</th><th class="num">I</th><th>Where it runs in Parts II&ndash;III</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">q_proj</td><td>[51&times;1024]&middot;[1024&times;2048]</td><td class="num">214.0 M</td><td class="num">4.19 MB</td><td class="num">51</td><td>PIM</td></tr>
+          <tr><td class="rowlabel">kv_proj</td><td>[51&times;1024]&middot;[1024&times;512]</td><td class="num">53.5 M</td><td class="num">1.05 MB</td><td class="num">51</td><td>PIM</td></tr>
+          <tr><td class="rowlabel">RoPE(q,k) + scale</td><td>elementwise, 51&times;2304</td><td class="num">0.7 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host</td></tr>
+          <tr><td class="rowlabel">attn scores</td><td>8&times; [51&times;256]&middot;[256&times;867]</td><td class="num">181.2 M</td><td class="num">0.44 MB (K)</td><td class="num">408</td><td>PIM (KV resident)</td></tr>
+          <tr><td class="rowlabel">softmax</td><td>elementwise, 8&times;51&times;867 fp32</td><td class="num">1.8 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host (Part II) &rarr; PIM (Part III)</td></tr>
+          <tr><td class="rowlabel">attn context</td><td>8&times; [51&times;867]&middot;[867&times;256]</td><td class="num">181.2 M</td><td class="num">0.44 MB (V)</td><td class="num">408</td><td>PIM (KV resident)</td></tr>
+          <tr><td class="rowlabel">o_proj</td><td>[51&times;2048]&middot;[2048&times;1024]</td><td class="num">214.0 M</td><td class="num">4.19 MB</td><td class="num">51</td><td>PIM</td></tr>
+          <tr><td class="rowlabel">mlp_gate (+gelu)</td><td>[51&times;1024]&middot;[1024&times;4096]</td><td class="num">427.8 M</td><td class="num">8.39 MB</td><td class="num">51</td><td>PIM</td></tr>
+          <tr><td class="rowlabel">mlp_up</td><td>[51&times;1024]&middot;[1024&times;4096]</td><td class="num">427.8 M</td><td class="num">8.39 MB</td><td class="num">51</td><td>PIM</td></tr>
+          <tr><td class="rowlabel">gate &#8857; up</td><td>elementwise, 51&times;4096</td><td class="num">0.2 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host (II) &rarr; in-bank (III)</td></tr>
+          <tr><td class="rowlabel">mlp_down</td><td>[51&times;4096]&middot;[4096&times;1024]</td><td class="num">427.8 M</td><td class="num">8.39 MB</td><td class="num">51</td><td>PIM</td></tr>
+          <tr><td class="rowlabel">2&times; RMSNorm + 2&times; residual</td><td>elementwise, 51&times;1024 each</td><td class="num">0.5 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host</td></tr>
+          <tr><td class="rowlabel">per-step: suffix embed MLPs</td><td>[50&times;2048]&middot;[2048&times;1024] et al.</td><td class="num">0.37 G</td><td class="num">6.6 MB</td><td class="num">56</td><td>host</td></tr>
+          <tr><td class="rowlabel">per-step: final norm + head + Euler</td><td>[50&times;1024]&middot;[1024&times;32] + axpy</td><td class="num">3.5 M</td><td class="num">0.07 MB</td><td class="num">~50</td><td>host</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">Per denoising step: 18 &times; (per-layer rows) + per-step rows = <b>38.70&nbsp;GFLOPs</b>, <b>629.4&nbsp;MB</b> weights, <b>16.0&nbsp;MB</b> KV reads. Extracted from the machine-readable trace <code class="k">04_data/op_trace.csv</code> (351 ops/step) and cross-validated against a jax.eval_shape trace of the real openpi module.</p>
+
+      <div class="callout"><b>Why every projection has I &asymp; 51.</b> A GEMM [M&times;K]&middot;[K&times;N] does 2&middot;M&middot;K&middot;N FLOPs over 2&middot;K&middot;N weight bytes (bf16): I = M. All Action-Expert projections have M = S = 51 rows &mdash; the suffix length <i>is</i> the intensity. One token (S=1, LLM decode) gives I&asymp;1; a big prefill (M&asymp;800) gives I&asymp;800. S = 51 lands in the awkward middle: 4&times; too low for the Orin's ridge point, far too high to behave like the GEMV workloads processing-in-memory was designed for. That tension is the entire story of Parts II and III.</div>
+    </section>
+
+    <section class="card" id="twophase">
+      <h2><span class="num">6</span>The two-phase signature (why this matters for hardware)</h2>
+      <p class="lead">Measured on Jetson AGX Orin by the characterization study (arXiv:2604.24447), reproduced analytically by our trace:</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">12% / 28% / 59%</div><div class="l">latency share: vision / VLM / Action Expert (&pi;<sub>0</sub>, Orin, 920 ms cycle)</div></div>
+        <div class="kpi"><div class="v">&gt;90% vs 20&ndash;40%</div><div class="l">SM utilization: VLM phase vs AE phase</div></div>
+        <div class="kpi"><div class="v">I &asymp; 840 vs 60</div><div class="l">arithmetic intensity: VLM layer vs AE step</div></div>
+        <div class="kpi"><div class="v">2.9&ndash;3.2 ms</div><div class="l">AE step floor from bandwidth alone: ~620&ndash;645 MB &divide; 204.8 GB/s</div></div>
+      </div>
+      <p>The Action Expert dominates latency while starving the GPU: each of its N serial steps must stream 623&nbsp;MB of weights through a 204.8&nbsp;GB/s interface to do only 38.7&nbsp;GFLOPs of work. No amount of extra compute helps &mdash; only more effective memory bandwidth, or removing the weight traffic altogether by computing where the weights live. That is the premise <a href="../01_stock_aim_offload/report.html">Part II</a> puts to the test with LPDDR5 processing-in-memory.</p>
+    </section>
+
+    <section class="card" id="series">
+      <h2>Series &amp; sources</h2>
+      <ul class="notes">
+        <li><b>Part I (this page)</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module.</li>
+        <li><a href="../01_stock_aim_offload/report.html"><b>Part II</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM: ISA, mapping, and why it loses 5.8&times;</a></li>
+        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 36.7 ms to 4.81 ms per step</a></li>
+      </ul>
+      <p class="cap">Sources: openpi @ <code class="k">15a9616</code> (model code, all dims verified with file:line references and an abstract-shape trace); &ldquo;Characterizing Vision-Language-Action Models across XPUs&rdquo; (arXiv:2604.24447) for measured Orin latency splits and utilization; our operator trace (38.70&nbsp;GFLOPs/step) matches the paper&rsquo;s implied AE numerator (64.5&nbsp;FLOPs/B &times; 600&nbsp;MB = 38.7&nbsp;G) exactly.</p>
+      <footer class="footer">
+        <p>author : yang-gon kim &nbsp;&middot;&nbsp; email : yanggon@g.ucla.edu</p>
+        <p><a href="../01_stock_aim_offload/report.html">Part II &rarr;</a> &nbsp;&middot;&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+      </footer>
+    </section>
+  </main>
+</div>
+</body>
+</html>
