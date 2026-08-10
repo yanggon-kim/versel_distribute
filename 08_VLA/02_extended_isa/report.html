@@ -178,8 +178,33 @@
           <text x="360" y="242" font-size="9.5" fill="#1a7f37">full 16-bank parallel rate, activations reused from the persistent GB tile</text>
           <text x="360" y="265" font-size="10.5" font-weight="bold" fill="#1a7f37">5,388 cycles (same math, 4.8&times;)</text>
         </svg>
-        <p class="cap">Fig. 1 &mdash; The P1 datapath change. Cost: ~30 KB more GB SRAM per channel, a 32 B accumulator file per bank, and 16-way time-multiplexed MAC scheduling behind each fetch (occupancy modeled at MAC16 class; a conservative 2&times; alternative changes the headline by +16%).</p>
+        <p class="cap">Fig. 1 &mdash; The P1 datapath change. Cost: a 30 KB-class GB SRAM upgrade per channel, a 32 B accumulator file per bank, and time-multiplexed MAC scheduling behind each fetch &mdash; costed precisely below.</p>
       </div>
+
+      <h3>Hardware overhead: what this actually costs in silicon</h3>
+      <p>Costed against the <i>real</i> AiM PU (SK hynix architecture doc / ISSCC&rsquo;22: 16 bf16 multipliers + fused adder tree + <b>one</b> accumulator register + AF block per bank; 2 KB GB SRAM per channel; fixed-function, no programmable control):</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Addition</th><th>Hardware delta</th><th>Cost class</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">accumulator file</td><td>15 extra 16-bit registers + 4-bit slot mux behind the existing adder tree (&asymp;240 FFs/PU)</td><td><b>trivial</b> &mdash; a few % of PU logic, &laquo;0.1% of die; no timing-path change</td></tr>
+          <tr><td class="rowlabel">RD_MACB</td><td>DMA-side slot sequencer; reuses the RDMAC16 read path</td><td><b>trivial</b> &mdash; zero PU change</td></tr>
+          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 4.76 ms/step vs 4.81 with 128 KB</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version is unnecessary</td></tr>
+          <tr><td class="rowlabel">MAC_ABK_MV datapath</td><td>32 B operand latch + 4-bit vector sequencer + <b>multiplier throughput (the one real cost)</b></td><td>a price/performance dial, below</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>PU option</th><th>Extra multiplier area</th><th class="num">MV occupancy</th><th class="num">AE step</th><th class="num">vs stock</th><th class="num">vs XPU-2&times;</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">existing 16-lane array, 300&ndash;500 MHz PU (Aquabolt-class clock)</td><td>zero</td><td class="num">~16 cycles</td><td class="num">7.45 ms</td><td class="num">4.9&times;</td><td class="num">0.84&times;</td></tr>
+          <tr><td class="rowlabel">existing array @ 1 GHz (SK&rsquo;s MAC clock)</td><td>zero</td><td class="num">~8 cycles</td><td class="num">5.69 ms</td><td class="num">6.5&times;</td><td class="num">1.11&times;</td></tr>
+          <tr><td class="rowlabel"><b>2&times; multiplier arrays @ 1 GHz (headline design)</b></td><td>~2&times; PU multiplier area</td><td class="num">4 cycles</td><td class="num"><b>4.81 ms</b></td><td class="num"><b>7.6&times;</b></td><td class="num"><b>1.31&times;</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout win"><b>The gains degrade gracefully &mdash; and the win survives with zero added multipliers.</b> Even the cheapest option keeps 4.9&times; over stock, because most of stock&rsquo;s loss was the WR_BIAS/RD_MAC/TMOD/row-thrash storm, which the <i>trivial</i> parts (accumulator file + RD_MACB) eliminate. Feasibility precedents: Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>, and reports an <b>LPDDR5-PIM</b> design (2.3&times; perf, &minus;86% energy) &mdash; bank-adjacent fp16 PIM in a mobile DRAM process is an established design point. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; design target is 2&times; arrays @&ge;500 MHz to hold the 4-cycle point.</div>
 
       <h3>Same computation, before and after</h3>
       <pre class="cmd"><span class="c"># STOCK - 16 output columns x 4 token-groups (Part II pattern, 192 ISRs):</span>
