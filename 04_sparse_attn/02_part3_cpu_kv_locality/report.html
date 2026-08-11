@@ -90,7 +90,7 @@
       <div class="tags">
         <span class="tag">DeepSeek-V4-Flash (284B/13B MoE)</span>
         <span class="tag live">measured on CPU via ds4 (IQ2 quant)</span>
-        <span class="tag">RULER niah_single_2, n=1 / length</span>
+        <span class="tag">RULER (n=1/len) + LongBench summarization (36 samples)</span>
         <span class="tag">context 4K · 8K · 16K · 32K · 64K</span>
       </div>
     </header>
@@ -170,6 +170,26 @@
         <figcaption class="cap">Adjacent overlap (left axis) declines gently while locality lift (right axis) climbs 1.7&times;&rarr;21.4&times; from 4K to 64K &mdash; note overlap plateaus (0.672&rarr;0.668) while lift doubles, because the candidate pool doubles. These CPU/IQ2 numbers match the GPU/vLLM values in Part&nbsp;I to within a few thousandths (e.g. 16K: 0.718 here vs 0.746 there).</figcaption>
       </figure>
       <div class="callout win"><b>Cross-stack agreement.</b> A completely separate CPU reference engine, at a different quantization, reproduces Part&nbsp;I's context-scaling curve. Temporal locality of KV selection is a property of the model, not the runtime.</div>
+
+      <h3>Real-benchmark validation — LongBench, 36 samples with error bars</h3>
+      <p>The sweep above is one synthetic needle sample per length. To test whether the law holds on <b>real tasks</b>, we re-collected the same traces on <b>LongBench summarization</b>: 12 samples each of <code class="k">multi_news</code> (~2.8K tokens), <code class="k">gov_report</code> (~10.5K), and <code class="k">qmsum</code> (~12.3K, query-focused) — official prompts, official <code class="k">max_gen=512</code>, seed-42 selection, 36/36 runs completed with trace validation passing (15,073 decode steps; 316K KV selection records).</p>
+      <table>
+        <thead><tr><th>task (n=12 each)</th><th class="num">prompt tok</th><th class="num">decode steps</th><th class="num">adjacent overlap</th><th class="num">locality lift</th><th class="num">recency baseline</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">multi_news</td><td class="num">2,778</td><td class="num">491</td><td class="num">0.914 &plusmn; 0.057</td><td class="num">1.35&times;</td><td class="num">0.729</td></tr>
+          <tr><td class="rowlabel">gov_report</td><td class="num">10,493</td><td class="num">512</td><td class="num">0.755 &plusmn; 0.048</td><td class="num">3.87&times;</td><td class="num">0.302</td></tr>
+          <tr><td class="rowlabel">qmsum</td><td class="num">12,290</td><td class="num">253</td><td class="num">0.732 &plusmn; 0.031</td><td class="num">4.40&times;</td><td class="num">0.232</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="assets/lb_01_kv_vs_context.png" alt="LongBench per-sample overlap and lift overlaid on the RULER curve">
+        <figcaption class="cap">All 36 real-task samples (colored) fall <b>on the RULER curve</b> (grey) for both adjacent overlap and lift. The synthetic and real-task measurements obey the same context-scaling law &mdash; and the recency baseline collapses (0.73&rarr;0.23) just as in the needle runs, confirming semantic rather than recency-driven reuse.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/lb_03_retention_by_task.png" alt="LongBench retention curves per task with std bands">
+        <figcaption class="cap">Retention vs lag on LongBench (mean &plusmn; std across 12 samples per task): the same gentle decay as the sweep, now with cross-sample bands.</figcaption>
+      </figure>
+      <div class="callout win"><b>Why this matters.</b> The locality result is no longer an n=1 synthetic observation: on a public real-task benchmark it reproduces with per-task standard deviations of only &plusmn;0.03&ndash;0.06.</div>
     </section>
 
     <section class="card" id="retention">
@@ -291,6 +311,7 @@
       <h2><span class="num">§9</span>Takeaways</h2>
       <ul class="notes">
         <li>An <b>independent CPU reference engine (ds4, IQ2)</b> reproduces the GPU/vLLM temporal-locality result: adjacent overlap 0.87&rarr;0.67 over 4K&rarr;64K, locality lift 1.7&times;&rarr;21.4&times;.</li>
+        <li><b>Validated on a real benchmark:</b> 36 LongBench summarization samples fall on the same context-scaling curve (overlap 0.91/0.76/0.73, lift 1.4&times;&rarr;4.4&times; over 2.8K&rarr;12.3K) with per-task std of only &plusmn;0.03&ndash;0.06 — see §4.</li>
         <li>Locality <b>lift rises with context</b> — the selection gets more non-random exactly as the KV cache gets expensive.</li>
         <li>Reuse is <b>semantic, not merely recent</b> — ~6&times; beyond a recency baseline even at 64K.</li>
         <li><b>Hot-set coverage shrinks with context:</b> a hot set of ~80% of candidates covers 99% of the top-k selection at 4K, falling to <b>~20% at 64K</b> (access-weighted). The absolute set grows (~819&rarr;~3,344 positions) but the fraction of the pool drops steadily — see §6.</li>

@@ -91,7 +91,7 @@
       <div class="tags">
         <span class="tag">DeepSeek-V4-Flash (256 experts / 6 active)</span>
         <span class="tag live">measured on CPU via ds4 (IQ2 quant)</span>
-        <span class="tag">RULER niah_single_2, n=1 / length</span>
+        <span class="tag">RULER (n=1/len) + LongBench summarization (36 samples)</span>
         <span class="tag">context 4K · 8K · 16K · 32K · 64K</span>
       </div>
     </header>
@@ -170,6 +170,13 @@
         <figcaption class="cap">MoE adjacent overlap and lift are flat across context length (note the lift axis is 0-based — the 32K dip is 16.0&rarr;14.9&times; and 64K recovers to 15.7&times;, not a trend). Expert-selection behavior is near-interchangeable across 4K&ndash;64K — a clean consequence of the fixed 256-expert pool.</figcaption>
       </figure>
       <div class="callout"><b>Why it matters.</b> Sweeping context length is the right axis for studying <i>KV</i> locality (it changes the sparsity regime) but not for <i>MoE</i> locality (it does not). For expert caching, the informative axis is decode <i>length</i> — how long a hot-expert set stays warm — not prompt length.</div>
+
+      <h3>&hellip;and task-independent: LongBench validation (36 samples)</h3>
+      <p>Re-collected on <b>LongBench summarization</b> (12 samples each of multi_news / gov_report / qmsum, official prompts, <code class="k">max_gen=512</code>; 648K MoE selection records): learned-layer overlap is <b>0.372 / 0.353 / 0.333 (&plusmn;0.007&ndash;0.014)</b> — in or near the RULER band on every real task, ~15&ndash;16&times; random, with hash layers still at the ~0.023 floor.</p>
+      <figure>
+        <img src="assets/lb_02_moe_by_task.png" alt="MoE learned adjacent overlap per LongBench task versus the RULER band">
+        <figcaption class="cap">Per-sample MoE routing locality by task (mean &plusmn; std, n=12 each) vs the RULER sweep band (grey). Routing locality is a stable model property across <i>both</i> context length and task type; the slight ordering (multi_news &gt; gov_report &gt; qmsum) hints at mild content dependence — the query-focused task routes least repetitively.</figcaption>
+      </figure>
     </section>
 
     <section class="card" id="hash">
@@ -276,7 +283,7 @@
       <ul class="notes">
         <li><b>Per-layer structure:</b> every learned layer keeps a preferred committee (7–32 experts do half its routing, one expert often used in the majority of tokens); the ~16× lift ≈ <b>7.4× static preference × 2.3× temporal correlation</b>. Early layers = fixed specialists, deep layers = context trackers; hash layers are near-uniform.</li>
         <li>Learned MoE routing is <b>strongly temporally local</b>: ~0.374 adjacent overlap (~2.2 of 6 experts persist), <b>16&times;</b> the 6/256 random baseline.</li>
-        <li>It is <b>context-independent</b> (0.35–0.38 across 4K/8K/16K/32K/64K, no systematic trend) — the fixed 256-expert pool means prompt length does not change the regime. This contrasts sharply with KV-selection locality, which strengthens with context (lift 1.7&times;&rarr;10.5&times;).</li>
+        <li>It is <b>context-independent</b> (0.35–0.38 across 4K/8K/16K/32K/64K, no systematic trend) <b>and task-independent</b> (0.33–0.37 on 36 LongBench summarization samples, §5) — the fixed 256-expert pool means prompt length does not change the regime. This contrasts sharply with KV-selection locality, which strengthens with context (lift 1.7&times;&rarr;10.5&times;).</li>
         <li>The <b>3 hash-routed layers are not local</b> (≈ random) — a property of deterministic token-id routing, reported separately.</li>
         <li>Retention has a <b>durable core</b> (still 6&times; random at lag 64) but the <b>working set is broad</b> (~47% of experts over a full decode).</li>
         <li>Collected from the <b>same decode pass</b> as the KV trace in <a href="../02_part3_cpu_kv_locality/report.html"><b>Part&nbsp;III</b></a>, so attention- and FFN-sparsity are aligned per (layer, step).</li>
