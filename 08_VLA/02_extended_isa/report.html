@@ -189,7 +189,7 @@
         <tbody>
           <tr><td class="rowlabel">accumulator file</td><td>15 extra 16-bit registers + 4-bit slot mux behind the existing adder tree (&asymp;240 FFs/PU)</td><td><b>trivial</b> &mdash; a few % of PU logic, &laquo;0.1% of die; no timing-path change</td></tr>
           <tr><td class="rowlabel">RD_MACB</td><td>DMA-side slot sequencer; reuses the RDMAC16 read path</td><td><b>trivial</b> &mdash; zero PU change</td></tr>
-          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 4.76 ms/step vs 4.81 with 128 KB</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version is unnecessary</td></tr>
+          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured nearly sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 4.91 ms/step vs 4.81 with 128 KB (+2%; corrected from an earlier 4.76 after fixing a dedup fill-validity bug in the trace generator)</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 2%</td></tr>
           <tr><td class="rowlabel">MAC_ABK_MV datapath</td><td>32 B operand latch + 4-bit vector sequencer + <b>multiplier throughput (the one real cost)</b></td><td>a price/performance dial, below</td></tr>
         </tbody>
       </table>
@@ -198,8 +198,8 @@
       <table>
         <thead><tr><th>PU option</th><th>Extra multiplier area</th><th class="num">MV occupancy</th><th class="num">AE step</th><th class="num">vs stock</th><th class="num">vs XPU-2&times;</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">existing 16-lane array, 300&ndash;500 MHz PU (Aquabolt-class clock)</td><td>zero</td><td class="num">~16 cycles</td><td class="num">7.45 ms</td><td class="num">4.9&times;</td><td class="num">0.84&times;</td></tr>
-          <tr><td class="rowlabel">existing array @ 1 GHz (SK&rsquo;s MAC clock)</td><td>zero</td><td class="num">~8 cycles</td><td class="num">5.69 ms</td><td class="num">6.5&times;</td><td class="num">1.11&times;</td></tr>
+          <tr><td class="rowlabel">existing 16-lane array, 300&ndash;500 MHz PU (Aquabolt-class clock)</td><td>zero</td><td class="num">~16 cycles</td><td class="num">7.48 ms</td><td class="num">4.9&times;</td><td class="num">0.84&times;</td></tr>
+          <tr><td class="rowlabel">existing array @ 1 GHz (SK&rsquo;s MAC clock)</td><td>zero</td><td class="num">~8 cycles</td><td class="num">5.70 ms</td><td class="num">6.4&times;</td><td class="num">1.11&times;</td></tr>
           <tr><td class="rowlabel"><b>2&times; multiplier arrays @ 1 GHz (headline design)</b></td><td>~2&times; PU multiplier area</td><td class="num">4 cycles</td><td class="num"><b>4.81 ms</b></td><td class="num"><b>7.6&times;</b></td><td class="num"><b>1.31&times;</b></td></tr>
         </tbody>
       </table>
@@ -250,7 +250,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="rest">
       <h2><span class="num">4</span>P4, P3, P7, P8 &mdash; the supporting cast</h2>
       <h3>P4 &mdash; <code class="k">LOOP n &hellip; ENDLOOP</code> controller macros</h3>
-      <p>Samsung&rsquo;s HBM-PIM stores micro-kernels in a command register file and replays them with a zero-cycle JUMP; we add the trace-level equivalent: the controller expands a buffered ISR block n times with <b>zero per-iteration host issue</b>. Command issue timing is unchanged by design (the DMA still paces one command per cycle, exactly as a controller draining its macro buffer would) &mdash; verified: a 10&times;-unrolled body and its LOOP form simulate to the identical 6,644 cycles. What changes: a layer shrinks from 56.6 k host ISRs to 8.5 k (6.9&times;), launch overhead amortizes once per layer instead of once per host segment, and a self-running denoising step (with an Euler MAD at the DMA) becomes plausible.</p>
+      <p>Samsung&rsquo;s HBM-PIM stores micro-kernels in a command register file and replays them with a zero-cycle JUMP; we add the trace-level equivalent: the controller expands a buffered ISR block n times with <b>zero per-iteration host issue</b>. Command issue timing is unchanged by design (the DMA still paces one command per cycle, exactly as a controller draining its macro buffer would) &mdash; verified: a 10&times;-unrolled body and its LOOP form simulate to the identical 6,644 cycles. What changes: a layer shrinks from 56.6 k host ISRs to ~3.7 k (15&times;), launch overhead amortizes once per layer instead of once per host segment, and a self-running denoising step (with an Euler MAD at the DMA) becomes plausible.</p>
       <h3>P3 &mdash; per-channel mode partition (CFR 3)</h3>
       <p>A 32-bit mask CFR marks each channel AiM-mode or conventional-mode, scoping Part II&rsquo;s mutual exclusion to within a partition. Its value is not layer latency &mdash; it is the <b>enabler for &sect;8</b>: streaming next-observation KV into masked channels while the others denoise, and letting the XPU use idle AiM capacity as ordinary memory.</p>
       <h3>P7 &mdash; <code class="k">WR_TILE</code> descriptors</h3>
@@ -272,7 +272,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="ablation">
       <h2><span class="num">6</span>Ablation: what each feature buys, and why</h2>
       <figure>
-        <img src="assets/phase6_ablation.png" alt="Horizontal bar chart of Action Expert step latency at 16 channels: stock AiM 36.71 ms; +P1 MAC_ABK_MV 7.88; +P1P2 in-memory softmax 7.63; +P1P2P4 LOOP macros 6.15; +all with P7 tiles and P8 chain 5.96; +P1 64-vector GB 5.58; +dedup and token-parallel x2 software scheduling 4.81. Reference lines: XPU floor 3.15, XPU 2x 6.30, XPU 4x 12.61.">
+        <img src="assets/phase6_ablation.png" alt="Horizontal bar chart of Action Expert step latency at 16 channels: stock AiM 36.71 ms; +P1 MAC_ABK_MV 7.50; +P1P2 in-memory softmax 7.25; +P1P2P4 LOOP macros 5.77; +all with P7 tiles and P8 chain 5.58; +dedup and token-parallel x2 software scheduling 4.81. Reference lines: XPU floor 3.15, XPU 2x 6.30, XPU 4x 12.61.">
         <figcaption class="cap">Cumulative ablation at Orin memory parity (16 ch, 20 &micro;s launch overhead). The extended ISA crosses below the realistic XPU baseline (6.30 ms) at the P1P2P4 tier and keeps going. What the XPU reference lines mean &mdash; theoretical floor vs. realistic 2&times;/4&times; &mdash; is defined precisely in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7&rsquo;s baseline ladder</a>.</figcaption>
       </figure>
       <div class="scroll">
@@ -280,11 +280,11 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
         <thead><tr><th>Tier</th><th class="num">8 ch</th><th class="num">16 ch</th><th class="num">32 ch</th><th>Why it gets better</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">stock AiM (best mapping)</td><td class="num">68.45</td><td class="num">36.71</td><td class="num">21.73</td><td>Part II baseline: fetch-per-token amortization</td></tr>
-          <tr><td class="rowlabel">+P1 MAC_ABK_MV</td><td class="num">9.62</td><td class="num">7.88</td><td class="num">7.03</td><td>MAC commands &divide;4, blocking reads &divide;16 per drain, weights on the parallel-bank path: the 42%+13%+16% slices collapse</td></tr>
-          <tr><td class="rowlabel">+P2 in-mem softmax</td><td class="num">9.63</td><td class="num">7.63</td><td class="num">6.64</td><td>softmax segment + SYNC gone from every layer; 2.1 MB/layer round trip eliminated</td></tr>
-          <tr><td class="rowlabel">+P4 LOOP macros</td><td class="num">8.15</td><td class="num">6.15</td><td class="num">5.16</td><td>launch overhead once per layer, not per segment; host-ISR stream 6.9&times; smaller</td></tr>
-          <tr><td class="rowlabel">+P7 WR_TILE, +P8 COPY_MACBK</td><td class="num">7.95</td><td class="num">5.96</td><td class="num">4.97</td><td>gate&#8857;up chain stays in banks; h reload (largest single load) disappears</td></tr>
-          <tr><td class="rowlabel">+P1 enlarged GB (64 vectors)</td><td class="num">7.58</td><td class="num">5.58</td><td class="num">4.59</td><td>all 51 tokens resident at once: activation fills once per op, not per 16-token tile</td></tr>
+          <tr><td class="rowlabel">+P1 MAC_ABK_MV</td><td class="num">9.24</td><td class="num">7.50</td><td class="num">6.66</td><td>MAC commands &divide;4, blocking reads &divide;16 per drain, weights on the parallel-bank path: the 42%+13%+16% slices collapse</td></tr>
+          <tr><td class="rowlabel">+P2 in-mem softmax</td><td class="num">9.25</td><td class="num">7.25</td><td class="num">6.27</td><td>softmax segment + SYNC gone from every layer; 2.1 MB/layer round trip eliminated</td></tr>
+          <tr><td class="rowlabel">+P4 LOOP macros</td><td class="num">7.77</td><td class="num">5.77</td><td class="num">4.79</td><td>launch overhead once per layer, not per segment; host-ISR stream 15&times; smaller</td></tr>
+          <tr><td class="rowlabel">+P7 WR_TILE, +P8 COPY_MACBK</td><td class="num">7.58</td><td class="num">5.58</td><td class="num">4.59</td><td>gate&#8857;up chain stays in banks; h reload (largest single load) disappears</td></tr>
+          <tr><td class="rowlabel">+P1 enlarged GB (64 vectors)</td><td class="num">7.58</td><td class="num">5.58</td><td class="num">4.59</td><td>no further gain by itself under the final fill-persistent emission &mdash; GB capacity pays off only with dedup + token-parallel (&sect;7: 4.81 with 128 KB vs 4.91 with 32 KB)</td></tr>
           <tr><td class="rowlabel"><b>+dedup + token-parallel &times;2 (SW)</b></td><td class="num">7.72</td><td class="num"><b>4.81</b></td><td class="num"><b>3.38</b></td><td>&sect;7 below</td></tr>
         </tbody>
       </table>
@@ -401,7 +401,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
 
       <h3>What makes a baseline fair</h3>
       <ul class="notes">
-        <li><b>What a fair baseline is NOT: more LPDDR.</b> The XPU shares the memory system, and its floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while the AiM curve scales sub-linearly &mdash; adding channels helps the baseline more than the design. The legitimate framings are the three-tier baseline (vs measured 543 ms stack &rArr; <b>28&times;</b>; vs realistic 2&times; &rArr; <b>1.31&times;</b>; vs theoretical floor &rArr; 0.65&times; at 16 ch, 0.93&times; at 32 ch &mdash; rung definitions in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>), energy &amp; EDP (above), and iso-platform (same channels, plain vs AiM LPDDR; marginal cost = PIM die area).</li>
+        <li><b>What a fair baseline is NOT: more LPDDR.</b> The XPU shares the memory system, and its floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while the AiM curve scales sub-linearly &mdash; adding channels helps the baseline more than the design. The legitimate framings are the three-tier baseline (vs measured 543 ms stack &rArr; <b>28&times;</b>; vs realistic 2&times; &rArr; <b>1.31&times;</b>; vs theoretical floor &rArr; 0.66&times; at 16 ch, 0.93&times; at 32 ch &mdash; rung definitions in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>), energy &amp; EDP (above), and iso-platform (same channels, plain vs AiM LPDDR; marginal cost = PIM die area).</li>
         <li><b>Iso-cost scale-down (Orin NX, 102.4 GB/s = 8 channels):</b> NX AE floor 6.30 ms, realistic 2&times; 12.61 ms. Our best 8-channel config (7.58 ms, 64-vec GB; token-parallel is counter-productive at 8 ch) is <b>1.66&times; faster than the realistic NX baseline</b> and matches AGX-class realistic latency on a ~40%-cost module &mdash; with the AE hidden behind the VLM under stale-KV overlap, which an XPU-only NX cannot do.</li>
       </ul>
 
