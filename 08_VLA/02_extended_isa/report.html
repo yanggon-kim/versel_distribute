@@ -181,6 +181,195 @@
         <p class="cap">Fig. 1 &mdash; The P1 datapath change. Cost: a 30 KB-class GB SRAM upgrade per channel, a 32 B accumulator file per bank, and time-multiplexed MAC scheduling behind each fetch &mdash; costed precisely below.</p>
       </div>
 
+      <h3 id="p1-toy">The problem in miniature: a toy machine, cycle by cycle</h3>
+      <p>Everything above compresses into one question: <b>which dimension of the GEMM does each piece of hardware parallelize, and which dimension is left to the command stream?</b> To make that visible, shrink the machine until every operand fits on screen. Toy machine: <b>2 banks</b>, each PU has <b>2 multipliers</b> (one fetch = one 2-element k-chunk); the command bus issues <b>one ISR per 4-cycle slot</b> (nCCD). Toy workload: <code class="k">Y = X&middot;W&#7488;</code> with a 4&times;4 weight matrix (output rows r1&ndash;r4, K=4) and <b>3 tokens</b> x1, x2, x3 &mdash; the miniature of the AE&rsquo;s 12,800&times;1024-class projections against S=51 tokens.</p>
+
+      <div class="fig" id="fig-toy-map">
+        <svg viewBox="0 0 900 340" role="img" aria-label="Toy machine block diagram, stock versus P1. Both sides show two banks, each holding two weight rows split into two k-chunks across two DRAM rows, a 2-multiplier PU, and the Global Buffer feeding both PUs. Stock side: the GB holds one 2-element chunk of one token and each PU has a single accumulator, so the token dimension is serialized into repeated commands. P1 side: the GB holds all three token vectors and each PU has a 3-slot accumulator file, so one weight fetch is swept across the three tokens in three beats.">
+          <defs>
+            <marker id="arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- STOCK panel -->
+          <text x="14" y="24" font-size="12" font-weight="bold" fill="#b54708">STOCK: token dim &rarr; serial commands</text>
+          <rect x="14" y="36" width="200" height="34" rx="7" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="114" y="51" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">GB: one 2-elem chunk</text>
+          <text x="114" y="63" text-anchor="middle" font-size="8" fill="#647083">holds x&#8348;[k01] OR x&#8348;[k23] &mdash; one token, one chunk</text>
+          <!-- banks -->
+          <g>
+            <rect x="14" y="92" width="190" height="86" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="109" y="106" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">bank 0</text>
+            <rect x="24" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="65" y="125" text-anchor="middle" font-size="7.5" fill="#172033">row0: r1k01</text>
+            <rect x="108" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="149" y="125" text-anchor="middle" font-size="7.5" fill="#172033">r1k23</text>
+            <rect x="24" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="65" y="147" text-anchor="middle" font-size="7.5" fill="#172033">row1: r2k01</text>
+            <rect x="108" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="149" y="147" text-anchor="middle" font-size="7.5" fill="#172033">r2k23</text>
+            <text x="109" y="170" text-anchor="middle" font-size="8" fill="#647083">PU: 2 mult + adder &rarr; <tspan font-weight="bold" fill="#b54708">1 acc</tspan></text>
+          </g>
+          <g>
+            <rect x="224" y="92" width="190" height="86" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="319" y="106" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">bank 1</text>
+            <rect x="234" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="275" y="125" text-anchor="middle" font-size="7.5" fill="#172033">row0: r3k01</text>
+            <rect x="318" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="359" y="125" text-anchor="middle" font-size="7.5" fill="#172033">r3k23</text>
+            <rect x="234" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="275" y="147" text-anchor="middle" font-size="7.5" fill="#172033">row1: r4k01</text>
+            <rect x="318" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="359" y="147" text-anchor="middle" font-size="7.5" fill="#172033">r4k23</text>
+            <text x="319" y="170" text-anchor="middle" font-size="8" fill="#647083">PU: 2 mult + adder &rarr; <tspan font-weight="bold" fill="#b54708">1 acc</tspan></text>
+          </g>
+          <line x1="114" y1="70" x2="109" y2="90" stroke="#b54708" stroke-width="1.3" marker-end="url(#arrT)"/>
+          <line x1="164" y1="70" x2="300" y2="90" stroke="#b54708" stroke-width="1.3" marker-end="url(#arrT)"/>
+          <text x="14" y="200" font-size="8.5" fill="#172033"><tspan font-weight="bold">mapping:</tspan> banks &hArr; output rows (r1&#8741;r3, then r2&#8741;r4) &middot; lanes &hArr; k &middot; GB &hArr; ONE token chunk</text>
+          <text x="14" y="216" font-size="8.5" fill="#b54708" font-weight="bold">token dim owns no hardware &rarr; &times;3 command replays, &times;3 weight re-fetch</text>
+          <text x="14" y="238" font-size="9" fill="#172033">MAC(row0,col0) = &ldquo;every bank: fetch YOUR col0 of row0&rdquo;</text>
+          <text x="14" y="252" font-size="9" fill="#647083">&rarr; bank0 latches r1k01, bank1 latches r3k01, same instant</text>
+          <text x="14" y="274" font-size="9" fill="#172033">acc after: y&#8321;[r1] = r1k01&#8728;x1k01 + r1k23&#8728;x1k23</text>
+          <text x="14" y="288" font-size="9" fill="#b54708">&hellip;must DRAIN (blocking RD_MAC) before r2 or x2 may start</text>
+          <text x="14" y="312" font-size="10.5" font-weight="bold" fill="#b54708">3 tokens &rarr; 144 cycles, weights fetched 3&times;</text>
+          <!-- divider -->
+          <line x1="440" y1="14" x2="440" y2="326" stroke="#d8dee8" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <!-- P1 panel -->
+          <text x="462" y="24" font-size="12" font-weight="bold" fill="#1a7f37">P1: token dim &rarr; beats behind one fetch</text>
+          <rect x="462" y="36" width="270" height="34" rx="7" fill="#e7f5ec" stroke="#1a7f37"/>
+          <rect x="470" y="42" width="80" height="22" fill="#fff" stroke="#1a7f37"/><text x="510" y="56" text-anchor="middle" font-size="8" fill="#172033">x1 (4 elems)</text>
+          <rect x="556" y="42" width="80" height="22" fill="#fff" stroke="#1a7f37"/><text x="596" y="56" text-anchor="middle" font-size="8" fill="#172033">x2 (4 elems)</text>
+          <rect x="642" y="42" width="80" height="22" fill="#fff" stroke="#1a7f37"/><text x="682" y="56" text-anchor="middle" font-size="8" fill="#172033">x3 (4 elems)</text>
+          <text x="748" y="56" font-size="8" fill="#647083">GB tile,</text>
+          <text x="748" y="66" font-size="8" fill="#647083">filled once</text>
+          <g>
+            <rect x="462" y="92" width="190" height="86" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="557" y="106" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">bank 0 (same layout)</text>
+            <rect x="472" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="513" y="125" text-anchor="middle" font-size="7.5" fill="#172033">row0: r1k01</text>
+            <rect x="556" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="597" y="125" text-anchor="middle" font-size="7.5" fill="#172033">r1k23</text>
+            <rect x="472" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="513" y="147" text-anchor="middle" font-size="7.5" fill="#172033">row1: r2k01</text>
+            <rect x="556" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="597" y="147" text-anchor="middle" font-size="7.5" fill="#172033">r2k23</text>
+            <text x="557" y="170" text-anchor="middle" font-size="8" fill="#1a7f37">PU: same 2 mult &rarr; <tspan font-weight="bold">acc file [s1 s2 s3]</tspan></text>
+          </g>
+          <g>
+            <rect x="672" y="92" width="190" height="86" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="767" y="106" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">bank 1 (same layout)</text>
+            <rect x="682" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="723" y="125" text-anchor="middle" font-size="7.5" fill="#172033">row0: r3k01</text>
+            <rect x="766" y="112" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="807" y="125" text-anchor="middle" font-size="7.5" fill="#172033">r3k23</text>
+            <rect x="682" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="723" y="147" text-anchor="middle" font-size="7.5" fill="#172033">row1: r4k01</text>
+            <rect x="766" y="134" width="82" height="20" fill="#f1f4f9" stroke="#d8dee8"/><text x="807" y="147" text-anchor="middle" font-size="7.5" fill="#172033">r4k23</text>
+            <text x="767" y="170" text-anchor="middle" font-size="8" fill="#1a7f37">PU: same 2 mult &rarr; <tspan font-weight="bold">acc file [s1 s2 s3]</tspan></text>
+          </g>
+          <line x1="557" y1="70" x2="557" y2="90" stroke="#1a7f37" stroke-width="1.3" marker-end="url(#arrT)"/>
+          <line x1="640" y1="70" x2="750" y2="90" stroke="#1a7f37" stroke-width="1.3" marker-end="url(#arrT)"/>
+          <text x="462" y="200" font-size="8.5" fill="#172033"><tspan font-weight="bold">mapping:</tspan> banks &hArr; output rows &middot; lanes &hArr; k &middot; GB &hArr; ALL tokens &middot; acc slot t &hArr; token t</text>
+          <text x="462" y="216" font-size="8.5" fill="#1a7f37" font-weight="bold">token dim &rarr; 3 time-multiplexed beats per fetch; results wait in the file</text>
+          <text x="462" y="238" font-size="9" fill="#172033">MAC_ABK_MV(row0,col0): 1 fetch, then beat 1 &times;x1 &rarr; s1,</text>
+          <text x="462" y="252" font-size="9" fill="#172033">beat 2 &times;x2 &rarr; s2, beat 3 &times;x3 &rarr; s3 (same latched weights)</text>
+          <text x="462" y="274" font-size="9" fill="#172033">RD_MACB bursts s1,s2,s3 &mdash; one drain per row-group,</text>
+          <text x="462" y="288" font-size="9" fill="#647083">not one per (row-group &times; token)</text>
+          <text x="462" y="312" font-size="10.5" font-weight="bold" fill="#1a7f37">3 tokens &rarr; 44 cycles, weights fetched 1&times;</text>
+        </svg>
+        <p class="cap">Fig. 1b &mdash; The toy machine with full operand placement. Both sides use the identical weight layout (one (row, col) address means the same thing in every bank &mdash; that is what lets one broadcast command drive all banks). The only differences are storage: how many tokens the GB may hold, and how many results the PU may keep.</p>
+      </div>
+
+      <p><b>Stock, cycle by cycle.</b> Bank 0 has <i>one</i> accumulator, so it must finish r1 for token 1 completely, drain, and only then touch anything else. Idealized trace (TMOD mode-switch and row-activation penalties omitted &mdash; they only make stock worse):</p>
+      <pre class="cmd"><span class="c">cyc | bus              | GB      | bank0 latch/acc         | bank1 latch/acc</span>
+ 1  | WR_BIAS          | -       | - / acc=0               | - / acc=0
+ 5  | WR_GB x1k01      | x1k01   |
+ 9  | MAC row0,col0    | x1k01   | r1k01 / +r1k01&#8728;x1k01    | r3k01 / +r3k01&#8728;x1k01
+13  | WR_GB x1k23      | x1k23   |   <span class="c">&larr; x1k01 OVERWRITTEN (1-vector GB)</span>
+17  | MAC row0,col1    | x1k23   | r1k23 / y1[r1] DONE     | r3k23 / y1[r3] DONE
+21  | RD_MAC  <span class="c">[BLOCKING &mdash; whole DRAM system stalls]</span>
+25  | WR_BIAS          |         |   <span class="c">+ row switch row0&rarr;row1 (PREA+ACT)</span>
+29  | WR_GB x1k01      | x1k01   |   <span class="c">&larr; the SAME x1k01 enters the GB AGAIN</span>
+33  | MAC row1,col0    | x1k01   | r2k01 / ...             | r4k01 / ...
+37-45 | WR_GB x1k23, MAC row1,col1, RD_MAC   &rarr; y1[r2], y1[r4]  <span class="c">token 1 done @ ~cyc 48</span>
+
+<span class="c">cyc  49-96 : IDENTICAL script for x2 - banks re-fetch r1k01, r1k23, r3k01... AGAIN</span>
+<span class="c">cyc 97-144 : IDENTICAL script for x3 - third fetch of the same 16 weights</span>
+<span class="c">TOTAL: 144 cyc | 12 MAC cmds | 48 weight-elem fetches for 16 unique | 6 blocking drains | 6 row switches</span></pre>
+      <p>The chokepoint is visible at cycle 20: <code class="k">y1[r1]</code> is finished but has nowhere to live &mdash; one register per bank &mdash; so it must drain (blocking the machine) before r2 <i>or</i> x2 can start. Everything serial in this trace is downstream of that single register and the single GB vector: the token dimension is spent as <i>command replays</i>, and 2/3 of all fetch traffic is re-reading bytes the banks held 48 cycles earlier.</p>
+
+      <p><b>P1, cycle by cycle</b> &mdash; same silicon, same weight layout; only the GB (3 vectors) and the accumulator (3-slot file) grew:</p>
+      <pre class="cmd"><span class="c">cyc | bus                | GB tile    | bank0 latch/acc-file          | bank1</span>
+ 1  | WR_GB x1           | x1         |                               |        <span class="c">&#9484; tile fill</span>
+ 5  | WR_GB x2           | x1,x2      |                               |        <span class="c">&#9474; happens</span>
+ 9  | WR_GB x3           | x1,x2,x3   |                               |        <span class="c">&#9492; ONCE</span>
+13  | WR_BIAS            |            | - / [0,0,0]                   | [0,0,0]
+17  | MAC_ABK_MV r0,c0   |            | r1k01 latched ONCE            | r3k01 ONCE
+      <span class="c">&#8627; beat1 &times;x1k01&rarr;s1 (cyc19), beat2 &times;x2k01&rarr;s2 (cyc20), beat3 &times;x3k01&rarr;s3 (cyc21)</span>
+21  | MAC_ABK_MV r0,c1   |            |   <span class="c">&larr; bus issues next cmd WHILE beat 3 finishes: beats hide under nCCD</span>
+      <span class="c">&#8627; r1k23 fetched once, 3 beats &rarr; [y1r1, y2r1, y3r1] ALL DONE</span>
+26  | RD_MACB            |            | s1,s2,s3 burst out            | y*[r3] out
+29  | WR_BIAS            |            |   <span class="c">+ row switch row0&rarr;row1 &mdash; ONCE, not once per token</span>
+33  | MAC_ABK_MV r1,c0   |            | r2k01 &times;3 beats               | r4k01
+37  | MAC_ABK_MV r1,c1   |            | [y1r2,y2r2,y3r2] done         | [y*r4] done
+41  | RD_MACB            |            | all 12 outputs delivered @ ~cyc 44
+<span class="c">TOTAL: 44 cyc | 4 MAC cmds | 16 weight-elem fetches, each unique weight EXACTLY once | 2 burst drains | 1 row switch</span></pre>
+
+      <div class="fig" id="fig-toy-time">
+        <svg viewBox="0 0 900 190" role="img" aria-label="Timeline comparison. Stock: 144 cycles, three identical 48-cycle blocks, one per token, each split into GB fills and bias, MACs, blocking drains, and a row switch; the second and third blocks are marked as re-fetching the same weights. P1: 44 cycles total, a one-time 12-cycle tile fill followed by two row-group blocks of MACs and burst drains, finishing 3.3 times sooner.">
+          <text x="14" y="20" font-size="11" font-weight="bold" fill="#172033">The same 12 dot-products on a clock</text>
+          <!-- axis -->
+          <line x1="60" y1="160" x2="880" y2="160" stroke="#647083" stroke-width="1"/>
+          <text x="60" y="176" font-size="8" fill="#647083">0</text>
+          <text x="333" y="176" font-size="8" fill="#647083">48</text>
+          <text x="606" y="176" font-size="8" fill="#647083">96</text>
+          <text x="852" y="176" font-size="8" fill="#647083">144 cyc</text>
+          <!-- stock bar: 48cyc per token = 273px; classes: fill/bias 20cyc=114, MAC 16=91, drain 8=45, switch 4=23 -->
+          <text x="14" y="62" font-size="9" font-weight="bold" fill="#b54708">stock</text>
+          <g>
+            <rect x="60"  y="46" width="114" height="20" fill="#eda100" opacity="0.75"/>
+            <rect x="174" y="46" width="91"  height="20" fill="#1f6feb"/>
+            <rect x="265" y="46" width="45"  height="20" fill="#b54708"/>
+            <rect x="310" y="46" width="23"  height="20" fill="#647083"/>
+            <rect x="333" y="46" width="114" height="20" fill="#eda100" opacity="0.75"/>
+            <rect x="447" y="46" width="91"  height="20" fill="#1f6feb"/>
+            <rect x="538" y="46" width="45"  height="20" fill="#b54708"/>
+            <rect x="583" y="46" width="23"  height="20" fill="#647083"/>
+            <rect x="606" y="46" width="114" height="20" fill="#eda100" opacity="0.75"/>
+            <rect x="720" y="46" width="91"  height="20" fill="#1f6feb"/>
+            <rect x="811" y="46" width="45"  height="20" fill="#b54708"/>
+            <rect x="856" y="46" width="23"  height="20" fill="#647083"/>
+          </g>
+          <text x="196" y="40" font-size="8" fill="#172033">token 1</text>
+          <text x="462" y="40" font-size="8" fill="#b54708">token 2 &mdash; same weights re-fetched</text>
+          <text x="736" y="40" font-size="8" fill="#b54708">token 3 &mdash; and again</text>
+          <!-- P1 bar: 44cyc=250px; fill 12=68, bias 4=23, mac 8=46, drain 4=23, bias+switch 8=45, mac 8=46, drain 4=23 -->
+          <text x="14" y="112" font-size="9" font-weight="bold" fill="#1a7f37">P1</text>
+          <g>
+            <rect x="60"  y="96" width="68" height="20" fill="#eda100" opacity="0.75"/>
+            <rect x="128" y="96" width="23" height="20" fill="#eda100" opacity="0.45"/>
+            <rect x="151" y="96" width="46" height="20" fill="#1f6feb"/>
+            <rect x="197" y="96" width="23" height="20" fill="#b54708"/>
+            <rect x="220" y="96" width="23" height="20" fill="#647083" opacity="0.6"/>
+            <rect x="243" y="96" width="46" height="20" fill="#1f6feb"/>
+            <rect x="289" y="96" width="23" height="20" fill="#b54708"/>
+          </g>
+          <text x="60" y="130" font-size="8" fill="#172033">tile fill (once)</text>
+          <text x="151" y="130" font-size="8" fill="#172033">row-grp A</text>
+          <text x="243" y="130" font-size="8" fill="#172033">row-grp B</text>
+          <text x="325" y="110" font-size="10" font-weight="bold" fill="#1a7f37">done @ 44 cyc &mdash; 3.3&times; (toy), and every MAC now feeds 3 tokens</text>
+          <!-- legend -->
+          <rect x="500" y="126" width="10" height="10" fill="#eda100" opacity="0.75"/><text x="514" y="135" font-size="8" fill="#647083">GB fills + bias</text>
+          <rect x="595" y="126" width="10" height="10" fill="#1f6feb"/><text x="609" y="135" font-size="8" fill="#647083">MAC</text>
+          <rect x="648" y="126" width="10" height="10" fill="#b54708"/><text x="662" y="135" font-size="8" fill="#647083">blocking drain</text>
+          <rect x="745" y="126" width="10" height="10" fill="#647083"/><text x="759" y="135" font-size="8" fill="#647083">row switch</text>
+        </svg>
+        <p class="cap">Fig. 1c &mdash; Toy timelines (coarse activity classes). Stock replays the whole script per token; P1 pays the tile fill once and sweeps each weight fetch across all tokens. Note beat 3 of each <code class="k">MAC_ABK_MV</code> overlaps the next command&rsquo;s issue slot &mdash; with 3 beats this hides perfectly under nCCD; the real design&rsquo;s 16 beats must pipeline under subsequent fetches, and if an implementation cannot sustain that, the MAC segments dilate &mdash; exactly the occupancy dial priced in the table below.</p>
+      </div>
+
+      <p><b>Scaling the toy to the real machine.</b> Nothing changes structurally &mdash; every quantity just gets bigger, and one new wrinkle appears: 51 tokens exceed the 16-slot tile, so the layer runs as &lceil;51/16&rceil; = 4 tile passes (the residual per-pass fill/drain rhythm that the dedup + token-parallel fixes of &sect;7 then compress):</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Quantity</th><th class="num">Toy</th><th class="num">Real AE layer (16 ch)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">banks &times; lanes per channel</td><td class="num">2 &times; 2</td><td class="num">16 &times; 16</td></tr>
+          <tr><td class="rowlabel">K-chunks per weight row</td><td class="num">2</td><td class="num">64 (K=1024, 32 B cols)</td></tr>
+          <tr><td class="rowlabel">output rows / layer</td><td class="num">4</td><td class="num">12,800</td></tr>
+          <tr><td class="rowlabel">tokens (tile passes)</td><td class="num">3 (1 pass)</td><td class="num">51 (4 passes of &le;16)</td></tr>
+          <tr><td class="rowlabel">MAC commands / layer</td><td class="num">12 &rarr; 4</td><td class="num">5.1 M &rarr; ~0.32 M</td></tr>
+          <tr><td class="rowlabel">unique-weight fetch redundancy</td><td class="num">3&times; &rarr; 1&times;</td><td class="num">51&times; &rarr; 4&times;</td></tr>
+          <tr><td class="rowlabel">ISR trace lines / layer</td><td class="num">&mdash;</td><td class="num">56.6 K &rarr; 3.4 K (16.6&times;)</td></tr>
+          <tr><td class="rowlabel">measured result</td><td class="num">144 &rarr; 44 cyc (3.3&times;)</td><td class="num">36.71 &rarr; 7.50 ms/step (4.9&times;, P1 alone)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Seen this way, P1 is simply the <b>GEMV &rarr; GEMM upgrade</b> at the ISA level: stock computes <code class="k">W_chunk[16&times;16] &times; x[16] &rarr; y[16]</code> per command; P1 computes <code class="k">W_chunk[16&times;16] &times; X[16&times;16 tokens] &rarr; Y[16&times;16]</code> &mdash; with the M dimension realized as <i>16 beats in time</i> on the existing multipliers rather than new silicon. Reuse per fetched byte goes from 1 to 16 FLOPs, which is exactly the command-count reduction; the remaining 4&times; re-fetch (4 tile passes) and the once-per-pass fills are what the software fixes of &sect;7 attack next.</p>
+
       <h3>Hardware overhead: what this actually costs in silicon</h3>
       <p>Costed against the <i>real</i> AiM PU (SK hynix architecture doc / ISSCC&rsquo;22: 16 bf16 multipliers + fused adder tree + <b>one</b> accumulator register + AF block per bank; 2 KB GB SRAM per channel; fixed-function, no programmable control):</p>
       <div class="scroll">
