@@ -78,7 +78,7 @@
       <div class="tags">
         <span class="tag">Orin NX &middot; AGX Orin &middot; Thor &middot; IQ10 &middot; Ascend</span>
         <span class="tag live">energy favorable in 11 / 12 cells</span>
-        <span class="tag live">NX anchor: 1.66&times; speed &middot; 1.93&times; energy</span>
+        <span class="tag live">NX anchor: 1.71&times; speed &middot; 1.81&times; energy</span>
         <span class="tag warn">more LPDDR &ne; better baseline (shown)</span>
       </div>
     </header>
@@ -90,7 +90,7 @@
         <div class="kpi"><div class="v">3 + 2</div><div class="l">NVIDIA deployment tiers (NX / AGX / Thor) + non-NVIDIA entrants (Qualcomm IQ10, Ascend)</div></div>
         <div class="kpi"><div class="v">100%</div><div class="l">of battery-deployable VLA platforms are LPDDR-based &mdash; AiM&rsquo;s host memory</div></div>
         <div class="kpi"><div class="v">28&times; / 24&times;</div><div class="l">speed / energy vs. the measured AGX Orin stack (the research workhorse)</div></div>
-        <div class="kpi"><div class="v">1.82&times;</div><div class="l">energy win on Thor even at latency parity with its hypothetical best</div></div>
+        <div class="kpi"><div class="v">1.49&times;</div><div class="l">energy win on Thor even at near-parity latency with its hypothetical best</div></div>
       </div>
     </section>
 
@@ -117,49 +117,49 @@
       <ul class="notes">
         <li><b>Every platform a battery-powered robot can carry is LPDDR-based.</b> The whole Jetson line, Thor&rsquo;s LPDDR5X, Qualcomm&rsquo;s robotics parts, Ascend&rsquo;s Atlas edge modules. The one machine that beats our design on raw floor (the 4090) is the one nobody puts inside a humanoid &mdash; and it has no LPDDR, hence no AiM story at all.</li>
         <li><b>AiM ports across the family unchanged.</b> LPDDR5X&rsquo;s faster pins (Thor) speed only the external bus &mdash; the XPU&rsquo;s side &mdash; not the in-bank MAC path, so AiM in Thor&rsquo;s 16 channels performs like our 16-channel results while consuming none of the 2,070-TFLOP Blackwell silicon.</li>
-        <li><b>Why &ldquo;just add more LPDDR&rdquo; is not a legitimate baseline change:</b> the XPU shares the memory system, and its weight-streaming floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while our AiM curve scales sub-linearly (broadcast terms, <a href="../02_extended_isa/report.html#bcast">Part III &sect;7</a>). A fair 32-channel comparison is XPU 1.57 vs. ours 3.38 ms &mdash; adding memory helps the baseline more than the design. The honest comparisons are same-memory-system ones, at each platform&rsquo;s own budget.</li>
+        <li><b>Why &ldquo;just add more LPDDR&rdquo; is not a legitimate baseline change:</b> the XPU shares the memory system, and its weight-streaming floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while our AiM curve scales sub-linearly (broadcast terms, <a href="../02_extended_isa/report.html#bcast">Part III &sect;7</a>). A fair 32-channel comparison is XPU 1.57 vs. ours 3.64 ms &mdash; adding memory helps the baseline more than the design. The honest comparisons are same-memory-system ones, at each platform&rsquo;s own budget.</li>
       </ul>
     </section>
 
     <section class="card" id="ladder">
       <h2><span class="num">3</span>The Action-Expert ladder on each platform</h2>
-      <p class="lead">Each platform&rsquo;s ladder (floor / realistic 2&times; / measured; <a href="../01_stock_aim_offload/report.html#ladder">definitions</a>) with our design evaluated at that platform&rsquo;s channel budget: 7.58 ms at 8 channels (64-vec GB tier; token-parallel is counter-productive at 8 ch), 4.81 ms at 16 channels.</p>
+      <p class="lead">Each platform&rsquo;s ladder (floor / realistic 2&times; / measured; <a href="../01_stock_aim_offload/report.html#ladder">definitions</a>) with our design evaluated at that platform&rsquo;s channel budget: 7.36 ms at 8 channels (P1+P4+P7 tier; token-parallel is counter-productive at 8 ch), 4.96 ms at 16 channels (AF-free full design).</p>
       <figure>
-        <img src="assets/platforms.png" alt="Grouped bar chart, log scale, of AE step latency per platform. Orin NX: floor 6.30, realistic 12.61, ours 7.58 ms. AGX Orin: floor 3.15, realistic 6.30, measured 136, ours 4.81 ms. Jetson Thor: floor 2.36, realistic 4.73, measured 36, ours 4.81 ms. Our green bars beat the realistic tier on NX and AGX and match it on Thor, and beat every measured stack by large factors.">
-        <figcaption class="cap">Fig. 1 &mdash; The ladder per platform. Ours (green) beats the realistic tier on NX (1.66&times;) and AGX (1.31&times;), matches it on Thor (0.98&times;), and beats every <i>measured</i> stack by 7.5&ndash;28&times;. Thor&rsquo;s measured AE (&asymp;36 ms/step) derives from the paper&rsquo;s 246 ms end-to-end &times; the 59% AE share; NX was not measured by the paper.</figcaption>
+        <img src="assets/platforms.png" alt="Grouped bar chart, log scale, of AE step latency per platform. Orin NX: floor 6.30, realistic 12.61, ours 7.36 ms. AGX Orin: floor 3.15, realistic 6.30, measured 136, ours 4.96 ms. Jetson Thor: floor 2.36, realistic 4.73, measured 36, ours 4.96 ms. Our green bars beat the realistic tier on NX and AGX and match it on Thor, and beat every measured stack by large factors.">
+        <figcaption class="cap">Fig. 1 &mdash; The ladder per platform. Ours (green) beats the realistic tier on NX (1.71&times;) and AGX (1.27&times;), nearly matches it on Thor (0.95&times;), and beats every <i>measured</i> stack by 7.3&ndash;27&times;. Thor&rsquo;s measured AE (&asymp;36 ms/step) derives from the paper&rsquo;s 246 ms end-to-end &times; the 59% AE share; NX was not measured by the paper.</figcaption>
       </figure>
     </section>
 
     <section class="card" id="matrix">
       <h2><span class="num">4</span>The deployment-baseline matrix: speed and energy together</h2>
-      <p class="lead">Cells are <b>our speedup&times; / energy&times;</b> vs. each baseline (energy via the Part III &sect;9 model; host power 15 / 20 / 40 W per platform [ASSUMPTION]; ours: 133 mJ/step at 8 ch, 137 mJ at 16 ch).</p>
+      <p class="lead">Cells are <b>our speedup&times; / energy&times;</b> vs. each baseline (energy via the Part III &sect;9 model; host power 15 / 20 / 40 W per platform [ASSUMPTION]; ours: 142 mJ/step at 8 ch, 149 mJ at 16 ch, 169 mJ at Thor&rsquo;s 40 W).</p>
       <div class="scroll">
       <table>
         <thead><tr><th>Baseline tier</th><th>Orin NX (8 ch)</th><th>AGX Orin (16 ch)</th><th>Thor (16 ch)</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">measured stack</td><td class="num">n/a</td><td class="num"><b>28.3&times; / 24.3&times;</b> (136 ms, 3335 mJ)</td><td class="num"><b>7.5&times; / 11.9&times;</b> (36 ms, 1633 mJ)</td></tr>
+          <tr><td class="rowlabel">measured stack</td><td class="num">n/a</td><td class="num"><b>27.4&times; / 22.4&times;</b> (136 ms, 3335 mJ)</td><td class="num"><b>7.3&times; / 9.7&times;</b> (36 ms, 1633 mJ)</td></tr>
           <tr><td class="rowlabel">compiled stack (semi-measured)</td><td class="num">n/a</td><td class="num">n/a (not reported)</td><td class="num"><b>&asymp;5.0&times; / &asymp;8&times;</b> (&asymp;24 ms, &asymp;1094 mJ)</td></tr>
-          <tr><td class="rowlabel">realistic 4&times;</td><td class="num">3.33&times; / 3.55&times; (25.2 ms, 473 mJ)</td><td class="num">2.62&times; / 2.53&times; (12.6 ms, 347 mJ)</td><td class="num">1.97&times; / 3.34&times; (9.45 ms, 459 mJ)</td></tr>
-          <tr><td class="rowlabel">realistic 2&times;</td><td class="num"><b>1.66&times; / 1.93&times;</b> (12.6 ms, 257 mJ)</td><td class="num">1.31&times; / 1.41&times; (6.30 ms, 194 mJ)</td><td class="num">0.98&times; / <b>1.82&times;</b> (4.73 ms, 251 mJ)</td></tr>
-          <tr><td class="rowlabel">theoretical floor</td><td class="num">0.83&times; / 1.12&times; (6.30 ms, 149 mJ)</td><td class="num">0.66&times; / 0.86&times; (3.15 ms, 118 mJ)</td><td class="num">0.49&times; / 1.06&times; (2.36 ms, 146 mJ)</td></tr>
+          <tr><td class="rowlabel">realistic 4&times;</td><td class="num">3.42&times; / 3.33&times; (25.2 ms, 473 mJ)</td><td class="num">2.54&times; / 2.33&times; (12.6 ms, 347 mJ)</td><td class="num">1.91&times; / 2.72&times; (9.45 ms, 459 mJ)</td></tr>
+          <tr><td class="rowlabel">realistic 2&times;</td><td class="num"><b>1.71&times; / 1.81&times;</b> (12.6 ms, 257 mJ)</td><td class="num">1.27&times; / 1.30&times; (6.30 ms, 194 mJ)</td><td class="num">0.95&times; / <b>1.49&times;</b> (4.73 ms, 251 mJ)</td></tr>
+          <tr><td class="rowlabel">theoretical floor</td><td class="num">0.86&times; / 1.05&times; (6.30 ms, 149 mJ)</td><td class="num">0.64&times; / 0.79&times; (3.15 ms, 118 mJ)</td><td class="num">0.48&times; / 0.87&times; (2.36 ms, 146 mJ)</td></tr>
         </tbody>
       </table>
       </div>
       <figure>
-        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ, extended AiM 137 mJ, broken into DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 488 mJ, extended AiM 149 mJ, broken into DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
         <figcaption class="cap">Fig. 2 &mdash; The AGX-Orin energy components behind the matrix&rsquo;s middle column (model in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>).</figcaption>
       </figure>
-      <div class="callout win"><b>Energy is favorable in 11 of 12 cells</b> &mdash; including against the NX and Thor <i>theoretical floors</i>: a GPU babysitting a memory-bound loop costs more than our entire per-step budget. The single losing cell is the AGX floor (0.86&times;).</div>
-      <div class="callout"><b>The compiled rung is the strongest semi-measured comparison.</b> The paper actually compiled Thor (246 &rarr; 163 ms end-to-end, 1.51&times;) &mdash; the measured effect of the &ldquo;just use torch.compile&rdquo; rebuttal. Against it: our AE is <b>&asymp;5&times; faster and &asymp;8&times; less energy</b> per step (23.8 ms [uniform-share assumption &mdash; only the e2e number was reported] vs 4.81; 1094 vs 137 mJ), and end-to-end with pipelining <b>&asymp;2.1&times;</b> (163 vs &asymp;77 ms: compiled vision+VLM &asymp;67 ms + the 9.6 ms fresh-KV tail &rarr; &asymp;13 Hz). Revealing: even compiled, Thor&rsquo;s AE runs 10&times; above its own physics floor &mdash; on edge silicon the software path is empirically stubborn (1.51&times; recovery vs 2.90&times; on a 4090), which is precisely the case for fixing the AE in the memory instead.</div>
+      <div class="callout win"><b>Energy is favorable in 10 of 12 cells</b> &mdash; including against the NX <i>theoretical floor</i>: a GPU babysitting a memory-bound loop costs more than our entire per-step budget. The losing cells are the AGX and Thor floors (0.79&times;, 0.87&times;).</div>
+      <div class="callout"><b>The compiled rung is the strongest semi-measured comparison.</b> The paper actually compiled Thor (246 &rarr; 163 ms end-to-end, 1.51&times;) &mdash; the measured effect of the &ldquo;just use torch.compile&rdquo; rebuttal. Against it: our AE is <b>&asymp;4.8&times; faster and &asymp;7.3&times; less energy</b> per step (23.8 ms [uniform-share assumption &mdash; only the e2e number was reported] vs 4.96; 1094 vs 149 mJ), and end-to-end with pipelining <b>&asymp;2.1&times;</b> (163 vs &asymp;77 ms: compiled vision+VLM &asymp;67 ms + the 9.9 ms fresh-KV tail &rarr; &asymp;13 Hz). Revealing: even compiled, Thor&rsquo;s AE runs 10&times; above its own physics floor &mdash; on edge silicon the software path is empirically stubborn (1.51&times; recovery vs 2.90&times; on a 4090), which is precisely the case for fixing the AE in the memory instead.</div>
     </section>
 
     <section class="card" id="anchors">
       <h2><span class="num">5</span>The three anchor baselines (and the scale-down story)</h2>
       <ul class="notes">
-        <li><b>Orin NX, realistic band &mdash; the unassailable favorable anchor.</b> 1.66&times; faster and 1.93&times; less energy than <i>hypothetical-best</i> software on the exact module inside a shipping Unitree G1; 3.33&times;/3.55&times; against an ordinary compiled stack. No cherry-pick exposure: the platform is deployment ground truth and the baseline software is more generous than anything that exists.</li>
-        <li><b>AGX Orin, measured &mdash; the headline, honestly labeled.</b> 28.3&times;/24.3&times; against what the characterization paper actually measured on today&rsquo;s research workhorse. At 136 ms/step the baseline burns 3.3 J per step &mdash; slowness is an energy disaster.</li>
-        <li><b>Thor &mdash; lead with energy.</b> Latency parity with its hypothetical best (0.98&times;), yet 1.82&times; less energy &mdash; and the 2,070-TFLOP Blackwell GPU is entirely free during denoising. Against Thor&rsquo;s measured stack: 7.5&times;/11.9&times;. The pitch: <i>same speed as the best possible Thor software, half the energy, GPU freed</i>.</li>
-        <li><b>Scale-down:</b> an NX-class module with AiM (7.58 ms) delivers AGX-class realistic AE latency (6.30 ms) at ~40% of module cost &mdash; &ldquo;smaller XPU + smart memory &ge; bigger XPU&rdquo; &mdash; with all but the final fresh-KV steps hidden behind the VLM under hybrid stale/fresh overlap (<a href="../02_extended_isa/report.html#system">Part III &sect;8</a>), which an XPU-only NX cannot do.</li>
+        <li><b>Orin NX, realistic band &mdash; the unassailable favorable anchor.</b> 1.71&times; faster and 1.81&times; less energy than <i>hypothetical-best</i> software on the exact module inside a shipping Unitree G1; 3.42&times;/3.33&times; against an ordinary compiled stack. No cherry-pick exposure: the platform is deployment ground truth and the baseline software is more generous than anything that exists.</li>
+        <li><b>AGX Orin, measured &mdash; the headline, honestly labeled.</b> 27.4&times;/22.4&times; against what the characterization paper actually measured on today&rsquo;s research workhorse. At 136 ms/step the baseline burns 3.3 J per step &mdash; slowness is an energy disaster.</li>
+        <li><b>Thor &mdash; lead with energy.</b> Near-parity latency with its hypothetical best (0.95&times;), yet 1.49&times; less energy &mdash; and the 2,070-TFLOP Blackwell GPU is entirely free during denoising. Against Thor&rsquo;s measured stack: 7.3&times;/9.7&times;. The pitch: <i>same speed as the best possible Thor software, half the energy, GPU freed</i>.</li>
+        <li><b>Scale-down:</b> an NX-class module with AiM (7.36 ms) approaches AGX-class realistic AE latency (6.30 ms) at ~40% of module cost &mdash; &ldquo;smaller XPU + smart memory &ge; bigger XPU&rdquo; &mdash; with all but the final fresh-KV steps hidden behind the VLM under hybrid stale/fresh overlap (<a href="../02_extended_isa/report.html#system">Part III &sect;8</a>), which an XPU-only NX cannot do.</li>
       </ul>
       <div class="callout warn"><b>The two comparisons to avoid as headlines:</b> Thor realistic-2&times; on latency (parity &mdash; carry it on energy instead), and the RTX 4090 entirely (not deployable, not LPDDR, and the paper&rsquo;s own CET leaderboard already shows it is rarely the right robot choice).</div>
     </section>
@@ -174,7 +174,7 @@
       <ul class="notes">
         <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
         <li><a href="../01_stock_aim_offload/report.html"><b>Part II</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM (and why it loses 5.8&times;)</a></li>
-        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: 36.7 &rarr; 4.81 ms per step</a></li>
+        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, three AF-free ISA extensions: 35.5 &rarr; 4.96 ms per step</a></li>
         <li><b>Part IV (this page)</b> &mdash; Deployment platforms and the baseline matrix.</li>
       </ul>
       <p class="cap">Sources: NVIDIA Jetson Thor product pages and 2025 dev-kit coverage (128 GB 256-bit LPDDR5X, 273 GB/s, 2070 FP4 TFLOPS, 130 W); NVIDIA GR00T reference humanoid announcement (Unitree H2+ &times; Thor, late 2026); Unitree G1 EDU / Comp listings (Orin NX / 157-TOPS Orin onboard); NVIDIA Jetson AGX Orin Technical Brief v1.2 and Orin NX data sheet (spec-verified in the study); Qualcomm Dragonwing IQ10 Computex 2026 announcements and the NEURA partnership; &ldquo;Characterizing VLA Models across XPUs&rdquo; (arXiv:2604.24447) Tables 1/9/10 for measured latencies and the Ascend/Intel entries. Energy cells from the study&rsquo;s Phase-8 model (CENT power-calculator constants; assumptions tagged there).</p>

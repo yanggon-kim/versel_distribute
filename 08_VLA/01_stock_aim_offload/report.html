@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VLA Part II — Offloading the Action Expert to Stock LPDDR5-AiM (and Why It Loses 5.8&times;)</title>
+<title>VLA Part II — Offloading the Action Expert to Stock LPDDR5-AiM (and Why It Loses 5.6&times;)</title>
 <style>
   :root{
     color-scheme:light;
@@ -81,12 +81,12 @@
 
   <main>
     <header class="page">
-      <h1>Offloading the Action Expert to Stock LPDDR5-AiM &mdash; and Why It Loses 5.8&times;</h1>
-      <p class="sub"><a href="../00_vla_algorithm/report.html">Part I</a> showed the &pi;<sub>0</sub> Action Expert is memory-bound: 623&nbsp;MB of weights re-streamed for 38.7&nbsp;GFLOPs, every step. Processing-in-memory should fix exactly this. We map the AE onto a cycle-level SK&nbsp;hynix AiM-style <b>LPDDR5-PIM simulator</b> at Jetson-Orin memory parity (16 &times; x16 LPDDR5-6400 channels = 204.8&nbsp;GB/s) &mdash; and the stock offload <b>loses</b>: <b>36.7&nbsp;ms per denoising step vs. 6.3&nbsp;ms</b> for a realistic XPU baseline. This page explains the machine, the mapping, the measured breakdown, and the crossover law that makes a &ldquo;memory-bound&rdquo; workload lose on PIM.</p>
+      <h1>Offloading the Action Expert to Stock LPDDR5-AiM &mdash; and Why It Loses 5.6&times;</h1>
+      <p class="sub"><a href="../00_vla_algorithm/report.html">Part I</a> showed the &pi;<sub>0</sub> Action Expert is memory-bound: 623&nbsp;MB of weights re-streamed for 38.7&nbsp;GFLOPs, every step. Processing-in-memory should fix exactly this. We map the AE onto a cycle-level SK&nbsp;hynix AiM-style <b>LPDDR5-PIM simulator</b> at Jetson-Orin memory parity (16 &times; x16 LPDDR5-6400 channels = 204.8&nbsp;GB/s) &mdash; and the stock offload <b>loses</b>: <b>35.5&nbsp;ms per denoising step vs. 6.3&nbsp;ms</b> for a realistic XPU baseline. This page explains the machine, the mapping, the measured breakdown, and the crossover law that makes a &ldquo;memory-bound&rdquo; workload lose on PIM.</p>
       <div class="tags">
         <span class="tag">aim_simulator @ 0f28a07 (Ramulator 2.0)</span>
         <span class="tag">LPDDR5-6400, 16 banks/ch, 32-ch device</span>
-        <span class="tag warn">stock AiM: 5.8&times; slower than XPU</span>
+        <span class="tag warn">stock AiM: 5.6&times; slower than XPU</span>
         <span class="tag live">cycle-accurate traces, reproducible</span>
       </div>
     </header>
@@ -95,7 +95,7 @@
       <h2>Overview</h2>
       <p class="lead">Part II of four. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../02_extended_isa/report.html">Part III</a> fixes it.</p>
       <div class="headline">
-        <div class="kpi"><div class="v">36.7 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
+        <div class="kpi"><div class="v">35.5 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
         <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / realistic 2&times;</div></div>
         <div class="kpi"><div class="v">16&times;</div><div class="l">internal:external bandwidth ratio of AiM (real, and yet&hellip;)</div></div>
         <div class="kpi"><div class="v">S &le; 16</div><div class="l">the token-count regime where stock AiM actually wins</div></div>
@@ -191,7 +191,7 @@
           <tr><td class="rowlabel">WR_BIAS</td><td>GPR, mask</td><td>initialize the 16 banks&rsquo; MAC accumulators</td><td>WRMAC16 &middot; reg-mode</td></tr>
           <tr><td class="rowlabel">COPY_BKGB / COPY_GBBK</td><td>opsize, mask, bank, row</td><td>move opsize columns bank &harr; GB (no host traffic)</td><td>RDCP / WRCP</td></tr>
           <tr><td class="rowlabel">MAC_SBK / MAC_ABK</td><td>opsize, mask, (bank,) row</td><td>MAC: bank row data &times; GB vector &rarr; per-bank accumulator; ABK = all 16 banks in parallel</td><td>MAC / MAC16, 1 per column slot (nCCD)</td></tr>
-          <tr><td class="rowlabel">AF</td><td>mask</td><td>apply LUT activation (gelu) to the accumulators</td><td>AF16</td></tr>
+          <tr><td class="rowlabel">AF</td><td>mask</td><td>apply LUT activation to the accumulators &mdash; <b>GDDR6-AiM only</b>: no disclosed LPDDR-PIM carries an AF unit (Samsung&rsquo;s LP5X-PIM Sim is GEMV-only), so under our LPDDR-PIM premise this ISR is never emitted; GeLU runs on the host</td><td>AF16 (unused here)</td></tr>
           <tr><td class="rowlabel">EWMUL / EWADD</td><td>opsize, &hellip;</td><td>elementwise multiply (bank-group) / add (GPRs)</td><td>EWMUL16 / (DMA-internal)</td></tr>
           <tr><td class="rowlabel">RD_MAC / RD_AF</td><td>GPR, mask</td><td>read 16 accumulators (one 32 B word/channel) to a GPR &mdash; <b>blocks the DMA</b> until complete</td><td>RDMAC16 / RDAF16 &middot; reg-mode &middot; blocking</td></tr>
           <tr><td class="rowlabel">RD_SBK</td><td>GPR, mask, bank, row</td><td>read one column from a bank</td><td>RD (conventional read path)</td></tr>
@@ -219,6 +219,7 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
 &rarr; device model: preconditions (ACT/PRE), timing (nCCD, nRCD*, TMOD), state
 &rarr; memory_system_cycles &times; tCK  &rarr; time</pre>
       <ul class="notes">
+        <li><b>LPDDR-PIM premise (no AF in memory):</b> we carry SK&nbsp;hynix&rsquo;s ISR-style ISA onto LPDDR5 timing, but exclude the one AiM feature no mobile part has: every disclosed LPDDR-PIM &mdash; including Samsung&rsquo;s own LP5X-PIM simulator (arXiv:2606.00636) &mdash; is <b>GEMV-only, with nonlinearities on the host</b>. Accordingly neither the strawman below nor Part III&rsquo;s extensions ever issue <code class="k">AF</code>/<code class="k">RD_AF</code>; GeLU and softmax run on the host XPU.</li>
         <li><b>Timing that matters:</b> one column command per <code class="k">nCCD</code>&nbsp;=&nbsp;4 cycles; MAC/AF/copy commands are 1-cycle issue events whose real cost is the column spacing plus row-activation preconditions; <code class="k">TMOD</code>&nbsp;=&nbsp;32 cycles.</li>
         <li><b>Clock convention:</b> we convert cycles at tCK&nbsp;=&nbsp;0.625&nbsp;ns &mdash; calibrated so one channel&rsquo;s external burst rate equals real LPDDR5-6400 x16 (12.8&nbsp;GB/s). Documented assumption; all ratios are tCK-independent.</li>
         <li><b>Validation:</b> the shipped micro-benchmarks and an all-ISR smoke trace run bit-identically before/after our study; a probe trace confirms the PREA&rarr;ACT16 row-management path fires as specified.</li>
@@ -314,7 +315,7 @@ AiM WR_BIAS 0 0xffff
 AiM MAC_ABK 64 0xffff 1       <span class="c"># token-group 1 -&gt; PREA + ACT16 (row switch!)</span>
 AiM RD_MAC 0 0xffff
 <span class="c"># ... groups 2, 3 ... then next output column (2048 of them for W_Q)</span></pre>
-      <p>Around these, the trace carries the activation-tile loads (<code class="k">WR_SBK</code> streams, since each layer&rsquo;s input comes from the host-side residual stream), the once-per-cycle KV-load trace, <code class="k">AF</code> for gelu on the gate path, and a <code class="k">SYNC</code> at every host boundary (6 host segments per layer: norms, RoPE, softmax, gate&#8857;up, partial sums).</p>
+      <p>Around these, the trace carries the activation-tile loads (<code class="k">WR_SBK</code> streams, since each layer&rsquo;s input comes from the host-side residual stream), the once-per-cycle KV-load trace, and a <code class="k">SYNC</code> at every host boundary (6 host segments per layer: norms, RoPE, softmax, GeLU&middot;gate&#8857;up &mdash; the activation itself runs on the host, LPDDR-PIM having no AF unit &mdash; and partial sums).</p>
     </section>
 
     <section class="card" id="exec">
@@ -325,8 +326,8 @@ AiM RD_MAC 0 0xffff
         <li><b>Mode switch:</b> the next op is <code class="k">WR_BIAS</code>, a register-mode op &rarr; the controller inserts <code class="k">TMOD</code> (32 cycles). After the MAC, <code class="k">RD_MAC</code> forces another pair. Four token-groups &times; two switches each: <b>235,000 TMODs per layer</b>.</li>
         <li><b>Row management:</b> <code class="k">MAC_ABK</code> for token-group 1 targets row 1 while the banks sit on row 0 &rarr; <code class="k">PREA</code> + two-phase <code class="k">ACT16</code> across all 16 banks, plus the ACT&rarr;MAC latency (nRCDRDMAC = 56 cycles). <b>112,000 PREA+ACT16 pairs per layer.</b></li>
         <li><b>The MAC itself:</b> 64 MAC16 commands &times; 4 cycles = 256 cycles &mdash; doing 16 tokens&rsquo; worth of useful work, but only for <i>one</i> token-group of the four.</li>
-        <li><b>The drain:</b> <code class="k">RD_MAC</code> blocks the DMA until 16 accumulators &times; 16 channels land in GPRs. One accumulator per bank means this happens per (token-group &times; output column &times; K-chunk): <b>84,000 blocking reads per layer</b>.</li>
-        <li>At each of the 6 host boundaries, <code class="k">SYNC</code> drains every channel&rsquo;s write pipeline; the host does its 0.16 ms of softmax/norm/RoPE work; the next AiM segment restarts cold.</li>
+        <li><b>The drain:</b> <code class="k">RD_MAC</code> blocks the DMA until 16 accumulators &times; 16 channels land in GPRs. One accumulator per bank means this happens per (token-group &times; output column &times; K-chunk): <b>100,000 blocking reads per layer</b>.</li>
+        <li>At each of the 6 host boundaries, <code class="k">SYNC</code> drains every channel&rsquo;s write pipeline; the host does its 0.15 ms of softmax/norm/GeLU/RoPE work; the next AiM segment restarts cold.</li>
       </ol>
       <p>Strategy A avoids the weight streaming but pays instead in per-token <code class="k">WR_GB</code> broadcasts (51 tokens &times; every layer input) and the same accumulator/blocking pattern. Simulated, the two strategies land within 2% of each other &mdash; <b>both are bound by the same per-command amortization, not by data movement</b>.</p>
     </section>
@@ -346,38 +347,38 @@ AiM RD_MAC 0 0xffff
         </tbody>
       </table>
       </div>
-      <div class="callout"><b>Comparison discipline.</b> Our AiM numbers are cycle-simulated with all overheads included, yet we hold them against the XPU&rsquo;s <i>hypothetical best</i> (the 2&times; rung), not against what actually runs today &mdash; so every speedup this series claims is a conservative lower bound. Against the measured stack, even stock AiM (36.7&nbsp;ms) would look 3.7&times; faster.</div>
+      <div class="callout"><b>Comparison discipline.</b> Our AiM numbers are cycle-simulated with all overheads included, yet we hold them against the XPU&rsquo;s <i>hypothetical best</i> (the 2&times; rung), not against what actually runs today &mdash; so every speedup this series claims is a conservative lower bound. Against the measured stack, even stock AiM (35.5&nbsp;ms) would look 3.8&times; faster.</div>
     </section>
 
     <section class="card" id="results">
       <h2><span class="num">8</span>Results: latency and energy</h2>
       <p class="lead">Cycle-accurate AiM segments + an analytic Orin host model (roofline + 5&ndash;50&nbsp;&micro;s launch overhead, swept). One layer simulated, composed &times;18 layers &times;N steps.</p>
       <figure>
-        <img src="assets/phase3_step_latency.png" alt="Horizontal bar chart of Action Expert step latency: XPU floor 3.2 ms, XPU 2x 6.3 ms, XPU 4x 12.6 ms; AiM Strategy-A at 8/16/32 channels: 68.6/36.0/20.6 ms; AiM hybrid Strategy-B at 8/16/32 channels: 68.5/36.7/21.7 ms. Stock AiM is far slower than every XPU baseline.">
+        <img src="assets/phase3_step_latency.png" alt="Horizontal bar chart of Action Expert step latency: XPU floor 3.2 ms, XPU 2x 6.3 ms, XPU 4x 12.6 ms; AiM Strategy-A at 8/16/32 channels: 66.6/35.0/20.1 ms; AiM hybrid Strategy-B at 8/16/32 channels: 66.0/35.5/21.1 ms. Stock AiM is far slower than every XPU baseline.">
         <figcaption class="cap">Step latency: the stock offload loses at every channel count &mdash; 11.6&times; above the XPU floor at Orin parity (16 ch), and still 6.9&times; above it with double the memory system (32 ch). A-only &asymp; hybrid-B confirms the bound is the ISA, not the mapping.</figcaption>
       </figure>
       <figure>
-        <img src="assets/phase3_layer_breakdown.png" alt="Stacked bar chart of simulated per-layer AiM time at 8, 16, 32 channels. At 16 channels (1.88 ms): MAC column commands 42%, weight streaming 15%, activation loads 4%, TMOD mode switches 16%, row management 9%, blocking reads and other 13%.">
-        <figcaption class="cap">Where a 16-channel layer&rsquo;s 1.88 ms goes: <b>42% MAC commands</b> (one vector per fetch), <b>16% TMOD churn</b>, <b>15% serial GB weight streaming</b>, <b>13% blocking-read drains</b>, <b>9% row management</b> &mdash; every slice traces to one of the three scarcities in Fig. 1.</figcaption>
+        <img src="assets/phase3_layer_breakdown.png" alt="Stacked bar chart of simulated per-layer AiM time at 8, 16, 32 channels. At 16 channels (1.81 ms): MAC column commands 44%, weight streaming 16%, activation loads 5%, TMOD mode switches 16%, row management 8%, blocking reads and other 11%.">
+        <figcaption class="cap">Where a 16-channel layer&rsquo;s 1.81 ms goes: <b>44% MAC commands</b> (one vector per fetch), <b>16% TMOD churn</b>, <b>16% serial GB weight streaming</b>, <b>11% blocking-read drains</b>, <b>8% row management</b> &mdash; every slice traces to one of the three scarcities in Fig. 1.</figcaption>
       </figure>
       <div class="scroll">
       <table>
         <thead><tr><th>Config (20 &micro;s overhead)</th><th class="num">step (ms)</th><th class="num">AE N=4 (ms)</th><th class="num">AE N=10 (ms)</th><th class="num">vs XPU floor</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">XPU-only floor / 2&times; / 4&times;</td><td class="num">3.15 / 6.30 / 12.61</td><td class="num">12.6 / 25.2 / 50.4</td><td class="num">31.5 / 63.0 / 126.1</td><td class="num">1&times;</td></tr>
-          <tr><td class="rowlabel">AiM hybrid-B, 8 ch</td><td class="num">68.45</td><td class="num">274.0</td><td class="num">684.7</td><td class="num">21.7&times; slower</td></tr>
-          <tr><td class="rowlabel">AiM hybrid-B, 16 ch (Orin parity)</td><td class="num"><b>36.71</b></td><td class="num">146.9</td><td class="num">367.2</td><td class="num"><b>11.6&times; slower</b></td></tr>
-          <tr><td class="rowlabel">AiM hybrid-B, 32 ch</td><td class="num">21.73</td><td class="num">86.9</td><td class="num">217.3</td><td class="num">6.9&times; slower</td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 8 ch</td><td class="num">65.96</td><td class="num">264.0</td><td class="num">659.8</td><td class="num">20.9&times; slower</td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 16 ch (Orin parity)</td><td class="num"><b>35.47</b></td><td class="num">141.9</td><td class="num">354.8</td><td class="num"><b>11.3&times; slower</b></td></tr>
+          <tr><td class="rowlabel">AiM hybrid-B, 32 ch</td><td class="num">21.10</td><td class="num">84.4</td><td class="num">211.1</td><td class="num">6.7&times; slower</td></tr>
         </tbody>
       </table>
       </div>
       <p class="cap">KV-load (once per control cycle): 74 &micro;s at 16 ch &mdash; negligible. Launch-overhead sweep 5&rarr;50 &micro;s moves the 16-ch step 35.0&rarr;40.0 ms: host overhead is not the story.</p>
 
       <h3>Stock AiM loses on energy too</h3>
-      <p>Slowness is itself an energy cost: during the 36.7&nbsp;ms step the whole 16-channel memory system burns standby power (131&nbsp;mJ), and the per-command overheads (TMOD churn, blocking drains, row thrash) add array traffic on top. Modeled with the CENT per-command energy constants shipped with the simulator (DQ 5.5&nbsp;pJ/bit; 20&nbsp;W AE-phase GPU assumption, swept 15&ndash;30&nbsp;W &mdash; full model and assumptions in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>):</p>
+      <p>Slowness is itself an energy cost: during the 35.5&nbsp;ms step the whole 16-channel memory system burns standby power (127&nbsp;mJ), and the per-command overheads (TMOD churn, blocking drains, row thrash) add array traffic on top. Modeled with the CENT per-command energy constants shipped with the simulator (DQ 5.5&nbsp;pJ/bit; 20&nbsp;W AE-phase GPU assumption, swept 15&ndash;30&nbsp;W &mdash; full model and assumptions in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>):</p>
       <figure>
-        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ dominated by DRAM array and standby energy, extended AiM 137 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
-        <figcaption class="cap">Fig. 3 &mdash; Energy per denoising step. Stock AiM costs <b>510&nbsp;mJ vs. the realistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.6&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part III&rsquo;s extensions flip both verdicts (137&nbsp;mJ, 1.41&times; better than the XPU).</figcaption>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 488 mJ dominated by DRAM array and standby energy, extended AiM 149 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 3 &mdash; Energy per denoising step. Stock AiM costs <b>488&nbsp;mJ vs. the realistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.5&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part III&rsquo;s extensions flip both verdicts (149&nbsp;mJ, 1.30&times; better than the XPU).</figcaption>
       </figure>
     </section>
 
@@ -399,7 +400,7 @@ AiM RD_MAC 0 0xffff
         <li><b>Each limitation exists for a hardware reason.</b> One GB vector: the GB is a 2 KB broadcast SRAM sized for GEMV. One accumulator/bank: a single 16-bit MAC register minimizes area in DRAM periphery. TMOD: the shared datapath multiplexes array and register access. Blocking reads: the single in-order DMA is the hazard mechanism. All are sensible for S = 1 &mdash; and all are wrong for S = 51.</li>
       </ul>
       <figure>
-        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 36.7 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 4.81 ms.">
+        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 35.5 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 4.96 ms.">
         <figcaption class="cap">Fig. 4 &mdash; The crossover, drawn. Ideal resource bounds (lines) vs. measured points (squares) at S = 51. Stock AiM wins the S &le; ~14 GEMV regime it was designed for and loses linearly beyond it; the extended ISA of Part III (green) restores fetch-bound scaling.</figcaption>
       </figure>
       <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../02_extended_isa/report.html">Part III</a> adds the missing amortization to the AiM ISA and flips the result.</div>
@@ -410,7 +411,7 @@ AiM RD_MAC 0 0xffff
       <ul class="notes">
         <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
         <li><b>Part II (this page)</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM.</li>
-        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 36.7 ms to 4.81 ms per step</a></li>
+        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 35.5 ms to 4.96 ms per step</a></li>
               <li><a href="../03_deployment_platforms/report.html"><b>Part IV</b> &mdash; Deployment platforms: where robots actually run VLAs &amp; the speed/energy baseline matrix</a></li>
       </ul>
       <p class="cap">Sources: arkhadem/aim_simulator @ <code class="k">0f28a07</code> (CENT, ASPLOS&rsquo;25; MIT); SK hynix AiM: HC34 poster + ISSCC&rsquo;22/JSSC&rsquo;23 papers; NVIDIA Jetson AGX Orin Technical Brief v1.2 (42 TFLOP/s bf16, 204.8 GB/s, spec-verified); trace generator, sweep scripts, and CSVs in the study workspace &mdash; every number regenerates from committed traces.</p>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VLA Part III — Eight Problems, Six ISA Extensions: 36.7 ms &rarr; 4.81 ms per Step</title>
+<title>VLA Part III — Eight Problems, Three AF-Free ISA Extensions: 35.5 ms &rarr; 4.96 ms per Step</title>
 <style>
   :root{
     color-scheme:light;
@@ -81,11 +81,11 @@
 
   <main>
     <header class="page">
-      <h1>Eight Problems, Six ISA Extensions: 36.7 ms &rarr; 4.81 ms per Step</h1>
-      <p class="sub"><a href="../01_stock_aim_offload/report.html">Part II</a> measured <i>why</i> stock LPDDR5-AiM loses on the &pi;<sub>0</sub> Action Expert: every in-bank fetch feeds one vector, one accumulator, one register mode. This page turns that breakdown into eight problem statements, implements six ISA/controller extensions on a simulator branch (<code class="k">vla-aim-ext</code>), and measures each: <b>36.71 &rarr; 4.81 ms per step at Orin memory parity (7.6&times;)</b>, and <b>3.38 ms at 32 channels &mdash; within 7% of the XPU&rsquo;s theoretical bandwidth floor</b>. With hybrid stale/fresh pipelining, all but the final fresh-KV denoising steps leave the robot&rsquo;s critical path (378 ms cycle, 2.65 Hz).</p>
+      <h1>Eight Problems, Three AF-Free ISA Extensions: 35.5 ms &rarr; 4.96 ms per Step</h1>
+      <p class="sub"><a href="../01_stock_aim_offload/report.html">Part II</a> measured <i>why</i> stock LPDDR5-AiM loses on the &pi;<sub>0</sub> Action Expert: every in-bank fetch feeds one vector, one accumulator, one register mode. This page turns that breakdown into eight problem statements and implements the fixes on a simulator branch (<code class="k">vla-aim-ext</code>) under an <b>AF-free LPDDR-PIM premise</b> (no in-DRAM activation function &mdash; the GEMV-only scope of every disclosed LPDDR-PIM, incl. Samsung&rsquo;s LP5X-PIM Sim): <b>three ISA/controller extensions (P1, P4, P7) + two software fixes</b>, measured: <b>35.47 &rarr; 4.96 ms per step at Orin memory parity (7.2&times;)</b>, and <b>3.64 ms at 32 channels &mdash; within 16% of the XPU&rsquo;s theoretical bandwidth floor</b>. P2 (in-memory softmax) and P8 (in-bank write-back), which require AF-class hardware, are documented as GDDR-AiM-only alternatives, excluded from the headline. With hybrid stale/fresh pipelining, all but the final fresh-KV denoising steps leave the robot&rsquo;s critical path (378 ms cycle, 2.65 Hz).</p>
       <div class="tags">
-        <span class="tag live">7.6&times; vs stock &middot; 1.3&times; vs realistic XPU</span>
-        <span class="tag">6 ISA extensions + 2 SW scheduling fixes</span>
+        <span class="tag live">7.2&times; vs stock &middot; 1.3&times; vs realistic XPU</span>
+        <span class="tag">3 ISA extensions + 2 SW fixes &middot; AF-free (LPDDR-PIM premise)</span>
         <span class="tag">unit-trace validated, legacy-regression clean</span>
         <span class="tag warn">honest negatives kept (P6, G=4)</span>
       </div>
@@ -95,8 +95,8 @@
       <h2>Overview</h2>
       <p class="lead">Method: every extension is (a) motivated by a measured slice of the Part-II breakdown, (b) specified as encoding + datapath + storage cost, (c) implemented in the cycle-level simulator, (d) validated with unit traces, and (e) ablated cumulatively.</p>
       <div class="headline">
-        <div class="kpi"><div class="v">36.71 &rarr; 4.81 ms</div><div class="l">AE step, 16 channels, stock &rarr; all features (20 &micro;s overhead)</div></div>
-        <div class="kpi"><div class="v">3.38 ms</div><div class="l">at 32 channels &mdash; XPU theoretical floor is 3.15 ms</div></div>
+        <div class="kpi"><div class="v">35.47 &rarr; 4.96 ms</div><div class="l">AE step, 16 channels, stock &rarr; full AF-free design (20 &micro;s overhead)</div></div>
+        <div class="kpi"><div class="v">3.64 ms</div><div class="l">at 32 channels &mdash; XPU theoretical floor is 3.15 ms</div></div>
         <div class="kpi"><div class="v">4.8&times;</div><div class="l">unit-trace speedup of the P1 MAC pattern on identical math</div></div>
         <div class="kpi"><div class="v">2.65 Hz</div><div class="l">control rate with all but 2 fresh-KV steps hidden behind the VLM</div></div>
       </div>
@@ -104,19 +104,19 @@
 
     <section class="card" id="problems">
       <h2><span class="num">1</span>Eight problems, each with its measured evidence</h2>
-      <p class="lead">P1&ndash;P6 refine the classic AiM gaps against Part II&rsquo;s numbers; P7&ndash;P8 emerged from our own traces. Reference: stock 16-channel layer = 1.88 ms AiM + 0.16 ms host.</p>
+      <p class="lead">P1&ndash;P6 refine the classic AiM gaps against Part II&rsquo;s numbers; P7&ndash;P8 emerged from our own traces. Reference: stock 16-channel layer = 1.81 ms AiM + 0.15 ms host (AF-free strawman: GeLU on the host).</p>
       <div class="scroll">
       <table>
         <thead><tr><th>#</th><th>Problem</th><th>Measured evidence (per layer, 16 ch)</th><th>Fix (this page)</th><th>Verdict</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">P1</td><td>GEMV-only compute: one GB vector, one accumulator/bank &rarr; no multi-token reuse</td><td>5.10 M MAC16 commands = 42%; 84 k blocking RD_MACs; 100 k WR_BIAS re-inits</td><td><code class="k">MAC_ABK_MV</code> + accumulator file + big GB, <code class="k">RD_MACB</code></td><td>implemented &mdash; the big one</td></tr>
-          <tr><td class="rowlabel">P2</td><td>No reduction / softmax primitives &rarr; every partial exits via blocking reads; softmax round-trips 2.1 MB/layer to host</td><td>blocking+drain 13%; softmax host segment + SYNC each layer</td><td><code class="k">RD_MAC_SUM</code>, <code class="k">AF_SCALED</code>, <code class="k">WR_AFLUT</code> presets (exp, rsqrt)</td><td>implemented</td></tr>
+          <tr><td class="rowlabel">P1</td><td>GEMV-only compute: one GB vector, one accumulator/bank &rarr; no multi-token reuse</td><td>5.10 M MAC16 commands = 44%; 100 k blocking RD_MACs; 100 k WR_BIAS re-inits</td><td><code class="k">MAC_ABK_MV</code> + accumulator file + big GB, <code class="k">RD_MACB</code></td><td>implemented &mdash; the big one</td></tr>
+          <tr><td class="rowlabel">P2</td><td>No reduction / softmax primitives &rarr; every partial exits via blocking reads; softmax round-trips 2.1 MB/layer to host</td><td>blocking+drain 11%; softmax host segment + SYNC each layer</td><td><code class="k">RD_MAC_SUM</code>, <code class="k">AF_SCALED</code>, <code class="k">WR_AFLUT</code> presets (exp, rsqrt)</td><td><b>excluded from headline</b> &mdash; needs AF-class hardware absent on LPDDR-PIM (&sect;3)</td></tr>
           <tr><td class="rowlabel">P3</td><td>AiM/normal traffic mutual exclusion blocks concurrent use</td><td>structural (enables &sect;8, not layer latency)</td><td>per-channel mode-partition CFR</td><td>implemented</td></tr>
-          <tr><td class="rowlabel">P4</td><td>Host-issued ISRs, no loop control &rarr; 56.6 k trace lines/layer, launch overhead per segment</td><td>step grows 35.0&rarr;40.0 ms over 5&rarr;50 &micro;s overhead</td><td><code class="k">LOOP n</code>/<code class="k">ENDLOOP</code> controller macros</td><td>implemented</td></tr>
+          <tr><td class="rowlabel">P4</td><td>Host-issued ISRs, no loop control &rarr; 55.5 k trace lines/layer, launch overhead per segment</td><td>step grows 33.8&rarr;38.8 ms over 5&rarr;50 &micro;s overhead</td><td><code class="k">LOOP n</code>/<code class="k">ENDLOOP</code> controller macros</td><td>implemented</td></tr>
           <tr><td class="rowlabel">P5</td><td>fp16 MACs are area-hungry; INT8/MX would halve weight residency</td><td>&mdash; (success-rate impact unverifiable without GPU eval)</td><td>documented design only</td><td>not implemented, honest scope</td></tr>
           <tr><td class="rowlabel">P6</td><td>No lane shuffle for RoPE&rsquo;s pair rotation</td><td>RoPE &asymp; 20 &micro;s/layer on host &lt; 1.5% post-P1</td><td>&mdash;</td><td><b>rejected with numbers</b></td></tr>
-          <tr><td class="rowlabel">P7</td><td>1 ISR per 32 B write: activation tile loads are 8.2 k single-column ISRs/layer</td><td>loads 4&ndash;8%; fixed floor after P1</td><td><code class="k">WR_TILE</code> descriptor (1 ISR &rarr; opsize columns)</td><td>implemented</td></tr>
-          <tr><td class="rowlabel">P8</td><td>No result write-back path: PIM output cannot feed the next PIM op &rarr; gate&#8857;up forced to host, h tile reloaded (4.1 k writes/layer)</td><td>2.1 MB/layer round trip + largest single load</td><td><code class="k">COPY_MACBK</code> (accumulators &rarr; bank row)</td><td>implemented</td></tr>
+          <tr><td class="rowlabel">P7</td><td>1 ISR per 32 B write: activation tile loads are 8.2 k single-column ISRs/layer</td><td>loads 5&ndash;8%; fixed floor after P1</td><td><code class="k">WR_TILE</code> descriptor (1 ISR &rarr; opsize columns)</td><td>implemented</td></tr>
+          <tr><td class="rowlabel">P8</td><td>No result write-back path: PIM output cannot feed the next PIM op &rarr; gate&#8857;up forced to host, h tile reloaded (4.1 k writes/layer)</td><td>2.1 MB/layer round trip + largest single load</td><td><code class="k">COPY_MACBK</code> (accumulators &rarr; bank row)</td><td><b>excluded from headline</b> &mdash; the chain consumes a post-AF gate; without an AF unit the gate exits to the host anyway (&sect;4)</td></tr>
         </tbody>
       </table>
       </div>
@@ -363,8 +363,8 @@
           <tr><td class="rowlabel">tokens (tile passes)</td><td class="num">3 (1 pass)</td><td class="num">51 (4 passes of &le;16)</td></tr>
           <tr><td class="rowlabel">MAC commands / layer</td><td class="num">12 &rarr; 4</td><td class="num">5.1 M &rarr; ~0.32 M</td></tr>
           <tr><td class="rowlabel">unique-weight fetch redundancy</td><td class="num">3&times; &rarr; 1&times;</td><td class="num">51&times; &rarr; 4&times;</td></tr>
-          <tr><td class="rowlabel">ISR trace lines / layer</td><td class="num">&mdash;</td><td class="num">56.6 K &rarr; 3.4 K (16.6&times;)</td></tr>
-          <tr><td class="rowlabel">measured result</td><td class="num">144 &rarr; 44 cyc (3.3&times;)</td><td class="num">36.71 &rarr; 7.50 ms/step (4.9&times;, P1 alone)</td></tr>
+          <tr><td class="rowlabel">ISR trace lines / layer</td><td class="num">&mdash;</td><td class="num">55.5 K &rarr; 3.4 K (16.3&times;)</td></tr>
+          <tr><td class="rowlabel">measured result</td><td class="num">144 &rarr; 44 cyc (3.3&times;)</td><td class="num">35.47 &rarr; 7.50 ms/step (4.7&times;, P1 alone)</td></tr>
         </tbody>
       </table>
       </div>
@@ -378,7 +378,7 @@
         <tbody>
           <tr><td class="rowlabel">accumulator file</td><td>15 extra 16-bit registers + 4-bit slot mux behind the existing adder tree (&asymp;240 FFs/PU)</td><td><b>trivial</b> &mdash; a few % of PU logic, &laquo;0.1% of die; no timing-path change</td></tr>
           <tr><td class="rowlabel">RD_MACB</td><td>DMA-side slot sequencer; reuses the RDMAC16 read path</td><td><b>trivial</b> &mdash; zero PU change</td></tr>
-          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured nearly sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 4.91 ms/step vs 4.81 with 128 KB (+2%; corrected from an earlier 4.76 after fixing a dedup fill-validity bug in the trace generator)</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 2%</td></tr>
+          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured nearly sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 5.07 ms/step vs 4.96 with 128 KB (+2%)</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 2%</td></tr>
           <tr><td class="rowlabel">MAC_ABK_MV datapath</td><td>32 B operand latch + 4-bit vector sequencer + <b>multiplier throughput (the one real cost)</b></td><td>a price/performance dial, below</td></tr>
         </tbody>
       </table>
@@ -387,13 +387,13 @@
       <table>
         <thead><tr><th>PU option</th><th>Extra multiplier area</th><th class="num">MV occupancy</th><th class="num">AE step</th><th class="num">vs stock</th><th class="num">vs XPU-2&times;</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">existing 16-lane array, 300&ndash;500 MHz PU (Aquabolt-class clock)</td><td>zero</td><td class="num">~16 cycles</td><td class="num">7.48 ms</td><td class="num">4.9&times;</td><td class="num">0.84&times;</td></tr>
-          <tr><td class="rowlabel">existing array @ 1 GHz (SK&rsquo;s MAC clock)</td><td>zero</td><td class="num">~8 cycles</td><td class="num">5.70 ms</td><td class="num">6.4&times;</td><td class="num">1.11&times;</td></tr>
-          <tr><td class="rowlabel"><b>2&times; multiplier arrays @ 1 GHz (headline design)</b></td><td>~2&times; PU multiplier area</td><td class="num">4 cycles</td><td class="num"><b>4.81 ms</b></td><td class="num"><b>7.6&times;</b></td><td class="num"><b>1.31&times;</b></td></tr>
+          <tr><td class="rowlabel">existing 16-lane array, 300&ndash;500 MHz PU (Aquabolt-class clock)</td><td>zero</td><td class="num">~16 cycles</td><td class="num">7.63 ms</td><td class="num">4.6&times;</td><td class="num">0.83&times;</td></tr>
+          <tr><td class="rowlabel">existing array @ 1 GHz (SK&rsquo;s MAC clock)</td><td>zero</td><td class="num">~8 cycles</td><td class="num">5.85 ms</td><td class="num">6.1&times;</td><td class="num">1.08&times;</td></tr>
+          <tr><td class="rowlabel"><b>2&times; multiplier arrays @ 1 GHz (headline design)</b></td><td>~2&times; PU multiplier area</td><td class="num">4 cycles</td><td class="num"><b>4.96 ms</b></td><td class="num"><b>7.2&times;</b></td><td class="num"><b>1.27&times;</b></td></tr>
         </tbody>
       </table>
       </div>
-      <div class="callout win"><b>The gains degrade gracefully &mdash; and the win survives with zero added multipliers.</b> Even the cheapest option keeps 4.9&times; over stock, because most of stock&rsquo;s loss was the WR_BIAS/RD_MAC/TMOD/row-thrash storm, which the <i>trivial</i> parts (accumulator file + RD_MACB) eliminate. Feasibility precedents: Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>, and reports an <b>LPDDR5-PIM</b> design (2.3&times; perf, &minus;86% energy) &mdash; bank-adjacent fp16 PIM in a mobile DRAM process is an established design point. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; design target is 2&times; arrays @&ge;500 MHz to hold the 4-cycle point.</div>
+      <div class="callout win"><b>The gains degrade gracefully &mdash; and the win survives with zero added multipliers.</b> Even the cheapest option keeps 4.6&times; over stock, because most of stock&rsquo;s loss was the WR_BIAS/RD_MAC/TMOD/row-thrash storm, which the <i>trivial</i> parts (accumulator file + RD_MACB) eliminate. Feasibility precedents: Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>, and reports an <b>LPDDR5-PIM</b> design (2.3&times; perf, &minus;86% energy) &mdash; bank-adjacent fp16 PIM in a mobile DRAM process is an established design point. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; design target is 2&times; arrays @&ge;500 MHz to hold the 4-cycle point.</div>
 
       <h3>Same computation, before and after</h3>
       <pre class="cmd"><span class="c"># STOCK - 16 output columns x 4 token-groups (Part II pattern, 192 ISRs):</span>
@@ -411,7 +411,8 @@ RD_MACB 16 0 0xffff           <span class="c"># burst the accumulator file, one 
     </section>
 
     <section class="card" id="p2">
-      <h2><span class="num">3</span>P2 &mdash; softmax without leaving the memory</h2>
+      <h2><span class="num">3</span>P2 &mdash; softmax without leaving the memory <span style="font-size:.8rem;color:var(--warn);">(GDDR-AiM alternative &mdash; excluded from the headline)</span></h2>
+      <div class="callout warn"><b>Excluded under the LPDDR-PIM premise.</b> Everything below relies on the AF block (LUT + interpolation + scalar multiplier) that GDDR6-AiM carries and no disclosed LPDDR-PIM does &mdash; Samsung&rsquo;s LP5X-PIM Sim (arXiv:2606.00636) models a GEMV-only device. We keep the design and its measurements as a documented alternative for AF-equipped substrates: on the old GDDR-style chain it bought 0.25 ms/step at 16 ch. The AF-free headline instead keeps softmax on the host, which costs one host segment + SYNC per layer and is priced into every &sect;6 number.</div>
       <p class="lead">Stock attention ships 8&times;51&times;867 fp32 scores (2.1 MB/layer) to the host for softmax and ships probabilities back. Three small primitives close the loop in-memory:</p>
       <div class="scroll">
       <table>
@@ -439,13 +440,13 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="rest">
       <h2><span class="num">4</span>P4, P3, P7, P8 &mdash; the supporting cast</h2>
       <h3>P4 &mdash; <code class="k">LOOP n &hellip; ENDLOOP</code> controller macros</h3>
-      <p>Samsung&rsquo;s HBM-PIM stores micro-kernels in a command register file and replays them with a zero-cycle JUMP; we add the trace-level equivalent: the controller expands a buffered ISR block n times with <b>zero per-iteration host issue</b>. Command issue timing is unchanged by design (the DMA still paces one command per cycle, exactly as a controller draining its macro buffer would) &mdash; verified: a 10&times;-unrolled body and its LOOP form simulate to the identical 6,644 cycles. What changes: a layer shrinks from 56.6 k host ISRs to ~3.7 k (15&times;), launch overhead amortizes once per layer instead of once per host segment, and a self-running denoising step (with an Euler MAD at the DMA) becomes plausible.</p>
+      <p>Samsung&rsquo;s HBM-PIM stores micro-kernels in a command register file and replays them with a zero-cycle JUMP; we add the trace-level equivalent: the controller expands a buffered ISR block n times with <b>zero per-iteration host issue</b>. Command issue timing is unchanged by design (the DMA still paces one command per cycle, exactly as a controller draining its macro buffer would) &mdash; verified: a 10&times;-unrolled body and its LOOP form simulate to the identical 6,644 cycles. What changes: a layer shrinks from 55.5 k host ISRs to ~3.5 k (16&times;), launch overhead amortizes once per layer instead of once per host segment, and a self-running denoising step (with an Euler MAD at the DMA) becomes plausible.</p>
       <h3>P3 &mdash; per-channel mode partition (CFR 3)</h3>
       <p>A 32-bit mask CFR marks each channel AiM-mode or conventional-mode, scoping Part II&rsquo;s mutual exclusion to within a partition. Its value is not layer latency &mdash; it is the <b>enabler for &sect;8</b>: streaming next-observation KV into masked channels while the others denoise, and letting the XPU use idle AiM capacity as ordinary memory.</p>
       <h3>P7 &mdash; <code class="k">WR_TILE</code> descriptors</h3>
       <p>Stock activation loads issue one ISR per 32 B column (8.2 k/layer). <code class="k">WR_TILE opsize GPR mask bank row</code> lets the DMA unroll a whole tile write from one descriptor &mdash; the write stream itself already paces at bus rate (unit trace: 286 = 286 cycles), so the win is command-stream compression (64&times;) and freeing the decode slot the P1-improved layer now notices.</p>
-      <h3>P8 &mdash; <code class="k">COPY_MACBK</code> write-back</h3>
-      <p>Stock PIM results can only exit through GPRs toward the host, so gate&#8857;up ran on the host and the h tile (the layer&rsquo;s largest load, 4.1 k writes) was re-uploaded for down-proj. <code class="k">COPY_MACBK</code> writes the (post-AF) accumulator file into a bank row (WRCP timing class): gate and up results land in adjacent banks, <code class="k">EWMUL</code> multiplies them in place, and down-proj consumes h without the host ever seeing it.</p>
+      <h3>P8 &mdash; <code class="k">COPY_MACBK</code> write-back <span style="font-size:.85rem;color:var(--warn);">(GDDR-AiM alternative &mdash; excluded from the headline)</span></h3>
+      <p><b>Excluded under the LPDDR-PIM premise:</b> the in-bank gate&#8857;up chain consumes a <i>post-AF</i> gate. Without an AF unit the gate tile must exit to the host for GeLU regardless, so the write-back path saves nothing &mdash; the AF-free headline computes GeLU&middot;gate&#8857;up on the host and re-uploads h (priced in &sect;6). Design kept for AF-equipped substrates: stock PIM results can only exit through GPRs toward the host, so gate&#8857;up ran on the host and the h tile (the layer&rsquo;s largest load, 4.1 k writes) was re-uploaded for down-proj. <code class="k">COPY_MACBK</code> writes the (post-AF) accumulator file into a bank row (WRCP timing class): gate and up results land in adjacent banks, <code class="k">EWMUL</code> multiplies them in place, and down-proj consumes h without the host ever seeing it.</p>
     </section>
 
     <section class="card" id="validate">
@@ -461,50 +462,51 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="ablation">
       <h2><span class="num">6</span>Ablation: what each feature buys, and why</h2>
       <figure>
-        <img src="assets/phase6_ablation.png" alt="Horizontal bar chart of Action Expert step latency at 16 channels: stock AiM 36.71 ms; +P1 MAC_ABK_MV 7.50; +P1P2 in-memory softmax 7.25; +P1P2P4 LOOP macros 5.77; +all with P7 tiles and P8 chain 5.58; +dedup and token-parallel x2 software scheduling 4.81. Reference lines: XPU floor 3.15, XPU 2x 6.30, XPU 4x 12.61.">
-        <figcaption class="cap">Cumulative ablation at Orin memory parity (16 ch, 20 &micro;s launch overhead). The extended ISA crosses below the realistic XPU baseline (6.30 ms) at the P1P2P4 tier and keeps going. What the XPU reference lines mean &mdash; theoretical floor vs. realistic 2&times;/4&times; &mdash; is defined precisely in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7&rsquo;s baseline ladder</a>.</figcaption>
+        <img src="assets/phase6_ablation.png" alt="Horizontal bar chart of Action Expert step latency at 16 channels, AF-free chain: stock AiM 35.47 ms; +P1 MAC_ABK_MV 7.50; +P4 LOOP macros 5.66; +P7 WR_TILE 5.62; +dedup and token-parallel x2 software scheduling 5.07; +64-vector GB 4.96. Reference lines: XPU floor 3.15, XPU 2x 6.30, XPU 4x 12.61.">
+        <figcaption class="cap">Cumulative ablation at Orin memory parity (16 ch, 20 &micro;s launch overhead). The extended ISA crosses below the realistic XPU baseline (6.30 ms) at the +P4 tier and keeps going. What the XPU reference lines mean &mdash; theoretical floor vs. realistic 2&times;/4&times; &mdash; is defined precisely in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7&rsquo;s baseline ladder</a>.</figcaption>
       </figure>
       <div class="scroll">
       <table>
         <thead><tr><th>Tier</th><th class="num">8 ch</th><th class="num">16 ch</th><th class="num">32 ch</th><th>Why it gets better</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">stock AiM (best mapping)</td><td class="num">68.45</td><td class="num">36.71</td><td class="num">21.73</td><td>Part II baseline: fetch-per-token amortization</td></tr>
-          <tr><td class="rowlabel">+P1 MAC_ABK_MV</td><td class="num">9.24</td><td class="num">7.50</td><td class="num">6.66</td><td>MAC commands &divide;4, blocking reads &divide;16 per drain, weights on the parallel-bank path: the 42%+13%+16% slices collapse</td></tr>
-          <tr><td class="rowlabel">+P2 in-mem softmax</td><td class="num">9.25</td><td class="num">7.25</td><td class="num">6.27</td><td>softmax segment + SYNC gone from every layer; 2.1 MB/layer round trip eliminated</td></tr>
-          <tr><td class="rowlabel">+P4 LOOP macros</td><td class="num">7.77</td><td class="num">5.77</td><td class="num">4.79</td><td>launch overhead once per layer, not per segment; host-ISR stream 15&times; smaller</td></tr>
-          <tr><td class="rowlabel">+P7 WR_TILE, +P8 COPY_MACBK</td><td class="num">7.58</td><td class="num">5.58</td><td class="num">4.59</td><td>gate&#8857;up chain stays in banks; h reload (largest single load) disappears</td></tr>
-          <tr><td class="rowlabel">+P1 enlarged GB (64 vectors)</td><td class="num">7.58</td><td class="num">5.58</td><td class="num">4.59</td><td>no further gain by itself under the final fill-persistent emission &mdash; GB capacity pays off only with dedup + token-parallel (&sect;7: 4.81 with 128 KB vs 4.91 with 32 KB)</td></tr>
-          <tr><td class="rowlabel"><b>+dedup + token-parallel &times;2 (SW)</b></td><td class="num">7.72</td><td class="num"><b>4.81</b></td><td class="num"><b>3.38</b></td><td>&sect;7 below</td></tr>
+          <tr><td class="rowlabel">stock AiM (best mapping, AF-free)</td><td class="num">65.96</td><td class="num">35.47</td><td class="num">21.10</td><td>Part II baseline: fetch-per-token amortization; GeLU on host</td></tr>
+          <tr><td class="rowlabel">+P1 MAC_ABK_MV</td><td class="num">9.24</td><td class="num">7.50</td><td class="num">6.66</td><td>MAC commands &divide;4, blocking reads &divide;16 per drain, weights on the parallel-bank path: the 44%+11%+16% slices collapse</td></tr>
+          <tr><td class="rowlabel">+P4 LOOP macros</td><td class="num">7.40</td><td class="num">5.66</td><td class="num">4.82</td><td>launch overhead once per layer, not per segment; host-ISR stream 16&times; smaller</td></tr>
+          <tr><td class="rowlabel">+P7 WR_TILE</td><td class="num">7.36</td><td class="num">5.62</td><td class="num">4.78</td><td>activation-tile loads compress 64&times; in command count; small but free</td></tr>
+          <tr><td class="rowlabel">+dedup + token-parallel &times;2 (SW, 32 KB GB)</td><td class="num">7.70</td><td class="num">5.07</td><td class="num">3.76</td><td>&sect;7 below &mdash; the broadcast fix; 16-vector GB</td></tr>
+          <tr><td class="rowlabel"><b>+64-vector GB (128 KB, headline)</b></td><td class="num">7.64</td><td class="num"><b>4.96</b></td><td class="num"><b>3.64</b></td><td>bigger tile &rarr; fewer fill passes; only +2% over the 32 KB GB</td></tr>
+          <tr><td class="rowlabel">token-parallel &times;4 (kept negative)</td><td class="num">11.92</td><td class="num">7.01</td><td class="num">4.56</td><td>&sect;7: blocking RD_MACB drains serialize across groups</td></tr>
         </tbody>
       </table>
       </div>
-      <p class="cap">Step latency in ms, 20 &micro;s launch overhead. An N=4 inference at 16 ch: stock 146.9 ms &rarr; extended 19.3 ms; N=10: 367.2 &rarr; 48.1 ms (KV-load 74 &micro;s amortizes over the cycle).</p>
+      <p class="cap">Step latency in ms, 20 &micro;s launch overhead. An N=4 inference at 16 ch: stock 141.9 ms &rarr; extended 19.9 ms; N=10: 354.8 &rarr; 49.7 ms (KV-load 74 &micro;s amortizes over the cycle).</p>
     </section>
 
     <section class="card" id="bcast">
       <h2><span class="num">7</span>The last bottleneck: activation broadcast &mdash; and its sweet spot</h2>
-      <p class="lead">After P1&hellip;P8, the layer profile flips: <b>WR_GB activation streaming (35%) and prob-tile reads (21%) dominate &mdash; and neither scales with channel count</b>, because the same token tile is broadcast serially into every channel&rsquo;s GB through its 12.8 GB/s port. The bound is physical: you can only (a) send fewer bytes, (b) send <i>different</i> bytes to different channels, or (c) add GB write ports (hardware).</p>
+      <p class="lead">After P1+P4+P7, the layer profile flips: <b>WR_GB activation streaming dominates at 61% of the AiM layer &mdash; and it does not scale with channel count</b>, because the same token tile is broadcast serially into every channel&rsquo;s GB through its 12.8 GB/s port. The bound is physical: you can only (a) send fewer bytes, (b) send <i>different</i> bytes to different channels, or (c) add GB write ports (hardware).</p>
       <h3>Two software fixes, measured</h3>
       <ul class="notes">
-        <li><b>Dedup:</b> Q/KV share the same normalized input tile, as do gate/up &mdash; fill the GB once per distinct input instead of once per op (&minus;16% of fills). Pure trace-scheduling.</li>
+        <li><b>Dedup:</b> Q/KV share the same normalized input tile, as do gate/up &mdash; fill the GB once per distinct input instead of once per op. Pure trace-scheduling.</li>
         <li><b>Token-parallel channel groups:</b> split the 51 tokens (and the 408 attention vectors) across G channel groups, <b>replicating the weights per group</b> &mdash; a capacity trade (G &times; 623 MB out of the 64 GB LPDDR pool) that hardware designers get for free. Each group streams only its share, concurrently on independent channel buses; interleaved ISR emission lets the groups&rsquo; controllers overlap despite the single in-order DMA.</li>
       </ul>
       <div class="scroll">
       <table>
-        <thead><tr><th>Config</th><th class="num">WR_GB ms/layer</th><th class="num">prob reads ms/layer</th><th class="num">step @16 ch</th><th class="num">step @32 ch</th></tr></thead>
+        <thead><tr><th>Config</th><th class="num">WR_GB ms/layer</th><th class="num">step @16 ch</th><th class="num">step @32 ch</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">all features, 64-vec GB</td><td class="num">0.098</td><td class="num">0.057</td><td class="num">5.58</td><td class="num">4.59</td></tr>
-          <tr><td class="rowlabel">+ dedup + G=2 groups</td><td class="num">0.041</td><td class="num">0.029</td><td class="num"><b>4.81</b></td><td class="num"><b>3.38</b></td></tr>
-          <tr><td class="rowlabel">+ dedup + G=4 groups</td><td class="num">0.021</td><td class="num">0.015</td><td class="num">6.74</td><td class="num">4.22</td></tr>
+          <tr><td class="rowlabel">P1+P4+P7 (pre-fix, 32 KB GB)</td><td class="num">0.155</td><td class="num">5.62</td><td class="num">4.78</td></tr>
+          <tr><td class="rowlabel">+ dedup + G=2 groups (32 KB GB)</td><td class="num">0.078</td><td class="num">5.07</td><td class="num">3.76</td></tr>
+          <tr><td class="rowlabel"><b>+ 64-vector GB (headline)</b></td><td class="num">0.070</td><td class="num"><b>4.96</b></td><td class="num"><b>3.64</b></td></tr>
+          <tr><td class="rowlabel">+ dedup + G=4 groups</td><td class="num">0.036</td><td class="num">7.01</td><td class="num">4.56</td></tr>
         </tbody>
       </table>
       </div>
-      <div class="callout warn"><b>G = 4 is a kept negative result.</b> Fills drop 4&times; as designed &mdash; but each group drains its accumulators with its own blocking <code class="k">RD_MACB</code>, and blocking instructions stall the single in-order DMA <i>globally</i>. Four groups quadruple the serialization points and the stall time triples. Token-parallelism has a sweet spot at G=2; going further needs per-group DMA queues or non-blocking accumulator reads (a P4-class controller extension), multi-port GBs, or activation compression &mdash; the concrete hardware agenda this measurement produces.</div>
+      <div class="callout warn"><b>G = 4 is a kept negative result.</b> Fills drop 4&times; as designed &mdash; but each group drains its accumulators with its own blocking <code class="k">RD_MACB</code>, and blocking instructions stall the single in-order DMA <i>globally</i>. Four groups quadruple the serialization points and the stalls more than eat the fill savings (7.01 vs 4.96 ms at 16 ch). Token-parallelism has a sweet spot at G=2; going further needs per-group DMA queues or non-blocking accumulator reads (a P4-class controller extension), multi-port GBs, or activation compression &mdash; the concrete hardware agenda this measurement produces.</div>
       <figure>
-        <img src="assets/scaling.png" alt="Line chart of AE step latency versus active channels 8, 16, 32 on a log axis. Stock AiM: 68.45, 36.71, 21.73 ms. Extended ISA with 64-vector GB: 7.58, 5.58, 4.59 ms, flattening because broadcast terms do not scale. With dedup and token-parallel x2: 7.72, 4.81, 3.38 ms, restoring scaling toward the dashed XPU floor at 3.15 ms; the XPU realistic 2x reference is 6.30 ms.">
-        <figcaption class="cap">Fig. 2 &mdash; Channel scaling per tier. The extended-ISA curve (yellow) flattens at high channel counts because the broadcast terms are channel-independent; the token-parallel fix (green) restores scaling and closes to within 7% of the XPU floor at 32 channels.</figcaption>
+        <img src="assets/scaling.png" alt="Line chart of AE step latency versus active channels 8, 16, 32 on a log axis. Stock AiM: 65.96, 35.47, 21.10 ms. AF-free extended ISA (P1+P4+P7): 7.36, 5.62, 4.78 ms, flattening because broadcast terms do not scale. With dedup, token-parallel x2 and the 64-vector GB: 7.64, 4.96, 3.64 ms, restoring scaling toward the dashed XPU floor at 3.15 ms; the XPU realistic 2x reference is 6.30 ms.">
+        <figcaption class="cap">Fig. 2 &mdash; Channel scaling per tier. The extended-ISA curve (yellow) flattens at high channel counts because the broadcast terms are channel-independent; the token-parallel fix (green) restores scaling and closes to within 16% of the XPU floor at 32 channels.</figcaption>
       </figure>
-      <p><b>Net:</b> 4.81 ms at Orin parity (1.31&times; faster than the realistic XPU), and 3.38 ms at 32 channels &mdash; within 7% of the XPU&rsquo;s <i>theoretical</i> bandwidth floor, from a machine that started 11.6&times; behind it.</p>
+      <p><b>Net:</b> 4.96 ms at Orin parity (1.27&times; faster than the realistic XPU), and 3.64 ms at 32 channels &mdash; within 16% of the XPU&rsquo;s <i>theoretical</i> bandwidth floor, from a machine that started 11.3&times; behind it.</p>
     </section>
 
     <section class="card" id="system">
@@ -517,14 +519,14 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <tr><td class="rowlabel">measured unoptimized stack (paper)</td><td class="num">543</td><td class="num">920</td><td class="num">1.1 Hz</td><td class="num">59%</td></tr>
           <tr><td class="rowlabel">optimized XPU (2&times; floor)</td><td class="num">25.2</td><td class="num">393</td><td class="num">2.5 Hz</td><td class="num">6.4%</td></tr>
           <tr><td class="rowlabel">stock AiM, 16 ch</td><td class="num">146.9</td><td class="num">515</td><td class="num">1.9 Hz</td><td class="num">29%</td></tr>
-          <tr><td class="rowlabel">extended AiM, 16 ch, serial</td><td class="num">19.3</td><td class="num">387</td><td class="num">2.6 Hz</td><td class="num">5.0%</td></tr>
-          <tr><td class="rowlabel">extended AiM + full-stale overlap (upper bound, SR-risky)</td><td class="num">19.3 (hidden)</td><td class="num">368</td><td class="num">2.7 Hz</td><td class="num">~0%</td></tr>
-          <tr><td class="rowlabel"><b>extended AiM + hybrid stale/fresh overlap</b></td><td class="num">19.3 (9.6 exposed)</td><td class="num"><b>378</b></td><td class="num"><b>2.65 Hz</b></td><td class="num"><b>2.5%</b></td></tr>
+          <tr><td class="rowlabel">extended AiM, 16 ch, serial</td><td class="num">19.9</td><td class="num">388</td><td class="num">2.6 Hz</td><td class="num">5.1%</td></tr>
+          <tr><td class="rowlabel">extended AiM + full-stale overlap (upper bound, SR-risky)</td><td class="num">19.9 (hidden)</td><td class="num">368</td><td class="num">2.7 Hz</td><td class="num">~0%</td></tr>
+          <tr><td class="rowlabel"><b>extended AiM + hybrid stale/fresh overlap</b></td><td class="num">19.9 (9.9 exposed)</td><td class="num"><b>378</b></td><td class="num"><b>2.65 Hz</b></td><td class="num"><b>2.5%</b></td></tr>
         </tbody>
       </table>
       </div>
       <div class="fig" id="fig-overlap">
-        <svg viewBox="0 0 900 300" role="img" aria-label="Two Gantt timelines of one control cycle. Serial: XPU runs vision (110 ms) then VLM (258 ms), then the AiM runs the Action Expert (19 ms), total 387 ms at 2.6 Hz; the AiM is idle 95% of the time. Overlapped: while the XPU runs vision and VLM for observation t, the AiM simultaneously denoises actions for observation t using the stale KV cache of observation t-1; the 19 ms AE fits far inside the 258 ms VLM window, so the cycle shrinks to 368 ms at 2.7 Hz and the Action Expert contributes zero critical-path latency.">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Two Gantt timelines of one control cycle. Serial: XPU runs vision (110 ms) then VLM (258 ms), then the AiM runs the Action Expert (20 ms), total 388 ms at 2.6 Hz; the AiM is idle 95% of the time. Overlapped: while the XPU runs vision and VLM for observation t, the AiM simultaneously denoises actions for observation t using the stale KV cache of observation t-1; the 20 ms AE fits far inside the 258 ms VLM window, so the cycle shrinks to 368 ms at 2.7 Hz and the Action Expert contributes zero critical-path latency.">
           <defs>
             <marker id="arr6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
@@ -560,19 +562,19 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <rect x="854" y="218" width="24" height="22" rx="4" fill="#1baf7a"/>
           <text x="866" y="233" text-anchor="middle" font-size="7" fill="#fff">fresh</text>
           <line x1="854" y1="240" x2="854" y2="256" stroke="#647083" stroke-width="1"/>
-          <text x="620" y="254" font-size="8.5" fill="#647083">last &lceil;N/2&rceil; steps on fresh KV(t): +9.6 ms exposed</text>
+          <text x="620" y="254" font-size="8.5" fill="#647083">last &lceil;N/2&rceil; steps on fresh KV(t): +9.9 ms exposed</text>
           <line x1="90" y1="272" x2="878" y2="272" stroke="#647083" stroke-width="1"/>
           <text x="481" y="288" text-anchor="middle" font-size="9" fill="#647083">cycle = vision + VLM + fresh tail = 378 ms &middot; staleness kept in V-AEFusion&rsquo;s measured-safe regime (&le;&frac12; of steps)</text>
         </svg>
-        <p class="cap">Fig. 3 &mdash; Macro-scale concurrency. Serial vs. hybrid stale/fresh pipelined control cycle: the coarse early denoising steps hide inside the VLM window on an 8-channel AiM partition; only the final fresh-KV steps (9.6 ms at N=4) remain on the critical path &mdash; 97% of the full-overlap win, inside the staleness regime V-AEFusion measured as SR-safe.</p>
+        <p class="cap">Fig. 3 &mdash; Macro-scale concurrency. Serial vs. hybrid stale/fresh pipelined control cycle: the coarse early denoising steps hide inside the VLM window on an 8-channel AiM partition; only the final fresh-KV steps (9.9 ms at N=4) remain on the critical path &mdash; 97% of the full-overlap win, inside the staleness regime V-AEFusion measured as SR-safe.</p>
       </div>
       <ul class="notes">
-        <li><b>Stale-KV pipelining (needs P3) &mdash; with an honest staleness budget.</b> Denoise chunk t on AiM while the XPU runs vision+VLM on the next observation. Because AE (19 ms) &laquo; VLM (258 ms) the AE <i>could</i> hide completely &mdash; but running <i>every</i> step stale is SR-risky: V-AEFusion&rsquo;s own ablation (paper Table 7) holds at ~5 of 10 stale steps (&minus;0.3% SR) and <b>collapses beyond ~6</b> (88&rarr;80&rarr;50&rarr;10% as stale steps go 5&rarr;6&rarr;7&rarr;9). The adopted scheme is <b>hybrid</b>: the first &lceil;N/2&rceil; coarse steps run stale inside the VLM window, the last &lceil;N/2&rceil; on fresh KV &mdash; at N=4 the exposed fresh tail is 2&times;4.81 = 9.6 ms &rArr; cycle 378 ms, 2.65 Hz, keeping 97% of the win inside the measured-safe regime. Our P3 address-mapped KV streaming beats the GPU version structurally: fresh K/V rows land in banks <i>layer-by-layer as the VLM computes them</i>, so fresh conditioning can begin before prefill finishes. Note only vision context is ever stale &mdash; the state token re-embeds fresh every step.</li>
-        <li><b>Contention: static 8+8 channel partition.</b> During the overlap, 8 channels in AiM mode run the AE at 7.58 ms (still &laquo; the window) while the XPU keeps 8 channels = 102.4 GB/s &mdash; far above the compute-bound VLM&rsquo;s ~10&ndash;20 GB/s demand. System requirement: the XPU&rsquo;s address interleave is confined to its channel group during the window (memory-controller carve-out, statically schedulable in a deterministic control loop). KV double-buffering: 2&times;15 MB regions in 4 GB banks, row-pointer flip at the cycle boundary.</li>
+        <li><b>Stale-KV pipelining (needs P3) &mdash; with an honest staleness budget.</b> Denoise chunk t on AiM while the XPU runs vision+VLM on the next observation. Because AE (20 ms) &laquo; VLM (258 ms) the AE <i>could</i> hide completely &mdash; but running <i>every</i> step stale is SR-risky: V-AEFusion&rsquo;s own ablation (paper Table 7) holds at ~5 of 10 stale steps (&minus;0.3% SR) and <b>collapses beyond ~6</b> (88&rarr;80&rarr;50&rarr;10% as stale steps go 5&rarr;6&rarr;7&rarr;9). The adopted scheme is <b>hybrid</b>: the first &lceil;N/2&rceil; coarse steps run stale inside the VLM window, the last &lceil;N/2&rceil; on fresh KV &mdash; at N=4 the exposed fresh tail is 2&times;4.96 = 9.9 ms &rArr; cycle 378 ms, 2.65 Hz, keeping 97% of the win inside the measured-safe regime. Our P3 address-mapped KV streaming beats the GPU version structurally: fresh K/V rows land in banks <i>layer-by-layer as the VLM computes them</i>, so fresh conditioning can begin before prefill finishes. Note only vision context is ever stale &mdash; the state token re-embeds fresh every step.</li>
+        <li><b>Contention: static 8+8 channel partition.</b> During the overlap, 8 channels in AiM mode run the AE at 7.36 ms (still &laquo; the window) while the XPU keeps 8 channels = 102.4 GB/s &mdash; far above the compute-bound VLM&rsquo;s ~10&ndash;20 GB/s demand. System requirement: the XPU&rsquo;s address interleave is confined to its channel group during the window (memory-controller carve-out, statically schedulable in a deterministic control loop). KV double-buffering: 2&times;15 MB regions in 4 GB banks, row-pointer flip at the cycle boundary.</li>
         <li><b>Dual-use memory:</b> the AiM channels ARE the platform LPDDR. With P3 partitioning the XPU keeps full-bandwidth access for the 95% of the cycle the AE is idle &mdash; the difference between &ldquo;adding a PIM accelerator&rdquo; and &ldquo;the memory you already have can denoise.&rdquo;</li>
         <li><b>Micro-pipelining:</b> host post-processing of layer &#8467; overlaps AiM&rsquo;s layer &#8467;+1 (disjoint data) &mdash; a further &minus;10% if wanted.</li>
       </ul>
-      <div class="callout win"><b>Bottom line of the series.</b> A flow-matching VLA&rsquo;s Action Expert is mis-matched to both a GPU (too little reuse) and to GEMV-era PIM (too much). Six ISA extensions sized for S=51 &mdash; a multi-vector MAC with an accumulator file, in-memory softmax primitives, controller macros, mode partitioning, tile descriptors, and a write-back path &mdash; make LPDDR-PIM 7.6&times; faster than its stock self, 1.3&times; faster than a realistic XPU at equal memory budget, and, with pipelining, remove action generation from the robot&rsquo;s critical path entirely.</div>
+      <div class="callout win"><b>Bottom line of the series.</b> A flow-matching VLA&rsquo;s Action Expert is mis-matched to both a GPU (too little reuse) and to GEMV-era PIM (too much). Three AF-free ISA extensions sized for S=51 &mdash; a multi-vector MAC with an accumulator file, controller macros, and tile descriptors &mdash; plus two software scheduling fixes make LPDDR-PIM 7.2&times; faster than its stock self, 1.3&times; faster than a realistic XPU at equal memory budget, and, with pipelining, remove action generation from the robot&rsquo;s critical path entirely.</div>
     </section>
 
     <section class="card" id="energy">
@@ -580,34 +582,34 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
       <p class="lead">Latency is half the deployment story on a battery-powered robot. Per-command energy follows the CENT power calculator shipped with the simulator (GDDR6-AiM constants, conservative for LPDDR5): array/activate/MAC energies from command counts, DQ at 5.5&nbsp;pJ/bit, controller and standby power, and an AE-phase GPU power of 20&nbsp;W [ASSUMPTION; the paper measures 20&ndash;40% SM utilization; swept 15&ndash;30&nbsp;W].</p>
       <h3>Energy per step</h3>
       <figure>
-        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 510 mJ dominated by DRAM array and standby energy, extended AiM 137 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
-        <figcaption class="cap">Fig. 4 &mdash; Energy per denoising step. The extensions flip the energy verdict exactly as they flip latency: stock AiM is 2.6&times; <i>worse</i> than the realistic XPU; extended AiM is <b>1.41&times; better</b> (1.2&ndash;1.8&times; across the GPU-power sweep). Per N=4 inference: 549 vs 776 mJ.</figcaption>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 488 mJ dominated by DRAM array and standby energy, extended AiM 149 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 4 &mdash; Energy per denoising step. The extensions flip the energy verdict exactly as they flip latency: stock AiM is 2.5&times; <i>worse</i> than the realistic XPU; extended AiM is <b>1.30&times; better</b> (1.13&ndash;1.62&times; across the GPU-power sweep). Per N=4 inference: 597 vs 776 mJ.</figcaption>
       </figure>
       <ul class="notes">
-        <li><b>Why stock AiM loses on energy too:</b> 36.7 ms of standby burn (131 mJ) plus per-command overhead traffic. Slowness is itself an energy cost.</li>
-        <li><b>Honest caveat:</b> against the <i>theoretical-floor</i> XPU, extended AiM is &asymp;1.17&times; worse on energy &mdash; in-DRAM fp16 MACs cost more per op than tensor cores (3.5 pJ/MAC here), and MV still re-fetches weights 4&times; (16-slot accumulator file). The 64-slot file from &sect;7&rsquo;s agenda would cut the dominant 83 mJ MAC term ~4&times;. Combined figure of merit today: <b>1.31&times; latency &times; 1.41&times; energy &asymp; 1.85&times; energy-delay product</b> &mdash; plus the freed XPU.</li>
+        <li><b>Why stock AiM loses on energy too:</b> 35.5 ms of standby burn (127 mJ) plus per-command overhead traffic. Slowness is itself an energy cost.</li>
+        <li><b>Honest caveat:</b> against the <i>theoretical-floor</i> XPU, extended AiM is &asymp;1.27&times; worse on energy &mdash; in-DRAM fp16 MACs cost more per op than tensor cores (3.5 pJ/MAC here), and MV still re-fetches weights per tile pass. A 64-slot accumulator file (future work) would cut the dominant MAC term further. Combined figure of merit today: <b>1.27&times; latency &times; 1.30&times; energy &asymp; 1.65&times; energy-delay product</b> &mdash; plus the freed XPU.</li>
       </ul>
 
       <h3>What makes a baseline fair</h3>
       <ul class="notes">
-        <li><b>What a fair baseline is NOT: more LPDDR.</b> The XPU shares the memory system, and its floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while the AiM curve scales sub-linearly &mdash; adding channels helps the baseline more than the design. The legitimate framings are the three-tier baseline (vs measured 543 ms stack &rArr; <b>28&times;</b>; vs realistic 2&times; &rArr; <b>1.31&times;</b>; vs theoretical floor &rArr; 0.66&times; at 16 ch, 0.93&times; at 32 ch &mdash; rung definitions in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>), energy &amp; EDP (above), and iso-platform (same channels, plain vs AiM LPDDR; marginal cost = PIM die area).</li>
-        <li><b>Iso-cost scale-down (Orin NX, 102.4 GB/s = 8 channels):</b> NX AE floor 6.30 ms, realistic 2&times; 12.61 ms. Our best 8-channel config (7.58 ms, 64-vec GB; token-parallel is counter-productive at 8 ch) is <b>1.66&times; faster than the realistic NX baseline</b> and matches AGX-class realistic latency on a ~40%-cost module &mdash; with the AE hidden behind the VLM under stale-KV overlap, which an XPU-only NX cannot do.</li>
+        <li><b>What a fair baseline is NOT: more LPDDR.</b> The XPU shares the memory system, and its floor scales perfectly with channels (32 ch &rArr; 1.57 ms) while the AiM curve scales sub-linearly &mdash; adding channels helps the baseline more than the design. The legitimate framings are the three-tier baseline (vs measured 543 ms stack &rArr; <b>27&times;</b>; vs realistic 2&times; &rArr; <b>1.27&times;</b>; vs theoretical floor &rArr; 0.64&times; at 16 ch, 0.87&times; at 32 ch &mdash; rung definitions in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>), energy &amp; EDP (above), and iso-platform (same channels, plain vs AiM LPDDR; marginal cost = PIM die area).</li>
+        <li><b>Iso-cost scale-down (Orin NX, 102.4 GB/s = 8 channels):</b> NX AE floor 6.30 ms, realistic 2&times; 12.61 ms. Our best 8-channel config (7.36 ms, P1+P4+P7; token-parallel is counter-productive at 8 ch) is <b>1.71&times; faster than the realistic NX baseline</b> and matches AGX-class realistic latency on a ~40%-cost module &mdash; with the AE hidden behind the VLM under stale-KV overlap, which an XPU-only NX cannot do.</li>
       </ul>
 
       <h3>The deployment-baseline matrix</h3>
-      <p>The platforms robots actually deploy VLAs on are all LPDDR-based &mdash; <b>Orin NX</b> (102.4 GB/s; inside shipping Unitree G1 humanoids), <b>AGX Orin</b> (204.8 GB/s; the research workhorse), and <b>Jetson AGX Thor</b> (256-bit LPDDR5X, 273 GB/s; the GR00T-reference humanoid flagship). Cells are <b>our speedup&times; / energy&times;</b> at each platform&rsquo;s own channel budget (ours: 7.58 ms / 133 mJ at 8 ch; 4.81 ms / 137 mJ at 16 ch; host power 15 / 20 / 40 W per platform, Thor&rsquo;s measured AE &asymp; 36 ms/step from the paper&rsquo;s 246 ms end-to-end &mdash; assumptions tagged in the study):</p>
+      <p>The platforms robots actually deploy VLAs on are all LPDDR-based &mdash; <b>Orin NX</b> (102.4 GB/s; inside shipping Unitree G1 humanoids), <b>AGX Orin</b> (204.8 GB/s; the research workhorse), and <b>Jetson AGX Thor</b> (256-bit LPDDR5X, 273 GB/s; the GR00T-reference humanoid flagship). Cells are <b>our speedup&times; / energy&times;</b> at each platform&rsquo;s own channel budget (ours: 7.36 ms / 142 mJ at 8 ch; 4.96 ms / 149 mJ at 16 ch, 169 mJ at Thor&rsquo;s 40 W; host power 15 / 20 / 40 W per platform, Thor&rsquo;s measured AE &asymp; 36 ms/step from the paper&rsquo;s 246 ms end-to-end &mdash; assumptions tagged in the study):</p>
       <div class="scroll">
       <table>
         <thead><tr><th>Baseline tier (<a href="../01_stock_aim_offload/report.html#ladder">ladder defs</a>)</th><th>Orin NX (8 ch)</th><th>AGX Orin (16 ch)</th><th>Thor (16 ch)</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">measured stack</td><td class="num">n/a</td><td class="num"><b>28.3&times; / 24.3&times;</b></td><td class="num"><b>7.5&times; / 11.9&times;</b></td></tr>
-          <tr><td class="rowlabel">realistic 4&times;</td><td class="num">3.33&times; / 3.55&times;</td><td class="num">2.62&times; / 2.53&times;</td><td class="num">1.97&times; / 3.34&times;</td></tr>
-          <tr><td class="rowlabel">realistic 2&times;</td><td class="num"><b>1.66&times; / 1.93&times;</b></td><td class="num">1.31&times; / 1.41&times;</td><td class="num">0.98&times; / <b>1.82&times;</b></td></tr>
-          <tr><td class="rowlabel">theoretical floor</td><td class="num">0.83&times; / 1.12&times;</td><td class="num">0.66&times; / 0.86&times;</td><td class="num">0.49&times; / 1.06&times;</td></tr>
+          <tr><td class="rowlabel">measured stack</td><td class="num">n/a</td><td class="num"><b>27.4&times; / 22.4&times;</b></td><td class="num"><b>7.3&times; / 9.7&times;</b></td></tr>
+          <tr><td class="rowlabel">realistic 4&times;</td><td class="num">3.42&times; / 3.33&times;</td><td class="num">2.54&times; / 2.33&times;</td><td class="num">1.91&times; / 2.72&times;</td></tr>
+          <tr><td class="rowlabel">realistic 2&times;</td><td class="num"><b>1.71&times; / 1.81&times;</b></td><td class="num">1.27&times; / 1.30&times;</td><td class="num">0.95&times; / <b>1.49&times;</b></td></tr>
+          <tr><td class="rowlabel">theoretical floor</td><td class="num">0.86&times; / 1.05&times;</td><td class="num">0.64&times; / 0.79&times;</td><td class="num">0.48&times; / 0.87&times;</td></tr>
         </tbody>
       </table>
       </div>
-      <div class="callout win"><b>Energy is favorable in 11 of 12 cells</b> &mdash; including against the NX and Thor <i>theoretical floors</i>, because a GPU babysitting a memory-bound loop costs more than our whole budget; the single losing cell is the AGX floor (0.86&times;). The three anchors: <b>NX realistic</b> (1.66&times;/1.93&times; on the module inside real humanoids, vs hypothetical-best software &mdash; unassailable), <b>AGX measured</b> (28&times;/24&times; vs today&rsquo;s actual deployed software), and <b>Thor</b> (latency parity with its hypothetical best, yet 1.82&times; less energy with the 2,070-TFLOP Blackwell GPU entirely freed; 7.5&times;/11.9&times; vs its measured stack &mdash; and LPDDR5X&rsquo;s faster pins speed only the XPU&rsquo;s bus, not the in-bank MAC path, so AiM ports to Thor&rsquo;s memory unchanged).</div>
+      <div class="callout win"><b>Energy is favorable in 10 of 12 cells</b> &mdash; including against the NX <i>theoretical floor</i>, because a GPU babysitting a memory-bound loop costs more than our whole budget; the losing cells are the AGX and Thor floors (0.79&times;, 0.87&times;). The three anchors: <b>NX realistic</b> (1.71&times;/1.81&times; on the module inside real humanoids, vs hypothetical-best software &mdash; unassailable), <b>AGX measured</b> (27&times;/22&times; vs today&rsquo;s actual deployed software), and <b>Thor</b> (near-parity latency with its hypothetical best, yet 1.49&times; less energy with the 2,070-TFLOP Blackwell GPU entirely freed; 7.3&times;/9.7&times; vs its measured stack &mdash; and LPDDR5X&rsquo;s faster pins speed only the XPU&rsquo;s bus, not the in-bank MAC path, so AiM ports to Thor&rsquo;s memory unchanged).</div>
       <p class="cap">The full deployment-platform survey &mdash; the landscape table, per-platform AE ladders, and the compiled-stack rung &mdash; is <a href="../03_deployment_platforms/report.html">Part IV</a>.</p>
     </section>
 
