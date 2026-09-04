@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A **static HTML site** published through Vercel at <https://versel-distribute.vercel.app/>. There is no package manager, build step, or framework — pages are hand-written HTML/CSS served as-is. The git repository root is this directory (`00_repo/`); a sibling `../01_temp/` holds scratch HTML that is *not* part of the published site.
+A **static HTML site** published through Vercel at <https://versel-distribute.vercel.app/>. There is no package manager, build step, or framework — pages are hand-written HTML/CSS served as-is. This directory (`versel_distribute/`) is the git repository root and everything published comes from it.
 
 ## Commands
 
