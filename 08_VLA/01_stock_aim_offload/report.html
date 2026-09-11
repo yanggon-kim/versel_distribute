@@ -377,8 +377,8 @@ AiM RD_MAC 0 0xffff
       <h3>Stock AiM loses on energy too</h3>
       <p>Slowness is itself an energy cost: during the 35.5&nbsp;ms step the whole 16-channel memory system burns standby power (127&nbsp;mJ), and the per-command overheads (TMOD churn, blocking drains, row thrash) add array traffic on top. Modeled with the CENT per-command energy constants shipped with the simulator (DQ 5.5&nbsp;pJ/bit; 20&nbsp;W AE-phase GPU assumption, swept 15&ndash;30&nbsp;W &mdash; full model and assumptions in <a href="../02_extended_isa/report.html#energy">Part III &sect;9</a>):</p>
       <figure>
-        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 488 mJ dominated by DRAM array and standby energy, extended AiM 149 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
-        <figcaption class="cap">Fig. 3 &mdash; Energy per denoising step. Stock AiM costs <b>488&nbsp;mJ vs. the realistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.5&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part III&rsquo;s extensions flip both verdicts (149&nbsp;mJ, 1.30&times; better than the XPU).</figcaption>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 488 mJ dominated by DRAM array and standby energy, extended AiM 151 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 3 &mdash; Energy per denoising step. Stock AiM costs <b>488&nbsp;mJ vs. the realistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.5&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part III&rsquo;s extensions flip both verdicts (151&nbsp;mJ, 1.28&times; better than the XPU).</figcaption>
       </figure>
     </section>
 
@@ -400,7 +400,7 @@ AiM RD_MAC 0 0xffff
         <li><b>Each limitation exists for a hardware reason.</b> One GB vector: the GB is a 2 KB broadcast SRAM sized for GEMV. One accumulator/bank: a single 16-bit MAC register minimizes area in DRAM periphery. TMOD: the shared datapath multiplexes array and register access. Blocking reads: the single in-order DMA is the hazard mechanism. All are sensible for S = 1 &mdash; and all are wrong for S = 51.</li>
       </ul>
       <figure>
-        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 35.5 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 4.96 ms.">
+        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 35.5 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 5.49 ms.">
         <figcaption class="cap">Fig. 4 &mdash; The crossover, drawn. Ideal resource bounds (lines) vs. measured points (squares) at S = 51. Stock AiM wins the S &le; ~14 GEMV regime it was designed for and loses linearly beyond it; the extended ISA of Part III (green) restores fetch-bound scaling.</figcaption>
       </figure>
       <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../02_extended_isa/report.html">Part III</a> adds the missing amortization to the AiM ISA and flips the result.</div>
@@ -411,7 +411,7 @@ AiM RD_MAC 0 0xffff
       <ul class="notes">
         <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
         <li><b>Part II (this page)</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM.</li>
-        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 35.5 ms to 4.96 ms per step</a></li>
+        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, six ISA extensions: from 35.5 ms to 5.49 ms per step</a></li>
               <li><a href="../03_deployment_platforms/report.html"><b>Part IV</b> &mdash; Deployment platforms: where robots actually run VLAs &amp; the speed/energy baseline matrix</a></li>
       </ul>
       <p class="cap">Sources: arkhadem/aim_simulator @ <code class="k">0f28a07</code> (CENT, ASPLOS&rsquo;25; MIT); SK hynix AiM: HC34 poster + ISSCC&rsquo;22/JSSC&rsquo;23 papers; NVIDIA Jetson AGX Orin Technical Brief v1.2 (42 TFLOP/s bf16, 204.8 GB/s, spec-verified); trace generator, sweep scripts, and CSVs in the study workspace &mdash; every number regenerates from committed traces.</p>
