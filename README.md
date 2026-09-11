@@ -50,7 +50,7 @@ from the published site.
     Expert to stock LPDDR5-AiM (ISA, simulator, mapping, baseline ladder, and
     why it loses 5.8x).
   - `08_VLA/02_extended_isa/report.html`: Part III — eight problems, six ISA
-    extensions (35.5 -> 5.49 ms/step, AF-free premise, 4x-wide PU), energy analysis, and the
+    extensions (28.5 -> 9.77 ms/step, AF-free premise, no added multipliers), energy analysis, and the
     deployment-baseline matrix.
   - `08_VLA/03_deployment_platforms/report.html`: Part IV — deployment-platform
     survey (Orin NX / AGX Orin / Thor / Qualcomm IQ10 / Ascend), the per-platform
