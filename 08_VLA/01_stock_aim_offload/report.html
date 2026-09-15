@@ -169,6 +169,25 @@
         <p class="cap">Fig. 0a &mdash; What a DRAM channel is made of. Everything below reduces to three verbs: <b>open a row</b> (ACT), <b>move one column</b> (RD/WR), <b>close the row</b> (PRE). Opening is slow, moving columns from an open row is fast, and a channel can only move one column every tCCD.</p>
       </div>
 
+      <p><b>Beats are not cycles.</b> The 16 beats of a burst happen <i>inside</i> the 4-cycle BL, not one per cycle: LPDDR5 clocks its data pins with a strobe several times faster than the command clock and transfers on both edges, so the pins run at four transfers per simulator cycle. tCCD is set equal to BL on purpose &mdash; the next column command is allowed exactly when the previous burst ends, so back-to-back reads keep the pins 100 % busy with no gap and no collision. That is the 12.8 GB/s in Fig. 0b(b); 64 cycles per 32 B would be 0.8 GB/s, sixteen times too slow.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>quantity</th><th class="num">value</th><th>note</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">DQ pin rate</td><td class="num">6,400 MT/s</td><td>LPDDR5-6400, 16 pins</td></tr>
+          <tr><td class="rowlabel">one beat</td><td class="num">0.156 ns</td><td>2 B (16 pins &times; 1 bit)</td></tr>
+          <tr><td class="rowlabel">one burst = 16 beats</td><td class="num">2.5 ns = 32 B</td><td>the data phase of one RD or WR</td></tr>
+          <tr><td class="rowlabel">one simulator cycle</td><td class="num">0.625 ns</td><td>tCK convention (&sect;3)</td></tr>
+          <tr><td class="rowlabel">BL = tCCD</td><td class="num">4 cycles</td><td>2.5 ns / 0.625 ns; 4 beats per cycle</td></tr>
+          <tr><td class="rowlabel">per-channel bandwidth</td><td class="num">32 B / 2.5 ns = 12.8 GB/s</td><td>&times; 16 channels = 204.8 GB/s (Orin); 623 MB / 204.8 GB/s = 3.04 ms of the 3.15 ms XPU floor</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Why bank groups, and not just more banks?</h3>
+      <p>Banks alone give <i>row-level</i> parallelism: while bank 0 is paying tRCD or tRP, bank 1 can be transferring columns, so the pins stay busy across row switches. They do not give <i>column-level</i> parallelism if every bank feeds the same column datapath. At 6,400 MT/s the DRAM core &mdash; column decoder, internal prefetch latch and the wiring from the array to the I/O &mdash; cannot complete one 32 B column access per 2.5 ns from the <i>same</i> group of banks; its cycle time is longer than the burst on the pins. The fix is to give each bank group its own column datapath and let the controller alternate bursts between groups: back-to-back accesses to different groups may be spaced by the short tCCD, accesses to the same group need the longer core time (tCCD_L). Interleaving four groups hides the slow core behind the fast pins. This is why LPDDR5 requires bank-group (or 8-bank) mode at its top data rates, and why DDR4/5 and GDDR6 have the same structure. Write-to-read turnarounds are also cheaper across groups (the preset&rsquo;s nWTRS = 5 vs nWTRL = 10).</p>
+      <p>For this page the distinction barely matters, and it is worth knowing why. The simulator&rsquo;s LPDDR5-AiM preset uses one tCCD = 4 for both cases, and AiM&rsquo;s <code class="k">MAC_ABK</code> is an all-bank command: all 16 banks read their column <i>internally and simultaneously</i>, none of the data crosses the shared I/O, so the per-group column datapath is never the bottleneck. The pins-side limit that bank groups exist to work around is exactly the limit AiM sidesteps by computing inside the bank.</p>
+
       <h3>Commands: the memory controller&rsquo;s vocabulary</h3>
       <div class="scroll">
       <table>
