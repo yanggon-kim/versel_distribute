@@ -1392,7 +1392,10 @@ for t in 0..50:            <span class="c"># 51</span>      fill: for v in 0..25
       <ul class="notes">
         <li><b>The new loop is the beat loop</b>, innermost, inside each column, run by the PU &mdash; not by the host and not by the DMA. The row-group loop already existed in stock.</li>
         <li><b>The column stays outside the beats.</b> Fetch once, then sweep the 16 resident tokens. Reversed, every beat would need its own fetch and nothing would be saved.</li>
-        <li><b>The token loop shrinks</b> from 51 iterations to 2 per channel group (26 tokens = one group of 16 plus one of 10). Row-groups double from 8 to 16 because token-parallel &times;2 leaves 8 channels per group, so one sweep covers 128 outputs instead of 256.</li>
+        <li><b>The token loop shrinks</b> from 51 iterations to 2 per channel group (26 tokens = one slice of 16 plus one of 10). <code class="k">vg</code> selects which slice the 16-slot accumulator file is holding; it does not refill the tile.</li>
+        <li><b>Row-groups double from 8 to 16</b> because token-parallel &times;2 leaves 8 channels per group: one sweep covers 16 banks &times; 8 channels = 128 outputs instead of 256, so q_proj&rsquo;s 2,048 outputs need twice as many sweeps. Each group holds a full weight replica and computes all 2,048 outputs for its own tokens.</li>
+        <li><b>Deeper nesting, far less work.</b> Loop depth costs nothing; trip count &times; per-iteration cost does. Per channel for q_proj: stock 51 &times; 8 = 408 sweeps &rarr; 26,112 column fetches, 408 drains, 408 row switches; P1 2 &times; 16 = 32 sweeps &rarr; 2,048 fetches, 32 drains, 32 row switches. That is 4 fetches per output produced versus 0.31. The beat loop added one level and removed a factor of 16 from an outer one.</li>
+        <li><b>Token-parallel is fetch-neutral per channel.</b> Halving the tokens per group halves <code class="k">vg</code> and halving the channels doubles <code class="k">g</code>, so with or without the split each channel issues 32 sweeps (the no-split trace: G = 1, rgroups = 8, 4 slices &rarr; 32). Its gain is the fill stream: each group pushes 26 vectors through its own pins instead of 51, and the two groups do it concurrently.</li>
       </ul>
 
       <h3>Why 16, when there are 51 tokens?</h3>
