@@ -1376,25 +1376,72 @@ AiM RD_MACB 16 0 0xff
 AiM WR_TILE 16 0 0xffff 0 4900   <span class="c"># P7: one descriptor for a whole activation-tile write (was 880 WR_SBK lines)</span>
 AiM ENDLOOP</pre>
 
-      <h3>What changes in the loop nest</h3>
-      <pre class="cmd"><span class="c">STOCK (per channel)                     P1 (V = 16, with token-parallel &times;2)</span>
-for t in 0..50:            <span class="c"># 51</span>      fill: for v in 0..25: WR_GB 64   <span class="c"># once per projection</span>
-    WR_GB 64                            for vg in 0..1:        <span class="c"># token groups: 26 = 16 + 10</span>
-    for g in 0..7:    <span class="c"># row-groups</span>          for g in 0..15:    <span class="c"># row-groups (8 ch/group)</span>
-        WR_BIAS                                 WR_BIAS
-        MAC_ABK 64:                             MAC_ABK_MV 64:
-          for c in 0..63:  <span class="c"># DMA</span>               for c in 0..63:      <span class="c"># DMA: one fetch each</span>
-              16 lanes -&gt; acc_b                     for i in 0..15:  <span class="c"># NEW: beats, in the PU</span>
-        RD_MAC                                          16 lanes -&gt; s_i
-                                                RD_MACB
-<span class="c"># q_proj in the trace: stock 51 WR_GB / 408 MAC_ABK / 408 RD_MAC;</span>
-<span class="c">#                     P1    51 WR_GB / 64 MAC_ABK_MV / 64 RD_MACB (2 ch-groups x 2 token-groups x 16 row-groups)</span></pre>
+      <h3>The idea, without any hardware</h3>
+      <p>Strip away channels, banks, commands and buffers. A projection is just this: <code class="k">Y[t][j] = &Sigma;<sub>k</sub> X[t][k] &middot; W[j][k]</code>, with S = 51 tokens, N = 2,048 outputs and K = 1,024 inputs. Three loops, and the only thing that separates stock from P1 is <i>where the token loop sits relative to the read of W</i>.</p>
+      <pre class="cmd"><span class="c">(a) STOCK ORDER — token loop outermost</span>
+for t in 0 .. S-1:                 <span class="c"># 51 tokens</span>
+    for j in 0 .. N-1:             <span class="c"># 2,048 outputs</span>
+        acc = 0                    <span class="c"># ONE accumulator</span>
+        for k in 0 .. K-1:         <span class="c"># 1,024 inputs</span>
+            acc += W[j][k] * X[t][k]      <span class="c"># W[j][k] is read HERE</span>
+        Y[t][j] = acc
+<span class="c"># every W[j][k] is read S = 51 times: the weight loop is inside the token loop</span></pre>
+      <pre class="cmd"><span class="c">(b) P1 ORDER — tile the token loop by V and sink it BELOW the read of W</span>
+for t0 in 0 .. S-1 step V:         <span class="c"># V = 16 → 4 tiles cover 51 tokens</span>
+    for j in 0 .. N-1:
+        acc[0 .. V-1] = 0          <span class="c"># V accumulators, one per token in the tile</span>
+        for k in 0 .. K-1:
+            w = W[j][k]            <span class="c"># read ONCE …</span>
+            for i in 0 .. V-1:     <span class="c"># … and reused V times</span>
+                acc[i] += w * X[t0+i][k]
+        Y[t0 .. t0+V-1][j] = acc[0 .. V-1]
+<span class="c"># every W[j][k] is read ceil(S/V) = 4 times instead of 51</span></pre>
+      <p>This is an ordinary register-tiling transform, and it is legal because the token dimension is a reduction-free outer product: token <i>t</i>&rsquo;s result never depends on token <i>t</i>&rsquo;s neighbours. <b>What it costs is exactly two things</b>: <i>V</i> partial sums must stay live while <i>k</i> advances, and <i>V</i> input vectors must be readable while <i>w</i> is held. A CPU or GPU does this in registers and cache without anyone noticing. Stock AiM cannot, because it has one accumulator per bank and one vector in the Global Buffer &mdash; so the inner <code class="k">i</code> loop has nowhere to live, and the token loop is forced back to the outside. <b>P1 is that storage, and nothing else.</b></p>
+
+      <h3>How the algorithm maps onto the machine</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>algorithmic term</th><th>where it lives in the hardware</th><th>stock</th><th>P1</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">inner <code class="k">k</code>, 16 at a time</td><td>the 16 PU lanes fed by one 32 B column fetch</td><td colspan="2">same &mdash; 16 multipliers, one column</td></tr>
+          <tr><td class="rowlabel">rest of <code class="k">k</code> (64 columns)</td><td>the column sweep the DMA unrolls from <code class="k">opsize=64</code></td><td colspan="2">same</td></tr>
+          <tr><td class="rowlabel"><code class="k">j</code> (outputs)</td><td>spread across banks &times; channels; 256 values of <i>j</i> advance at once, the rest become row-groups</td><td colspan="2">same</td></tr>
+          <tr><td class="rowlabel"><code class="k">X[t0..t0+V-1]</code></td><td>the Global Buffer</td><td>1 vector (2 KB)</td><td><b>V vectors resident</b> (32 KB)</td></tr>
+          <tr><td class="rowlabel"><code class="k">acc[0..V-1]</code></td><td>the per-bank accumulator</td><td>1 slot (16 bit)</td><td><b>V slots</b> (32 B)</td></tr>
+          <tr><td class="rowlabel">inner <code class="k">i</code> loop</td><td>beats inside one command, driven by the PU clock</td><td><b>cannot exist</b></td><td>16 beats per column fetch</td></tr>
+          <tr><td class="rowlabel"><code class="k">Y[...] = acc[...]</code></td><td>the drain to the host</td><td><code class="k">RD_MAC</code>, 1 value per bank</td><td><code class="k">RD_MACB</code>, V values per bank in one burst</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>The same two orders, in ISR terms</h3>
+      <pre class="cmd"><span class="c">STOCK, per channel — the t loop is on the outside</span>
+for t in 0..50:                <span class="c"># 51 tokens</span>
+    WR_GB 64                   <span class="c"># the one vector X[t]</span>
+    for g in 0..7:             <span class="c"># row-groups = the j loop, 256 outputs at a time</span>
+        WR_BIAS                <span class="c"># acc = 0</span>
+        MAC_ABK 64:
+          for c in 0..63:      <span class="c"># the k loop, unrolled by the DMA</span>
+              16 lanes -&gt; acc
+        RD_MAC                 <span class="c"># Y[t][j-group]</span>
+<span class="c"># q_proj in the trace: 51 WR_GB, 408 MAC_ABK, 408 RD_MAC</span></pre>
+      <pre class="cmd"><span class="c">P1, per channel — the t loop is tiled and its remainder sinks into the command</span>
+fill: for v in 0..25:  WR_GB 64     <span class="c"># X tile resident (26 tokens in this channel group)</span>
+for vg in 0..1:                     <span class="c"># which slice of 16 the acc file holds (16 + 10)</span>
+    for g in 0..15:                 <span class="c"># row-groups (8 channels per group, so twice as many)</span>
+        WR_BIAS                     <span class="c"># acc[0..15] = 0</span>
+        MAC_ABK_MV 64:
+          for c in 0..63:           <span class="c"># the k loop, one fetch each</span>
+              for i in 0..15:       <span class="c"># the NEW i loop: 16 beats in the PU</span>
+                  16 lanes -&gt; acc[i]
+        RD_MACB                     <span class="c"># Y[16 tokens][j-group] in one burst</span>
+<span class="c"># q_proj in the trace: 51 WR_GB, 64 MAC_ABK_MV, 64 RD_MACB (2 channel groups x 2 slices x 16 row-groups)</span></pre>
       <ul class="notes">
-        <li><b>The new loop is the beat loop</b>, innermost, inside each column, run by the PU &mdash; not by the host and not by the DMA. The row-group loop already existed in stock.</li>
+        <li><b>The new loop is the <code class="k">i</code> loop</b>, innermost, inside each column fetch, run by the PU &mdash; not by the host and not by the DMA. The row-group loop already existed in stock.</li>
         <li><b>The column stays outside the beats.</b> Fetch once, then sweep the 16 resident tokens. Reversed, every beat would need its own fetch and nothing would be saved.</li>
-        <li><b>The token loop shrinks</b> from 51 iterations to 2 per channel group (26 tokens = one slice of 16 plus one of 10). <code class="k">vg</code> selects which slice the 16-slot accumulator file is holding; it does not refill the tile.</li>
-        <li><b>Row-groups double from 8 to 16</b> because token-parallel &times;2 leaves 8 channels per group: one sweep covers 16 banks &times; 8 channels = 128 outputs instead of 256, so q_proj&rsquo;s 2,048 outputs need twice as many sweeps. Each group holds a full weight replica and computes all 2,048 outputs for its own tokens.</li>
-        <li><b>Deeper nesting, far less work.</b> Loop depth costs nothing; trip count &times; per-iteration cost does. Per channel for q_proj: stock 51 &times; 8 = 408 sweeps &rarr; 26,112 column fetches, 408 drains, 408 row switches; P1 2 &times; 16 = 32 sweeps &rarr; 2,048 fetches, 32 drains, 32 row switches. That is 4 fetches per output produced versus 0.31. The beat loop added one level and removed a factor of 16 from an outer one.</li>
+        <li><b><code class="k">vg</code> selects which slice of 16 tokens the accumulator file is holding</b> (26 tokens = one slice of 16 plus one of 10); it does not refill the tile.</li>
+        <li><b>Row-groups double from 8 to 16</b> because token-parallel &times;2 leaves 8 channels per group: one sweep covers 16 banks &times; 8 channels = 128 outputs instead of 256. Each group holds a full weight replica and computes all 2,048 outputs for its own tokens.</li>
+        <li><b>Deeper nesting, far less work.</b> Loop depth costs nothing; trip count &times; per-iteration cost does. Per channel for q_proj: stock 51 &times; 8 = 408 sweeps &rarr; 26,112 column fetches, 408 drains, 408 row switches; P1 2 &times; 16 = 32 sweeps &rarr; 2,048 fetches, 32 drains, 32 row switches. That is 4 fetches per output produced versus 0.31. The <code class="k">i</code> loop added one level and removed a factor of 16 from an outer one.</li>
         <li><b>Token-parallel is fetch-neutral per channel.</b> Halving the tokens per group halves <code class="k">vg</code> and halving the channels doubles <code class="k">g</code>, so with or without the split each channel issues 32 sweeps (the no-split trace: G = 1, rgroups = 8, 4 slices &rarr; 32). Its gain is the fill stream: each group pushes 26 vectors through its own pins instead of 51, and the two groups do it concurrently.</li>
       </ul>
 
