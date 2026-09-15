@@ -1472,6 +1472,29 @@ for vg in 0..1:                     <span class="c"># which slice of 16 the acc 
         <li><b>So V = 16 is defensible, not optimal.</b> It is what the hardware likes &mdash; power-of-two slot index, and one <code class="k">RD_MACB</code> burst is exactly one 32 B GPR word, the format stock <code class="k">RD_MAC</code> already produces &mdash; and it leaves 1.20&times; on the table. A V-matched design pays a wider slot index and a burst count that no longer equals the GPR width.</li>
       </ul>
 
+      <h4 style="margin:22px 0 6px;font-size:1rem;">Where the time goes as V grows</h4>
+      <div class="scroll">
+      <table>
+        <thead><tr><th class="num">V</th><th class="num">MAC</th><th class="num">GB fill</th><th class="num">TMOD</th><th class="num">row</th><th class="num">other</th><th class="num">AiM ms</th><th class="num">overhead</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="num">0.652</td><td class="num">0.069</td><td class="num">0.210</td><td class="num">0.110</td><td class="num">0.763</td><td class="num">1.803</td><td class="num">64 %</td></tr>
+          <tr><td class="num">4</td><td class="num">0.282</td><td class="num">0.069</td><td class="num">0.056</td><td class="num">0.029</td><td class="num">0.217</td><td class="num">0.653</td><td class="num">57 %</td></tr>
+          <tr><td class="num">8</td><td class="num">0.317</td><td class="num">0.070</td><td class="num">0.031</td><td class="num">0.016</td><td class="num">0.132</td><td class="num">0.565</td><td class="num">44 %</td></tr>
+          <tr><td class="num">13</td><td class="num">0.266</td><td class="num">0.070</td><td class="num">0.017</td><td class="num">0.009</td><td class="num">0.076</td><td class="num">0.437</td><td class="num">39 %</td></tr>
+          <tr style="background:#eef5ff;"><td class="num"><b>16</b></td><td class="num">0.317</td><td class="num">0.070</td><td class="num">0.016</td><td class="num">0.008</td><td class="num">0.076</td><td class="num"><b>0.486</b></td><td class="num">35 %</td></tr>
+          <tr style="background:#e7f5ec;"><td class="num"><b>26</b></td><td class="num">0.266</td><td class="num">0.070</td><td class="num">0.009</td><td class="num">0.004</td><td class="num">0.048</td><td class="num"><b>0.396</b></td><td class="num"><b>33 %</b></td></tr>
+          <tr><td class="num">51</td><td class="num">0.476</td><td class="num">0.069</td><td class="num">0.007</td><td class="num">0.004</td><td class="num">0.062</td><td class="num">0.618</td><td class="num">23 %</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">Milliseconds per layer per channel, 16 channels; the MAC column carries the PU charge of V ns per fetch. Same runs as the table above.</p>
+      <ul class="notes">
+        <li><b>What collapses:</b> the per-fetch overheads, exactly as 1/V. Mode switches 0.210 &rarr; 0.009 ms, row switches 0.110 &rarr; 0.004. By V = 13 they are together 6 % of the layer and there is little left to win.</li>
+        <li><b>What does not:</b> the <b>activation broadcast</b> (0.070 ms, flat &mdash; every token vector must cross the external pins into the GB once per projection whatever the command depth; 18 % of the layer at V = 26, the largest remaining overhead, and the target of dedup, token-parallel and <a href="../02_extended_isa/report.html#bcast">Part III &sect;7</a>), and the <b>drain and bias stream</b> (most of the residual: one result per token per row-group leaves the bank however it is packaged, so <code class="k">RD_MACB</code> bursts and <code class="k">WR_BIAS</code> scale with tokens &times; row-groups, not with 1/V). The rest of the residual is the wait after each row activation, refresh and host barriers.</li>
+        <li><b>So the overhead share falls from 64 % to 33 % and stops</b>, with the floor set by moving activations in and results out. V = 51 has the lowest overhead share (23 %) and the worst time above V = 4: padded multiplies inflate the MAC term faster than the bookkeeping shrinks.</li>
+        <li><b>Hardware cost of depth:</b> the accumulator file is 2 B per slot per bank &mdash; 32 B/bank (512 B/channel) at V = 16, 52 B/bank (832 B/channel) at V = 26. The GB does not grow, since the 128 KB tile already holds 26 vectors. A non-power-of-two depth instead costs decode tidiness: a 5-bit slot index and a <code class="k">RD_MACB</code> that no longer bursts exactly one 32 B GPR word per slot.</li>
+      </ul>
+
       <h3>Running the clock again: one (16-token tile, row-group)</h3>
       <pre class="cmd"><span class="c">cycle    command           what happens                                                useful?</span>
 T+5      WR_BIAS           16 × 16 accumulator slots := 0                               no
