@@ -1376,6 +1376,15 @@ AiM RD_MACB 16 0 0xff
 AiM WR_TILE 16 0 0xffff 0 4900   <span class="c"># P7: one descriptor for a whole activation-tile write (was 880 WR_SBK lines)</span>
 AiM ENDLOOP</pre>
 
+      <h3>Why 16, when there are 51 tokens?</h3>
+      <p><b>Two knobs, only one of them fixed at 16.</b> The <i>command depth</i> &mdash; how many token vectors one <code class="k">MAC_ABK_MV</code> sweeps, and therefore how many slots the accumulator file needs &mdash; is 16. The <i>GB tile capacity</i> &mdash; how many vectors are resident before a refill &mdash; is separate: 16 vectors (32 KB) measures 9.87 ms/step and 64 vectors (128 KB) measures 9.77 ms, so the headline uses 64 and the 16-vector version costs 1.1 %.</p>
+      <ul class="notes">
+        <li><b>16 is the machine&rsquo;s existing width.</b> 16 banks, 16 PU lanes, and a GPR word of 32 B = 16 fp16. <code class="k">RD_MACB</code> is 16 bursts of 32 B, burst <i>i</i> carrying slot <i>i</i> of all 16 banks &mdash; byte-for-byte the format stock <code class="k">RD_MAC</code> already produces, so the drain path and host unpacking are unchanged. A 51-slot file needs a non-power-of-two index and a read that no longer maps onto a burst.</li>
+        <li><b>It is nearly free.</b> 16 slots &times; 16 bits = 32 B per bank plus a 4-bit select mux (&asymp; 240 flip-flop equivalents per PU). 51 slots would be 102 B per bank for a worse fit.</li>
+        <li><b>Returns die out well before 51.</b> The MAC term stops improving at depth &asymp; 3, because 16 lanes at 1 GHz need 1 ns while a column slot lasts 2.5 ns (Fig. 6b). Everything past that comes from dividing the per-fetch overheads (TMOD, row switches, drains) by the depth, and at 16 those are already down to &asymp; 3 % of the stock layer; going to 51 would buy roughly another 10 % for 3&times; the storage.</li>
+        <li><b>Padding argues for shrinking, not growing.</b> 51 tokens at depth 16 is 4 groups = 64 slots, so 1.25&times; of the work is padding. The cross-vendor study fixes that by making the command carry 13 vectors instead of 16 (worth 1.12&times; on AiM), not by deepening the tile.</li>
+      </ul>
+
       <h3>Running the clock again: one (16-token tile, row-group)</h3>
       <pre class="cmd"><span class="c">cycle    command           what happens                                                useful?</span>
 T+5      WR_BIAS           16 × 16 accumulator slots := 0                               no
