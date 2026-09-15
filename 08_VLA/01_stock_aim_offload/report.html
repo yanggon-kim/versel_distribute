@@ -1376,6 +1376,25 @@ AiM RD_MACB 16 0 0xff
 AiM WR_TILE 16 0 0xffff 0 4900   <span class="c"># P7: one descriptor for a whole activation-tile write (was 880 WR_SBK lines)</span>
 AiM ENDLOOP</pre>
 
+      <h3>What changes in the loop nest</h3>
+      <pre class="cmd"><span class="c">STOCK (per channel)                     P1 (V = 16, with token-parallel &times;2)</span>
+for t in 0..50:            <span class="c"># 51</span>      fill: for v in 0..25: WR_GB 64   <span class="c"># once per projection</span>
+    WR_GB 64                            for vg in 0..1:        <span class="c"># token groups: 26 = 16 + 10</span>
+    for g in 0..7:    <span class="c"># row-groups</span>          for g in 0..15:    <span class="c"># row-groups (8 ch/group)</span>
+        WR_BIAS                                 WR_BIAS
+        MAC_ABK 64:                             MAC_ABK_MV 64:
+          for c in 0..63:  <span class="c"># DMA</span>               for c in 0..63:      <span class="c"># DMA: one fetch each</span>
+              16 lanes -&gt; acc_b                     for i in 0..15:  <span class="c"># NEW: beats, in the PU</span>
+        RD_MAC                                          16 lanes -&gt; s_i
+                                                RD_MACB
+<span class="c"># q_proj in the trace: stock 51 WR_GB / 408 MAC_ABK / 408 RD_MAC;</span>
+<span class="c">#                     P1    51 WR_GB / 64 MAC_ABK_MV / 64 RD_MACB (2 ch-groups x 2 token-groups x 16 row-groups)</span></pre>
+      <ul class="notes">
+        <li><b>The new loop is the beat loop</b>, innermost, inside each column, run by the PU &mdash; not by the host and not by the DMA. The row-group loop already existed in stock.</li>
+        <li><b>The column stays outside the beats.</b> Fetch once, then sweep the 16 resident tokens. Reversed, every beat would need its own fetch and nothing would be saved.</li>
+        <li><b>The token loop shrinks</b> from 51 iterations to 2 per channel group (26 tokens = one group of 16 plus one of 10). Row-groups double from 8 to 16 because token-parallel &times;2 leaves 8 channels per group, so one sweep covers 128 outputs instead of 256.</li>
+      </ul>
+
       <h3>Why 16, when there are 51 tokens?</h3>
       <p><b>Two knobs, only one of them fixed at 16.</b> The <i>command depth</i> &mdash; how many token vectors one <code class="k">MAC_ABK_MV</code> sweeps, and therefore how many slots the accumulator file needs &mdash; is 16. The <i>GB tile capacity</i> &mdash; how many vectors are resident before a refill &mdash; is separate: 16 vectors (32 KB) measures 9.87 ms/step and 64 vectors (128 KB) measures 9.77 ms, so the headline uses 64 and the 16-vector version costs 1.1 %.</p>
       <ul class="notes">
