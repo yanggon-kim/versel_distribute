@@ -800,6 +800,21 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
 <span class="c">+ 256 cycles of WR_GB per token, shared by 8 row-groups → ≈ 432 cycles per (token, row-group).</span>
 <span class="c">q_proj, one channel: 51 tokens × 8 row-groups × 432 ≈ 176 k cycles ≈ 0.11 ms of the layer's 1.43 ms.</span></pre>
 
+      <h3>Budget for one token, and why 51 tokens hurt twice</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>q_proj, one token, one channel</th><th class="num">cycles per row-group</th><th class="num">&times; 8 row-groups</th><th>kind</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">MAC sweep (64 columns &times; 4)</td><td class="num">256</td><td class="num">2,048 (59 %)</td><td>arithmetic</td></tr>
+          <tr><td class="rowlabel">WR_BIAS, TMOD, PREA, ACT16, nRCDRDMAC wait, TMOD, RD_MAC</td><td class="num">&asymp; 144</td><td class="num">&asymp; 1,152 (33 %)</td><td>bookkeeping</td></tr>
+          <tr><td class="rowlabel">WR_GB (64 columns &times; 4), once per token</td><td class="num"></td><td class="num">256 (7 %)</td><td>loading the vector</td></tr>
+          <tr><td class="rowlabel"><b>one token</b></td><td class="num"></td><td class="num"><b>&asymp; 3,456</b></td><td></td></tr>
+          <tr><td class="rowlabel"><b>&times; 51 tokens</b></td><td class="num"></td><td class="num"><b>&asymp; 176,000 = 0.11 ms</b></td><td>all six projections + attention sum to the layer&rsquo;s 1.43 ms (&sect;7)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>The 256 cycles are the <i>useful</i> part; the overhead is what wraps it. Both repeat for all 51 tokens, and the stock machine loses twice. <b>(1) Bookkeeping, pure waste:</b> the &asymp; 144 cycles around each sweep and the 256-cycle vector load exist only because a sweep serves one token, so q_proj pays them 408 and 51 times. <b>(2) Redundant fetches inside the useful part:</b> the multiplications themselves are needed (51 tokens &times; 2,048 outputs must be computed), but each 4-cycle column command pulls 16 weights per bank and uses them for one token&rsquo;s 16 multiplies &mdash; the multipliers finish in 1 cycle and idle for 3. The extended ISA of &sect;11 attacks both: bookkeeping is paid once per 16 tokens, and one fetch feeds 16 tokens&rsquo; multiplies, making the MAC term 2.5&times; cheaper per token with no added multiplier.</p>
+
       <div class="callout warn"><b>Read frame 4 again.</b> One sweep &mdash; one <code class="k">MAC_ABK</code> line, 64 column commands &times; tCCD 4 = <b>256 cycles</b> &mdash; makes each channel fetch 64 columns &times; 16 banks = 1,024 columns, 32 KB of weights, the full 16&times; internal bandwidth, and produce <b>16 finished outputs</b> for token <i>t</i>. That is one row-group. To finish token <i>t</i>, the channel repeats the sweep for all 8 row-groups: 256 KB fetched, 128 outputs, and all 2,048 outputs of q_proj across the 16 channels. Only then does token <i>t</i>+1 &mdash; the next of the 51 suffix tokens &mdash; get its own <code class="k">WR_GB</code>, and it needs the <i>same</i> 256 KB again. There is nowhere to keep a second token&rsquo;s vector (one GB) and nowhere to keep a second result (one accumulator), so the machine has no choice but to fetch everything again. <b>Every projection weight is fetched 51 times per layer</b> (once per token; 4,224 unique columns per channel &times; 51 = 215,424 fetches). Add attention re-reading the resident prefix K/V once per (token, head) and the channel&rsquo;s in-bank traffic is 135 MB for 2.16 MB of unique weights: <b>63&times;</b>.</div>
 
       <p>The activation-stationary alternative (Strategy B: the 51 tokens resident in banks, weight columns streamed through the GB via <code class="k">COPY_BKGB</code>) swaps which operand is re-fetched &mdash; activations get read 133&times; instead &mdash; and measures <b>34.6 ms</b>, 21% slower than Strategy A. We report Strategy A as the strawman throughout: it is the better of the two mappings the stock ISA allows. <b>Both are bound by the same per-command amortization, not by data movement.</b></p>
