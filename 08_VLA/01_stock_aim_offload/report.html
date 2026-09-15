@@ -67,15 +67,18 @@
   <nav class="toc" id="toc">
     <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
     <a href="#overview">Overview</a>
+    <a href="#lpddr">0 &middot; LPDDR5 in five minutes</a>
     <a href="#aim">1 &middot; LPDDR5-AiM: the machine</a>
     <a href="#isa">2 &middot; The ISR instruction set</a>
     <a href="#sim">3 &middot; The simulator</a>
     <a href="#what">4 &middot; What to offload, and why</a>
     <a href="#mapping">5 &middot; Instruction-level mapping</a>
-    <a href="#exec">6 &middot; Cycle-level execution walk-through</a>
-    <a href="#ladder">7 &middot; The baseline ladder</a>
-    <a href="#results">8 &middot; Results: latency &amp; energy</a>
-    <a href="#limits">9 &middot; Limitations &amp; root causes</a>
+    <a href="#exec">6 &middot; Stock AiM GEMV, cycle by cycle</a>
+    <a href="#problem">7 &middot; The problem, quantified</a>
+    <a href="#ladder">8 &middot; The baseline ladder</a>
+    <a href="#results">9 &middot; Results: latency &amp; energy</a>
+    <a href="#limits">10 &middot; Limitations &amp; root causes</a>
+    <a href="#fix">11 &middot; The fix, on the same diagram</a>
     <a href="#series">Series &amp; sources</a>
   </nav>
 
@@ -100,6 +103,135 @@
         <div class="kpi"><div class="v">16&times;</div><div class="l">internal:external bandwidth ratio of AiM (real, and yet&hellip;)</div></div>
         <div class="kpi"><div class="v">S &le; 16</div><div class="l">the token-count regime where stock AiM actually wins</div></div>
       </div>
+    </section>
+
+
+    <section class="card" id="lpddr">
+      <h2><span class="num">0</span>LPDDR5 in five minutes (read this first)</h2>
+      <p class="lead">Before the PIM machine, the plain memory it lives in. If you already know what a row buffer and tCCD are, skip to &sect;1. If not, the three ideas below are all you need for the rest of the page.</p>
+
+      <h3>Structure: channel &rarr; bank &rarr; row &rarr; column</h3>
+      <p>A phone- or robot-class SoC talks to LPDDR5 over several independent <b>channels</b>. Each channel is 16 data pins (x16) running at 6,400 MT/s, so it can move <b>12.8 GB/s</b> &mdash; Jetson AGX Orin has 16 such channels, 204.8 GB/s in total. Inside a channel are <b>16 banks</b> (4 bank groups &times; 4). A bank is a huge grid of capacitors, the <b>cell array</b>, organised in rows and columns. You cannot read a capacitor directly; you first <b>activate</b> a row, which copies the entire row (32 KB here) into a strip of sense amplifiers called the <b>row buffer</b>. Only then can you read or write <b>columns</b> of that row, 32 bytes at a time. When you need a different row, you <b>precharge</b> (close) the bank and activate again.</p>
+
+      <div class="fig" id="fig-lpddr">
+        <svg viewBox="0 0 900 340" role="img" aria-label="LPDDR5 channel block diagram. A memory controller drives a command/address bus and a 16-bit data bus into one channel. The channel holds 4 bank groups of 4 banks. One bank is zoomed: a cell array of rows and columns, a row decoder, a row buffer of sense amplifiers holding one open 32 KB row, and a column decoder that moves one 32-byte column between the row buffer and the data bus.">
+          <defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+          <rect x="10" y="60" width="130" height="80" rx="8" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="75" y="84" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">memory controller</text>
+          <text x="75" y="100" text-anchor="middle" font-size="9" fill="#647083">(in the SoC)</text>
+          <text x="75" y="114" text-anchor="middle" font-size="9" fill="#647083">turns requests into</text>
+          <text x="75" y="126" text-anchor="middle" font-size="9" fill="#647083">ACT / RD / WR / PRE</text>
+          <line x1="140" y1="84" x2="188" y2="84" stroke="#647083" stroke-width="1.4" marker-end="url(#arrF)"/>
+          <text x="164" y="78" text-anchor="middle" font-size="8" fill="#647083">CA bus</text>
+          <line x1="140" y1="118" x2="188" y2="118" stroke="#b54708" stroke-width="1.4" marker-start="url(#arrF)" marker-end="url(#arrF)"/>
+          <text x="164" y="132" text-anchor="middle" font-size="8" fill="#b54708">DQ: 16 bit</text>
+          <rect x="190" y="14" width="330" height="312" rx="10" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+          <text x="204" y="34" font-size="11" font-weight="bold" fill="#1f6feb">one LPDDR5 channel (x16, 6400 MT/s &rarr; 12.8 GB/s)</text>
+          <g font-size="8.5" fill="#172033">
+            <rect x="204" y="48" width="150" height="128" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="279" y="62" text-anchor="middle" font-weight="bold">bank group 0</text>
+            <rect x="212" y="70" width="64" height="44" rx="4" fill="#e7f0fe" stroke="#1f6feb"/><text x="244" y="96" text-anchor="middle">bank 0</text>
+            <rect x="284" y="70" width="64" height="44" rx="4" fill="#fff" stroke="#d8dee8"/><text x="316" y="96" text-anchor="middle">bank 1</text>
+            <rect x="212" y="122" width="64" height="44" rx="4" fill="#fff" stroke="#d8dee8"/><text x="244" y="148" text-anchor="middle">bank 2</text>
+            <rect x="284" y="122" width="64" height="44" rx="4" fill="#fff" stroke="#d8dee8"/><text x="316" y="148" text-anchor="middle">bank 3</text>
+            <rect x="362" y="48" width="150" height="128" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="437" y="62" text-anchor="middle" font-weight="bold">bank group 1</text>
+            <text x="437" y="118" text-anchor="middle" fill="#647083">banks 4&ndash;7</text>
+            <rect x="204" y="184" width="150" height="128" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="279" y="198" text-anchor="middle" font-weight="bold">bank group 2</text>
+            <text x="279" y="254" text-anchor="middle" fill="#647083">banks 8&ndash;11</text>
+            <rect x="362" y="184" width="150" height="128" rx="6" fill="#fbfcff" stroke="#d8dee8"/><text x="437" y="198" text-anchor="middle" font-weight="bold">bank group 3</text>
+            <text x="437" y="254" text-anchor="middle" fill="#647083">banks 12&ndash;15</text>
+          </g>
+          <text x="355" y="321" text-anchor="middle" font-size="8.5" fill="#647083">16 banks work independently; each keeps ONE row open at a time</text>
+          <line x1="276" y1="108" x2="558" y2="108" stroke="#1f6feb" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <rect x="560" y="14" width="330" height="312" rx="10" fill="#fff" stroke="#1f6feb" stroke-width="1.5"/>
+          <text x="574" y="34" font-size="11" font-weight="bold" fill="#1f6feb">inside one bank</text>
+          <rect x="574" y="46" width="24" height="150" rx="4" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="586" y="124" text-anchor="middle" font-size="8" fill="#172033" transform="rotate(-90 586 124)">row decoder</text>
+          <rect x="606" y="46" width="270" height="150" fill="#f1f4f9" stroke="#d8dee8"/>
+          <text x="741" y="66" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">cell array</text>
+          <text x="741" y="82" text-anchor="middle" font-size="8.5" fill="#647083">131,072 rows &times; 1,024 columns (as configured)</text>
+          <g stroke="#d8dee8" stroke-width="0.8">
+            <line x1="612" y1="100" x2="870" y2="100"/><line x1="612" y1="116" x2="870" y2="116"/><line x1="612" y1="132" x2="870" y2="132"/><line x1="612" y1="148" x2="870" y2="148"/>
+          </g>
+          <rect x="612" y="140" width="258" height="16" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="741" y="152" text-anchor="middle" font-size="8" fill="#172033">row g: one 32 KB row = 1,024 columns &times; 32 B</text>
+          <text x="741" y="184" text-anchor="middle" font-size="8.5" fill="#647083">a column = 32 B = 16 fp16 numbers</text>
+          <line x1="741" y1="196" x2="741" y2="212" stroke="#1f6feb" stroke-width="1.6" marker-end="url(#arrF)"/>
+          <text x="752" y="208" font-size="8" fill="#1f6feb">ACT: row &rarr; row buffer (slow: tRCD)</text>
+          <rect x="606" y="214" width="270" height="24" fill="#e7f0fe" stroke="#1f6feb"/>
+          <text x="741" y="230" text-anchor="middle" font-size="8.5" fill="#172033">row buffer (sense amplifiers): the open row</text>
+          <line x1="741" y1="238" x2="741" y2="254" stroke="#b54708" stroke-width="1.6" marker-start="url(#arrF)" marker-end="url(#arrF)"/>
+          <text x="752" y="250" font-size="8" fill="#b54708">RD/WR: 1 column per tCCD (fast)</text>
+          <rect x="606" y="256" width="270" height="22" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="741" y="271" text-anchor="middle" font-size="8.5" fill="#172033">column decoder &rarr; 32 B burst on the DQ pins</text>
+          <text x="741" y="296" text-anchor="middle" font-size="8" fill="#647083">PRE: close the row (write it back), then tRP before the next ACT</text>
+          <text x="741" y="312" text-anchor="middle" font-size="8" fill="#1a7f37">AiM adds: a 16-lane MAC next to this column decoder, fed by the row buffer</text>
+        </svg>
+        <p class="cap">Fig. 0a &mdash; What a DRAM channel is made of. Everything below reduces to three verbs: <b>open a row</b> (ACT), <b>move one column</b> (RD/WR), <b>close the row</b> (PRE). Opening is slow, moving columns from an open row is fast, and a channel can only move one column every tCCD.</p>
+      </div>
+
+      <h3>Commands: the memory controller&rsquo;s vocabulary</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Command</th><th>What it does</th><th>Cost that matters</th><th>AiM analogue on this page</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">ACT (activate)</td><td>copy one row of one bank into its row buffer</td><td>must wait tRCD before the first column access; limited to one per tRRD, four per tFAW</td><td><code class="k">ACT16</code>: the same row opened in all 16 banks (two-phase on LPDDR5)</td></tr>
+          <tr><td class="rowlabel">RD / WR</td><td>move one 32 B column between the row buffer and the DQ pins</td><td>one per tCCD = 4 cycles; data arrives CL later</td><td><code class="k">MAC16</code>: every bank reads its column <i>internally</i> and multiplies instead of sending it out</td></tr>
+          <tr><td class="rowlabel">PRE / PREA</td><td>close one bank / all banks</td><td>allowed tRAS after ACT and tRTP after the last read; the next ACT waits tRP</td><td><code class="k">PREA</code> precedes every <code class="k">ACT16</code> row switch</td></tr>
+          <tr><td class="rowlabel">REF</td><td>refresh (capacitors leak)</td><td>steals the bank for tRFC every tREFI (&asymp; every 12,500 cycles here)</td><td>same; modeled, small</td></tr>
+          <tr><td class="rowlabel">&mdash;</td><td colspan="3"><i>AiM adds a second kind of command:</i> register-mode operations (<code class="k">WR_GB</code>, <code class="k">WR_BIAS</code>, <code class="k">RD_MAC</code>) that talk to the PIM&rsquo;s little buffers instead of the array, and a <code class="k">TMOD</code> switch that costs 32 cycles every time the channel changes between array mode and register mode.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Timing: the numbers used on this page</h3>
+
+      <div class="fig" id="fig-timing">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Timing diagram of one DRAM read on the simulator's LPDDR5-AiM preset. ACT at cycle 0; RD allowed at cycle 15 (tRCD); data appears on DQ 20 cycles after RD (CL) for 4 cycles (BL); further RDs to the same open row may follow every 4 cycles (tCCD); PRE is allowed 34 cycles after ACT (tRAS); the next ACT to the same bank waits 17 cycles after PRE (tRP). Below: streaming reads from an open row keep the DQ bus busy 4 cycles out of every 4, i.e. 12.8 GB/s.">
+          <defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+          <text x="14" y="22" font-size="11" font-weight="bold" fill="#172033">(a) one read, one bank &mdash; simulator preset, 1 cycle = 0.625 ns</text>
+          <line x1="60.0" y1="60" x2="866.4" y2="60" stroke="#d8dee8" stroke-width="1.2"/>
+          <line x1="60.0" y1="57" x2="60.0" y2="63" stroke="#d8dee8"/><text x="60.0" y="76" text-anchor="middle" font-size="7.5" fill="#647083">0</text><line x1="149.6" y1="57" x2="149.6" y2="63" stroke="#d8dee8"/><text x="149.6" y="76" text-anchor="middle" font-size="7.5" fill="#647083">8</text><line x1="239.2" y1="57" x2="239.2" y2="63" stroke="#d8dee8"/><text x="239.2" y="76" text-anchor="middle" font-size="7.5" fill="#647083">16</text><line x1="328.79999999999995" y1="57" x2="328.79999999999995" y2="63" stroke="#d8dee8"/><text x="328.79999999999995" y="76" text-anchor="middle" font-size="7.5" fill="#647083">24</text><line x1="418.4" y1="57" x2="418.4" y2="63" stroke="#d8dee8"/><text x="418.4" y="76" text-anchor="middle" font-size="7.5" fill="#647083">32</text><line x1="508.0" y1="57" x2="508.0" y2="63" stroke="#d8dee8"/><text x="508.0" y="76" text-anchor="middle" font-size="7.5" fill="#647083">40</text><line x1="597.5999999999999" y1="57" x2="597.5999999999999" y2="63" stroke="#d8dee8"/><text x="597.5999999999999" y="76" text-anchor="middle" font-size="7.5" fill="#647083">48</text><line x1="687.1999999999999" y1="57" x2="687.1999999999999" y2="63" stroke="#d8dee8"/><text x="687.1999999999999" y="76" text-anchor="middle" font-size="7.5" fill="#647083">56</text><line x1="776.8" y1="57" x2="776.8" y2="63" stroke="#d8dee8"/><text x="776.8" y="76" text-anchor="middle" font-size="7.5" fill="#647083">64</text><line x1="866.4" y1="57" x2="866.4" y2="63" stroke="#d8dee8"/><text x="866.4" y="76" text-anchor="middle" font-size="7.5" fill="#647083">72</text>
+          <text x="872.4" y="64" font-size="8" fill="#647083">cycle</text>
+          <line x1="60.0" y1="52" x2="60.0" y2="68" stroke="#1f6feb" stroke-width="1.6"/><text x="60.0" y="48" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#1f6feb">ACT</text>
+          <line x1="228.0" y1="52" x2="228.0" y2="68" stroke="#b54708" stroke-width="1.6"/><text x="228.0" y="48" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#b54708">RD</text>
+          <line x1="272.79999999999995" y1="52" x2="272.79999999999995" y2="68" stroke="#b54708" stroke-width="1.6"/><text x="272.79999999999995" y="48" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#b54708">RD</text>
+          <line x1="317.59999999999997" y1="52" x2="317.59999999999997" y2="68" stroke="#b54708" stroke-width="1.6"/><text x="317.59999999999997" y="48" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#b54708">RD</text>
+          <line x1="440.79999999999995" y1="52" x2="440.79999999999995" y2="68" stroke="#1f6feb" stroke-width="1.6"/><text x="440.79999999999995" y="48" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#1f6feb">PRE</text>
+          <line x1="631.1999999999999" y1="52" x2="631.1999999999999" y2="68" stroke="#1f6feb" stroke-width="1.6"/><text x="631.1999999999999" y="48" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#1f6feb">ACT'</text>
+          <rect x="452.0" y="92" width="44.8" height="14" fill="#fdf0e6" stroke="#b54708"/><text x="474.4" y="103" text-anchor="middle" font-size="7.5" fill="#172033">32 B</text>
+          <rect x="496.79999999999995" y="92" width="44.8" height="14" fill="#fdf0e6" stroke="#b54708"/><text x="519.2" y="103" text-anchor="middle" font-size="7.5" fill="#172033">32 B</text>
+          <rect x="541.5999999999999" y="92" width="44.8" height="14" fill="#fdf0e6" stroke="#b54708"/><text x="564.0" y="103" text-anchor="middle" font-size="7.5" fill="#172033">32 B</text>
+          <text x="60.0" y="103" font-size="8" fill="#647083">DQ pins:</text>
+          <path d="M60.0,118 L228.0,118" stroke="#1f6feb" stroke-width="1.2" marker-end="url(#arrF)" fill="none"/><text x="144.0" y="130" text-anchor="middle" font-size="8" fill="#1f6feb">tRCD = 15 cyc (9.4 ns): row must settle before a column is read</text>
+          <path d="M228.0,142 L452.0,142" stroke="#b54708" stroke-width="1.2" marker-end="url(#arrF)" fill="none"/><text x="340.0" y="154" text-anchor="middle" font-size="8" fill="#b54708">CL = 20 cyc: read latency</text>
+          <path d="M228.0,166 L272.79999999999995,166" stroke="#b54708" stroke-width="1.2" marker-end="url(#arrF)" fill="none"/><text x="317.59999999999997" y="170" font-size="8" fill="#b54708">tCCD = 4 cyc: next column from the same open row</text>
+          <path d="M60.0,186 L440.79999999999995,186" stroke="#1f6feb" stroke-width="1.2" marker-end="url(#arrF)" fill="none"/><text x="250.39999999999998" y="198" text-anchor="middle" font-size="8" fill="#1f6feb">tRAS = 34 cyc: minimum time a row stays open</text>
+          <path d="M440.79999999999995,210 L631.1999999999999,210" stroke="#1f6feb" stroke-width="1.2" marker-end="url(#arrF)" fill="none"/><text x="536.0" y="222" text-anchor="middle" font-size="8" fill="#1f6feb">tRP = 17 cyc: close before re-open</text>
+          <text x="14" y="252" font-size="11" font-weight="bold" fill="#172033">(b) the channel&rsquo;s speed limit: one column every tCCD = 32 B / 2.5 ns = 12.8 GB/s</text>
+          <rect x="60.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="104.8" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="149.6" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="194.39999999999998" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="239.2" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="284.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="328.79999999999995" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="373.59999999999997" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="418.4" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="463.2" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="508.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="552.8" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="597.5999999999999" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="642.4" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="687.1999999999999" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="732.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="776.8" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="821.5999999999999" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="60.0" y="292" font-size="8" fill="#647083">open row, back-to-back RDs: the DQ bus is 100 % busy &mdash; this is the &ldquo;external bandwidth&rdquo; every roofline uses. Nothing on the outside of the chip can go faster.</text>
+        </svg>
+        <p class="cap">Fig. 0b &mdash; The timing rules the simulator enforces (values from the <code class="k">LPDDR5_AiM_timing</code> preset). Row timings are ~2&times; optimistic vs. JEDEC parts [documented assumption from Part II &sect;3]; every ratio on this page is unaffected because the same preset is used for stock and extended runs.</p>
+      </div>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Parameter</th><th class="num">cycles</th><th class="num">ns @ 0.625</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">tCK</td><td class="num">1</td><td class="num">0.625</td><td>clock convention: one channel&rsquo;s burst rate = real LPDDR5-6400 x16</td></tr>
+          <tr><td class="rowlabel">BL (burst)</td><td class="num">4</td><td class="num">2.5</td><td>time one 32 B column occupies the DQ pins</td></tr>
+          <tr><td class="rowlabel">tCCD</td><td class="num">4</td><td class="num">2.5</td><td>spacing between two column commands &mdash; the per-channel command rate</td></tr>
+          <tr><td class="rowlabel">tRCD</td><td class="num">15</td><td class="num">9.4</td><td>ACT &rarr; first RD/WR</td></tr>
+          <tr><td class="rowlabel">CL / CWL</td><td class="num">20 / 11</td><td class="num">12.5 / 6.9</td><td>read / write latency to data</td></tr>
+          <tr><td class="rowlabel">tRAS / tRP</td><td class="num">34 / 17</td><td class="num">21 / 11</td><td>row open minimum / close-to-reopen</td></tr>
+          <tr><td class="rowlabel">tRRD / tFAW</td><td class="num">4 / 16</td><td class="num">2.5 / 10</td><td>ACT rate limits (power)</td></tr>
+          <tr><td class="rowlabel"><b>nRCDRDMAC</b></td><td class="num">56</td><td class="num">35</td><td>AiM: ACT16 &rarr; first <code class="k">MAC16</code> (longer than tRCD: the PU datapath must settle)</td></tr>
+          <tr><td class="rowlabel"><b>nMODCH (TMOD)</b></td><td class="num">32</td><td class="num">20</td><td>AiM: array-mode &harr; register-mode switch; blocks every command</td></tr>
+          <tr><td class="rowlabel">RDMAC16 latency</td><td class="num">4</td><td class="num">2.5</td><td>AiM: accumulators &rarr; GPR; the DMA <b>waits</b> for it</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <div class="callout"><b>Three ideas to carry forward.</b> (1) <b>Opening a row is expensive, reading columns from an open row is cheap</b> &mdash; good code stays inside open rows. (2) <b>A channel is a one-command-per-4-cycles machine</b>: whatever you ask it, per-channel throughput is capped at one 32 B column per tCCD. That cap is the external bandwidth. (3) <b>AiM&rsquo;s whole trick</b> is that one column command can make all 16 banks read a column <i>internally</i> at once &mdash; 16 columns of work per command slot, 16&times; the external rate &mdash; <i>as long as each command does 16 banks&rsquo; worth of useful work</i>. The next sections show a workload where it does not.</div>
     </section>
 
     <section class="card" id="aim">
@@ -318,23 +450,509 @@ AiM RD_MAC 0 0xffff
       <p>Around these, the trace carries the activation-tile loads (<code class="k">WR_SBK</code> streams, since each layer&rsquo;s input comes from the host-side residual stream), the once-per-cycle KV-load trace, and a <code class="k">SYNC</code> at every host boundary (6 host segments per layer: norms, RoPE, softmax, GeLU&middot;gate&#8857;up &mdash; the activation itself runs on the host, LPDDR-PIM having no AF unit &mdash; and partial sums).</p>
     </section>
 
+
     <section class="card" id="exec">
-      <h2><span class="num">6</span>Cycle-level execution walk-through (why it&rsquo;s slow)</h2>
-      <p class="lead">Follow one token through a Strategy-A projection &mdash; weights resident in banks, the activation vector broadcast through the GB &mdash; with the actual per-event costs from the LPDDR5-AiM timing model:</p>
-      <ol style="margin:8px 0;padding-left:22px;line-height:1.75;">
-        <li><b>Activation broadcast:</b> <code class="k">WR_GB 64</code> unrolls into 64 column writes, one per nCCD = 4 cycles &rarr; 256 cycles to push the 2 KB x-vector into the GB. The GB holds <i>one</i> vector, so this repeats for every token &mdash; and every layer input is re-broadcast 51 times. <b>21% of the layer.</b></li>
-        <li><b>Mode switch:</b> the next op is <code class="k">WR_BIAS</code>, a register-mode op &rarr; the controller inserts <code class="k">TMOD</code> (32 cycles). After the MAC, <code class="k">RD_MAC</code> forces another pair: <b>175,000 TMODs per layer</b>.</li>
-        <li><b>The MAC itself:</b> <code class="k">MAC_ABK 64</code> &rarr; all 16 banks fetch 64 weight columns in parallel and dot them with the GB vector, producing 16 outputs. 256 cycles of genuinely useful work &mdash; but for <i>one token only</i>.</li>
-        <li><b>Row management:</b> the next output row-group lives in a different DRAM row &rarr; <code class="k">PREA</code> + two-phase <code class="k">ACT16</code> across all 16 banks, plus nRCDRDMAC = 56 cycles before the MAC may issue.</li>
-        <li><b>The drain:</b> <code class="k">RD_MAC</code> blocks the DMA until 16 accumulators &times; 16 channels land in GPRs. One accumulator per bank means this happens per (token &times; output row-group): <b>73,000 blocking reads per layer</b>.</li>
-        <li>At each of the 6 host boundaries, <code class="k">SYNC</code> drains every channel&rsquo;s write pipeline; the host does its 0.15 ms of softmax/norm/GeLU/RoPE work; the next AiM segment restarts cold.</li>
-      </ol>
-      <div class="callout warn"><b>The compound cost: every weight is fetched 63 times.</b> Because one <code class="k">MAC_ABK</code> serves a single token, the whole resident weight set is re-read once per token &mdash; 135&nbsp;MB of in-bank traffic per channel per layer for 2.16&nbsp;MB of unique weights. The 16&times; internal bandwidth is being spent almost entirely on redundancy.</div>
+      <h2><span class="num">6</span>Stock AiM GEMV, cycle by cycle</h2>
+      <p class="lead">This section answers one question a newcomer should ask: <i>when the host says &ldquo;multiply&rdquo;, what actually moves, where, and how long does it take?</i> We follow the real trace for the first projection of the layer (<code class="k">q_proj</code>: 1,024 inputs &rarr; 2,048 outputs, per token), on one of the 16 channels.</p>
+
+      <h3>Setup: where the numbers live</h3>
+      <ul class="notes">
+        <li><b>Weights are resident.</b> <code class="k">W_Q</code> is 2,048 output rows &times; 1,024 fp16 = 4 MB. Spread over 16 channels &times; 16 banks, each bank owns 8 output rows. Row <i>j</i> of the matrix is 1,024 fp16 = 2 KB = <b>64 columns</b>, and the trace puts each of a bank&rsquo;s 8 weight rows in its <i>own DRAM row</i> (rows 100&hellip;107 in the trace). One DRAM row-group <i>g</i> therefore means &ldquo;output rows {16&middot;16&middot;g &hellip;}: one output per bank per channel&rdquo;.</li>
+        <li><b>Activations stream.</b> The token vector <i>x<sub>t</sub></i> (1,024 fp16 = 2 KB = 64 columns) is exactly one Global Buffer. The GB holds <b>one</b> such vector.</li>
+        <li><b>One accumulator per bank.</b> A bank can be working on exactly one output number at a time.</li>
+      </ul>
+      <p>The real ISR lines the generator emits for the first token (file <code class="k">layer_a_only_c16.trace</code>, lines 3&ndash;16):</p>
+      <pre class="cmd"><span class="c"># StratA q_proj: K=1024 N=2048 rgroups=8 kchunks=1</span>
+AiM WR_GB 64 0 0xffff        <span class="c"># token 0: 64 columns of x_0 into every channel's GB   (frame 1)</span>
+AiM WR_BIAS 0 0xffff         <span class="c"># zero the 16 accumulators                              (frame 2)</span>
+AiM MAC_ABK 64 0xffff 100    <span class="c"># row-group 0: 64 columns × 16 banks, one output each    (frames 3-4)</span>
+AiM RD_MAC 0 0xffff          <span class="c"># drain 16 outputs/channel, BLOCKING                     (frame 5)</span>
+AiM WR_BIAS 0 0xffff
+AiM MAC_ABK 64 0xffff 101    <span class="c"># row-group 1 → different DRAM row → PREA + ACT16 first</span>
+AiM RD_MAC 0 0xffff
+<span class="c"># ... row-groups 2..7, then "WR_GB 64" again for token 1, and so on for 51 tokens</span></pre>
+
+      <h3>The six frames</h3>
+
+      <div class="fig" id="fig-frames-stock">
+        <svg viewBox="0 0 900 590" role="img" aria-label="Six frames of the AiM channel during one stock GEMV for one token and one row-group. Frame 1 WR_GB: the host writes the token vector into the single-vector Global Buffer over 64 column writes. Frame 2 WR_BIAS plus TMOD: accumulators zeroed, then a 32-cycle mode switch to array mode. Frame 3 PREA plus ACT16: all banks open weight row g, then wait nRCDRDMAC. Frame 4 MAC_ABK column c: every bank reads one 32-byte column from its row buffer and dots it with the same 32-byte segment of the GB into its single accumulator; repeated 64 times, 4 cycles apart. Frame 5 TMOD plus RD_MAC: mode switch back, then the 16 accumulators are read into one GPR while the DMA is blocked. Frame 6: the whole thing repeats for the next row-group with a row switch, and for the next token with a new WR_GB.">
+          <defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+          <g transform="translate(5,5)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">1 · WR_GB 64: token vector in</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 64 × 4 = 256 cyc</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="10" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="111" text-anchor="middle" font-size="6.8" fill="#172033">x_t (2 KB)</text>
+<rect x="10" y="132" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="145" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#fff" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="152" width="58" height="26" fill="#fff" stroke="#1a7f37"/>
+<text x="241" y="163" text-anchor="middle" font-size="7" fill="#172033">1 acc</text>
+<text x="241" y="173" text-anchor="middle" font-size="6.3" fill="#647083">(16 b)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<line x1="96" y1="101" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="128" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<path d="M212,170 L104,147 L96,147" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: register mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">host → GB: 64 columns of x_t,</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">one per tCCD. Holds ONE vector.</text>
+</g>
+</g>
+          <g transform="translate(305,5)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">2 · WR_BIAS + TMOD</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: ≈4 + 32 cyc</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="10" fill="#fff" stroke="#b54708"/>
+<text x="53" y="111" text-anchor="middle" font-size="6.8" fill="#172033">x_t (2 KB)</text>
+<rect x="10" y="132" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="145" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#fff" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="152" width="58" height="26" fill="#e7f5ec" stroke="#1a7f37"/>
+<text x="241" y="163" text-anchor="middle" font-size="7" fill="#172033">1 acc</text>
+<text x="241" y="173" text-anchor="middle" font-size="6.3" fill="#647083">(16 b)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<line x1="96" y1="101" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="128" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<path d="M212,170 L104,147 L96,147" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#fdf0e6" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: register mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">zero the 16 accumulators (reg mode),</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">then switch to array mode: 32 idle cycles.</text>
+</g>
+</g>
+          <g transform="translate(605,5)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">3 · PREA + ACT16: open row g</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 17 + 2·8 + 56 cyc</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="10" fill="#fff" stroke="#b54708"/>
+<text x="53" y="111" text-anchor="middle" font-size="6.8" fill="#172033">x_t (2 KB)</text>
+<rect x="10" y="132" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="145" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="152" width="58" height="26" fill="#fff" stroke="#1a7f37"/>
+<text x="241" y="163" text-anchor="middle" font-size="7" fill="#172033">1 acc</text>
+<text x="241" y="173" text-anchor="middle" font-size="6.3" fill="#647083">(16 b)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<line x1="96" y1="101" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="128" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<path d="M212,170 L104,147 L96,147" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: array mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">all 16 banks close, then open weight row g;</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">no MAC may issue for nRCDRDMAC = 56.</text>
+</g>
+</g>
+          <g transform="translate(5,297)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">4 · MAC_ABK: column c of 64</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 4 cyc each × 64</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="10" fill="#fff" stroke="#b54708"/>
+<text x="53" y="111" text-anchor="middle" font-size="6.8" fill="#172033">x_t (2 KB)</text>
+<rect x="10" y="132" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="145" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#1f6feb">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fdf0e6" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="152" width="58" height="26" fill="#e7f5ec" stroke="#1a7f37"/>
+<text x="241" y="163" text-anchor="middle" font-size="7" fill="#172033">1 acc</text>
+<text x="241" y="173" text-anchor="middle" font-size="6.3" fill="#647083">(16 b)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<line x1="96" y1="101" x2="122" y2="160" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<text x="99" y="128" font-size="6.8" fill="#1f6feb">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<path d="M212,170 L104,147 L96,147" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: array mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">bank b: 16 weights of row g, col c</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">× GB[c] → acc_b += Σ. One token only.</text>
+</g>
+</g>
+          <g transform="translate(305,297)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">5 · TMOD + RD_MAC (blocking)</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 32 + 4 cyc, DMA stalls</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="10" fill="#fff" stroke="#b54708"/>
+<text x="53" y="111" text-anchor="middle" font-size="6.8" fill="#172033">x_t (2 KB)</text>
+<rect x="10" y="132" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="145" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#fff" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="152" width="58" height="26" fill="#e7f5ec" stroke="#1a7f37"/>
+<text x="241" y="163" text-anchor="middle" font-size="7" fill="#172033">1 acc</text>
+<text x="241" y="173" text-anchor="middle" font-size="6.3" fill="#647083">(16 b)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<line x1="96" y1="101" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="128" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<path d="M212,170 L104,147 L96,147" fill="none" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#fdf0e6" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: register mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">16 accumulators → one 32 B GPR word.</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">Nothing else issues until it lands.</text>
+</g>
+</g>
+          <g transform="translate(605,297)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">6 · repeat: next row-group, next token</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: ×8 row-groups × 51 tokens</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="34" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="10" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="111" text-anchor="middle" font-size="6.8" fill="#172033">x_t (2 KB)</text>
+<rect x="10" y="132" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="145" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="152" width="58" height="26" fill="#fff" stroke="#1a7f37"/>
+<text x="241" y="163" text-anchor="middle" font-size="7" fill="#172033">1 acc</text>
+<text x="241" y="173" text-anchor="middle" font-size="6.3" fill="#647083">(16 b)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<line x1="96" y1="101" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="128" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<path d="M212,170 L104,147 L96,147" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: register mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">frames 2–5 again with a row switch;</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">then a new WR_GB for token t+1.</text>
+</g>
+</g>
+        </svg>
+        <p class="cap">Fig. 6a &mdash; One stock GEMV for <i>one token</i> and <i>one row-group</i>, frame by frame. Blue = the active path in that frame. Only frame 4 does arithmetic; frames 1, 2, 3 and 5 are set-up and tear-down for a single 16-element vector, and frame 6 says the whole thing repeats 8 &times; 51 times per projection.</p>
+      </div>
+
+      <h3>Running the clock: one (token, row-group)</h3>
+      <p>Put the frames on a timeline using the simulator&rsquo;s constraint table (&sect;0). <i>T</i> = the cycle the previous <code class="k">RD_MAC</code> was issued. &ldquo;&asymp;&rdquo; marks places where two commands can partially overlap; the simulator resolves the exact value, and the totals below are within a few percent of what it reports.</p>
+      <pre class="cmd"><span class="c">cycle   command        what happens                                          useful?</span>
+T+5     WR_BIAS        16 accumulators := 0 (register mode)                   no
+T+6     TMOD           array-mode switch; every command waits 32 cycles       no  (32 idle)
+T+38    PREA           close row g-1 in all 16 banks                          no
+T+55    ACT16          open weight row g in all 16 banks (tRP = 17 waited)    no
+T+111   MAC16 col 0    nRCDRDMAC = 56 waited; bank b: W[g][b][0..15] · x_t    YES (4 cyc)
+T+115   MAC16 col 1    ... one column every tCCD = 4                          YES
+  ...
+T+363   MAC16 col 63   acc_b now holds one finished output y_t[row(g,b)]      YES
+T+364   TMOD           register-mode switch                                   no  (32 idle)
+T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     no
+<span class="c">------------------------------------------------------------------------------------</span>
+<span class="c">≈ 400 cycles for the row-group, of which 256 (64 %) are MAC column slots — for ONE token.</span>
+<span class="c">+ 256 cycles of WR_GB per token, shared by 8 row-groups → ≈ 432 cycles per (token, row-group).</span>
+<span class="c">q_proj, one channel: 51 tokens × 8 row-groups × 432 ≈ 176 k cycles ≈ 0.11 ms of the layer's 1.43 ms.</span></pre>
+
+      <div class="callout warn"><b>Read frame 4 again.</b> In those 256 cycles the channel performed 64 &times; 16 banks = 1,024 in-bank column fetches &mdash; 32 KB of weights, the full 16&times; internal bandwidth &mdash; and produced <b>16 numbers</b>, all for token <i>t</i>. Token <i>t</i>+1 needs the <i>same 32 KB</i> again. There is nowhere to keep a second token&rsquo;s vector (one GB) and nowhere to keep a second result (one accumulator), so the machine has no choice but to fetch everything again. <b>Every weight is fetched 63 times per layer</b>: 135 MB of in-bank traffic per channel for 2.16 MB of unique weights.</div>
+
       <p>The activation-stationary alternative (Strategy B: the 51 tokens resident in banks, weight columns streamed through the GB via <code class="k">COPY_BKGB</code>) swaps which operand is re-fetched &mdash; activations get read 133&times; instead &mdash; and measures <b>34.6 ms</b>, 21% slower than Strategy A. We report Strategy A as the strawman throughout: it is the better of the two mappings the stock ISA allows. <b>Both are bound by the same per-command amortization, not by data movement.</b></p>
     </section>
 
+
+    <section class="card" id="problem">
+      <h2><span class="num">7</span>The problem, quantified</h2>
+      <p class="lead">Section 6 showed one token through one row-group. Now count everything the 16-channel layer does, per channel, from the simulator&rsquo;s own command counters &mdash; and compare with what an ideal machine would have to do.</p>
+      <div class="fig" id="fig-loop"><svg viewBox="0 0 900 420" role="img" aria-label="Top: a grid of 51 token rows by 8 row-group columns; each cell is one MAC_ABK of 64 columns. A highlighted column shows that row-group 3 of the weights is fetched from the banks 51 times, once per token row. Bottom: a stacked bar of where the 1.43 ms of a 16-channel layer goes: 46 percent MAC column commands, 21 percent Global Buffer writes, 15 percent TMOD mode switches, 7 percent row management, 10 percent blocking reads and other.">
+<defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+<text x="14" y="20" font-size="11" font-weight="bold" fill="#172033">(a) q_proj on one channel: 51 tokens &times; 8 row-groups = 408 MAC_ABKs, each 64 columns</text>
+<text x="157.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 0</text>
+<text x="231.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 1</text>
+<text x="305.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 2</text>
+<text x="379.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 3</text>
+<text x="453.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 4</text>
+<text x="527.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 5</text>
+<text x="601.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 6</text>
+<text x="675.0" y="34" text-anchor="middle" font-size="8" fill="#647083">row-grp 7</text>
+<text x="112" y="52" text-anchor="end" font-size="8" fill="#172033">token 0</text>
+<rect x="120" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="155.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[0]&middot;x0</text>
+<rect x="194" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="229.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[1]&middot;x0</text>
+<rect x="268" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="303.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[2]&middot;x0</text>
+<rect x="342" y="40" width="70" height="16" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+<text x="377.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[3]&middot;x0</text>
+<rect x="416" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="451.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[4]&middot;x0</text>
+<rect x="490" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="525.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[5]&middot;x0</text>
+<rect x="564" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="599.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[6]&middot;x0</text>
+<rect x="638" y="40" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="673.0" y="51" text-anchor="middle" font-size="7" fill="#172033">W[7]&middot;x0</text>
+<text x="112" y="72" text-anchor="end" font-size="8" fill="#172033">token 1</text>
+<rect x="120" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="155.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[0]&middot;x1</text>
+<rect x="194" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="229.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[1]&middot;x1</text>
+<rect x="268" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="303.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[2]&middot;x1</text>
+<rect x="342" y="60" width="70" height="16" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+<text x="377.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[3]&middot;x1</text>
+<rect x="416" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="451.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[4]&middot;x1</text>
+<rect x="490" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="525.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[5]&middot;x1</text>
+<rect x="564" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="599.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[6]&middot;x1</text>
+<rect x="638" y="60" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="673.0" y="71" text-anchor="middle" font-size="7" fill="#172033">W[7]&middot;x1</text>
+<text x="112" y="92" text-anchor="end" font-size="8" fill="#172033">token 2</text>
+<rect x="120" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="155.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[0]&middot;x2</text>
+<rect x="194" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="229.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[1]&middot;x2</text>
+<rect x="268" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="303.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[2]&middot;x2</text>
+<rect x="342" y="80" width="70" height="16" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+<text x="377.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[3]&middot;x2</text>
+<rect x="416" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="451.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[4]&middot;x2</text>
+<rect x="490" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="525.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[5]&middot;x2</text>
+<rect x="564" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="599.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[6]&middot;x2</text>
+<rect x="638" y="80" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="673.0" y="91" text-anchor="middle" font-size="7" fill="#172033">W[7]&middot;x2</text>
+<text x="112" y="112" text-anchor="end" font-size="8" fill="#172033">token 3</text>
+<rect x="120" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="155.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[0]&middot;x3</text>
+<rect x="194" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="229.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[1]&middot;x3</text>
+<rect x="268" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="303.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[2]&middot;x3</text>
+<rect x="342" y="100" width="70" height="16" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+<text x="377.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[3]&middot;x3</text>
+<rect x="416" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="451.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[4]&middot;x3</text>
+<rect x="490" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="525.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[5]&middot;x3</text>
+<rect x="564" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="599.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[6]&middot;x3</text>
+<rect x="638" y="100" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="673.0" y="111" text-anchor="middle" font-size="7" fill="#172033">W[7]&middot;x3</text>
+<text x="112" y="132" text-anchor="end" font-size="8" fill="#647083">&#8942;</text>
+<text x="157.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="231.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="305.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="379.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="453.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="527.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="601.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="675.0" y="132" text-anchor="middle" font-size="8" fill="#647083">&#8942;</text>
+<text x="112" y="152" text-anchor="end" font-size="8" fill="#172033">token 49</text>
+<rect x="120" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="155.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[0]&middot;x49</text>
+<rect x="194" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="229.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[1]&middot;x49</text>
+<rect x="268" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="303.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[2]&middot;x49</text>
+<rect x="342" y="140" width="70" height="16" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+<text x="377.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[3]&middot;x49</text>
+<rect x="416" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="451.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[4]&middot;x49</text>
+<rect x="490" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="525.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[5]&middot;x49</text>
+<rect x="564" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="599.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[6]&middot;x49</text>
+<rect x="638" y="140" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="673.0" y="151" text-anchor="middle" font-size="7" fill="#172033">W[7]&middot;x49</text>
+<text x="112" y="172" text-anchor="end" font-size="8" fill="#172033">token 50</text>
+<rect x="120" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="155.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[0]&middot;x50</text>
+<rect x="194" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="229.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[1]&middot;x50</text>
+<rect x="268" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="303.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[2]&middot;x50</text>
+<rect x="342" y="160" width="70" height="16" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+<text x="377.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[3]&middot;x50</text>
+<rect x="416" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="451.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[4]&middot;x50</text>
+<rect x="490" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="525.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[5]&middot;x50</text>
+<rect x="564" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="599.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[6]&middot;x50</text>
+<rect x="638" y="160" width="70" height="16" rx="3" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="673.0" y="171" text-anchor="middle" font-size="7" fill="#172033">W[7]&middot;x50</text>
+<rect x="339" y="37" width="76" height="146" rx="4" fill="none" stroke="#b54708" stroke-width="1.6" stroke-dasharray="5 3"/>
+<text x="724" y="80" font-size="9" fill="#b54708" font-weight="bold">the same 32 KB of weights</text>
+<text x="724" y="94" font-size="9" fill="#b54708" font-weight="bold">(row-group 3, all 16 banks)</text>
+<text x="724" y="108" font-size="9" fill="#b54708" font-weight="bold">is fetched 51 times.</text>
+<text x="724" y="130" font-size="8.5" fill="#172033">Between every two cells:</text>
+<text x="724" y="143" font-size="8.5" fill="#172033">TMOD &middot; PREA &middot; ACT16 &middot; TMOD &middot; RD_MAC</text>
+<text x="724" y="156" font-size="8.5" fill="#172033">&asymp; 144 cycles of nothing.</text>
+<text x="724" y="176" font-size="8.5" fill="#1a7f37">An ideal machine would visit each</text>
+<text x="724" y="189" font-size="8.5" fill="#1a7f37">column of this grid ONCE.</text>
+<text x="14" y="240" font-size="11" font-weight="bold" fill="#172033">(b) where the 1.43 ms of one 16-channel layer goes (simulator counters, per channel)</text>
+<rect x="14" y="250" width="402.86400000000003" height="34" fill="#1f6feb" stroke="#fff" stroke-width="1.2"/>
+<text x="215.43200000000002" y="271" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#fff">46 %</text>
+<rect x="416.86400000000003" y="250" width="183.99200000000002" height="34" fill="#eb6834" stroke="#fff" stroke-width="1.2"/>
+<text x="508.86" y="271" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#fff">21 %</text>
+<rect x="600.856" y="250" width="133.416" height="34" fill="#8fa3c4" stroke="#fff" stroke-width="1.2"/>
+<text x="667.564" y="271" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#fff">15 %</text>
+<rect x="734.2719999999999" y="250" width="64.528" height="34" fill="#1baf7a" stroke="#fff" stroke-width="1.2"/>
+<text x="766.536" y="271" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">7 %</text>
+<rect x="798.8" y="250" width="87.2" height="34" fill="#b5b5b5" stroke="#fff" stroke-width="1.2"/>
+<text x="842.4" y="271" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#fff">10 %</text>
+<rect x="14" y="295" width="10" height="10" fill="#1f6feb"/>
+<text x="30" y="304" font-size="8.5" fill="#172033">MAC column commands (MAC16): <tspan fill="#647083">263,976 × 4 cyc</tspan></text>
+<rect x="14" y="310" width="10" height="10" fill="#eb6834"/>
+<text x="30" y="319" font-size="8.5" fill="#172033">GB writes (WRGB): <tspan fill="#647083">120,360 × 4 cyc</tspan></text>
+<rect x="14" y="325" width="10" height="10" fill="#8fa3c4"/>
+<text x="30" y="334" font-size="8.5" fill="#172033">TMOD mode switches: <tspan fill="#647083">10,945 × 32 cyc</tspan></text>
+<rect x="14" y="340" width="10" height="10" fill="#1baf7a"/>
+<text x="30" y="349" font-size="8.5" fill="#172033">row mgmt (PREA/ACT16): <tspan fill="#647083">5,113 PREA + 10,228 ACT phases</tspan></text>
+<rect x="14" y="355" width="10" height="10" fill="#b5b5b5"/>
+<text x="30" y="364" font-size="8.5" fill="#172033">blocking RD_MAC + other: <tspan fill="#647083">4,590 stalls</tspan></text>
+<text x="470" y="304" font-size="8.5" fill="#172033">only the blue slice is arithmetic, and it serves one token per fetch;</text>
+<text x="470" y="319" font-size="8.5" fill="#172033">the other four slices exist <tspan font-weight="bold">only because</tspan> a fetch serves one token:</text>
+<text x="470" y="334" font-size="8.5" fill="#172033">one GB write per token, two TMODs and one drain per (token, row-group),</text>
+<text x="470" y="349" font-size="8.5" fill="#172033">one row switch per (token, row-group).</text>
+<text x="470" y="370" font-size="8.5" fill="#1a7f37" font-weight="bold">fetch floor if every column were fetched once: 10.6 &micro;s per layer (vs 1,427 &micro;s).</text>
+</svg><p class="cap">Fig. 7a &mdash; The problem is a loop nest with the token loop on the outside. The weights of one row-group are re-read from the banks once per token (a), and the bookkeeping between cells is 44 % of the layer (b). Counts are per channel per layer from <code class="k">sim_cache.json</code> (<code class="k">layer_a_only_c16</code>), summed over the 6 projections and attention.</p></div>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Per channel, per layer (16 ch)</th><th class="num">stock AiM (measured)</th><th class="num">ideal (fetch every weight once)</th><th class="num">ratio</th><th>why the stock machine does it</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">ISR lines the host issues</td><td class="num">17,717</td><td class="num">&mdash;</td><td class="num"></td><td>5,406 <code class="k">MAC_ABK</code> + 4,590 <code class="k">WR_BIAS</code> + 4,590 <code class="k">RD_MAC</code> + 2,244 <code class="k">WR_GB</code> + 880 <code class="k">WR_SBK</code> + 6 <code class="k">SYNC</code></td></tr>
+          <tr><td class="rowlabel">MAC column commands (MAC16)</td><td class="num">263,976</td><td class="num">&asymp; 4,224 + attention</td><td class="num"><b>63&times;</b></td><td>each column fetch serves one token; 51 tokens (and K-chunks) &rArr; 51&ndash;64 re-fetches</td></tr>
+          <tr><td class="rowlabel">in-bank weight traffic</td><td class="num">135 MB</td><td class="num">2.16 MB</td><td class="num"><b>63&times;</b></td><td>263,976 &times; 16 banks &times; 32 B vs. the unique weights this channel owns</td></tr>
+          <tr><td class="rowlabel">GB column writes (WRGB)</td><td class="num">120,360</td><td class="num">&asymp; 30,000</td><td class="num">4&times;</td><td>Q and KV (and gate and up) re-broadcast the same input; O and down re-send per (row-group, K-chunk) because the GB holds one chunk</td></tr>
+          <tr><td class="rowlabel">TMOD mode switches</td><td class="num">10,945</td><td class="num">&asymp; 700</td><td class="num">16&times;</td><td>two per (token, row-group): into array mode for MAC, back to register mode for RD_MAC</td></tr>
+          <tr><td class="rowlabel">row switches (PREA + ACT16)</td><td class="num">5,113</td><td class="num">&asymp; 400</td><td class="num">13&times;</td><td>every (token, row-group) opens its row again because the previous token closed it</td></tr>
+          <tr><td class="rowlabel">blocking drains (RD_MAC)</td><td class="num">4,590</td><td class="num">&asymp; 300</td><td class="num">15&times;</td><td>one accumulator per bank &rArr; one drain per (token, row-group), each stalling the DMA</td></tr>
+          <tr><td class="rowlabel">cycles</td><td class="num">2,283,344 (1.43 ms)</td><td class="num">&asymp; 17,000 (10.6 &micro;s) fetch floor</td><td class="num"></td><td>the &ldquo;ideal&rdquo; column is a bound, not a design: it assumes zero overhead per fetch</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">&ldquo;Ideal&rdquo; counts are the stock counts divided by the tokens that share each fetch (51, or 16 per drain group where a 16-slot file would apply); they are shown to size the gap, and Part III&rsquo;s measured design lands at 19,782 MAC16 / 27,824 WRGB / 791 TMOD / 389 PREA / 762 drains (&sect;11).</p>
+
+      <h3>Why this is a hardware problem, not a software one</h3>
+      <ul class="notes">
+        <li><b>You cannot reorder the loops.</b> The natural fix &mdash; put the token loop <i>inside</i> the fetch &mdash; needs a place to hold the other tokens&rsquo; vectors (the GB holds one) and a place to hold their partial results (the bank holds one accumulator). Strategy B tries the other order and hits the same two walls from the other side (&sect;5).</li>
+        <li><b>You cannot batch the drains.</b> <code class="k">RD_MAC</code> is the only way results leave a bank, it reads exactly one accumulator per bank, and it blocks the in-order DMA. 4,590 stalls per channel per layer is a structural count, not a scheduling accident.</li>
+        <li><b>The MAC unit is mostly idle.</b> In frame 4 the 16 multipliers work 1 cycle out of every 4 (one column per tCCD), and even that 25 % is spent on redundant fetches. The PU that AiM already fabbed has 2.5&times; headroom before any wider datapath is needed.</li>
+        <li><b>Scale does not help.</b> Doubling channels halves the per-channel work but leaves the ratio: 32 channels still measure 17.3 ms (&sect;9). Only changing <i>how many tokens one fetch serves</i> changes the ratio.</li>
+      </ul>
+      <div class="callout"><b>Problem statement, in one sentence.</b> Stock AiM amortizes one in-bank fetch over <b>one vector, one accumulator and one register mode</b>; a 51-token workload therefore pays 51&times; the fetches, 51&times; the drains and 51&times; the mode switches of the ideal, and no mapping can fix it because the missing resource is <i>storage next to the MAC</i>, not bandwidth or arithmetic.</div>
+    </section>
+
     <section class="card" id="ladder">
-      <h2><span class="num">7</span>The baseline ladder: what &ldquo;XPU floor&rdquo; and &ldquo;realistic 2&times;&rdquo; mean</h2>
+      <h2><span class="num">8</span>The baseline ladder: what &ldquo;XPU floor&rdquo; and &ldquo;realistic 2&times;&rdquo; mean</h2>
       <p class="lead">Before the results, the yardstick. All XPU baselines in this series are rungs on one ladder &mdash; estimates of how fast the Action Expert <i>could</i> run on Orin&rsquo;s GPU, from physically impossible to actually measured:</p>
       <div class="scroll">
       <table>
@@ -352,7 +970,7 @@ AiM RD_MAC 0 0xffff
     </section>
 
     <section class="card" id="results">
-      <h2><span class="num">8</span>Results: latency and energy</h2>
+      <h2><span class="num">9</span>Results: latency and energy</h2>
       <p class="lead">Cycle-accurate AiM segments + an analytic Orin host model (roofline + 5&ndash;50&nbsp;&micro;s launch overhead, swept). One layer simulated, composed &times;18 layers &times;N steps.</p>
       <figure>
         <img src="assets/phase3_step_latency.png" alt="Horizontal bar chart of Action Expert step latency: XPU floor 3.2 ms, XPU 2x 6.3 ms, XPU 4x 12.6 ms; AiM Strategy-A at 8/16/32 channels: 52.0/28.5/17.3 ms; AiM Strategy-B at 8/16/32 channels: 63.2/34.6/20.8 ms. Stock AiM is far slower than every XPU baseline.">
@@ -384,7 +1002,7 @@ AiM RD_MAC 0 0xffff
     </section>
 
     <section class="card" id="limits">
-      <h2><span class="num">9</span>Limitations &amp; root causes: the S = 16 crossover</h2>
+      <h2><span class="num">10</span>Limitations &amp; root causes: the S = 16 crossover</h2>
       <p class="lead">&ldquo;The AE is memory-bound and PIM fixes memory&rdquo; fails because <b>memory-bound is relative to the machine</b> &mdash; offloading changed which resource binds.</p>
       <div class="scroll">
       <table>
@@ -405,6 +1023,229 @@ AiM RD_MAC 0 0xffff
         <figcaption class="cap">Fig. 4 &mdash; The crossover, drawn. Ideal resource bounds (lines) vs. measured points (squares) at S = 51. Stock AiM wins the S &le; ~14 GEMV regime it was designed for and loses linearly beyond it; the extended ISA of Part III (green) restores fetch-bound scaling.</figcaption>
       </figure>
       <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../02_extended_isa/report.html">Part III</a> adds the missing amortization to the AiM ISA and flips the result.</div>
+    </section>
+
+
+    <section class="card" id="fix">
+      <h2><span class="num">11</span>The fix, on the same diagram (preview of Part III)</h2>
+      <p class="lead">If the problem is &ldquo;one vector, one accumulator, one drain per fetch&rdquo;, the fix is to give each fetch sixteen of each. That is P1. Everything else in Part III removes the bookkeeping that P1 makes unnecessary. Here is the same cycle walk with the extended ISA; the full design, hardware cost and ablation are in <a href="../02_extended_isa/report.html">Part III</a>.</p>
+
+      <h3>P1: one fetch, sixteen tokens, sixteen results</h3>
+
+      <div class="fig" id="fig-frames-p1">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Three frames of the extended AiM channel. Frame 1 tile fill: 16 token vectors written once into a 32 KB Global Buffer. Frame 2 MAC_ABK_MV column c: every bank fetches one 32-byte column once and multiplies it with all 16 GB vectors in 16 beats, accumulating into a 16-slot accumulator file. Frame 3 RD_MACB: the 16 slots are burst-read in one command.">
+          <defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+          <g transform="translate(5,5)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">1 · tile fill: 16 × WR_GB 64</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 1,024 × 4 cyc, ONCE per tile</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="78" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="110" text-anchor="middle" font-size="6.5" fill="#172033">x_0 (2 KB)</text>
+<rect x="18" y="114" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="121" text-anchor="middle" font-size="6.5" fill="#172033">x_1 (2 KB)</text>
+<rect x="18" y="125" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="132" text-anchor="middle" font-size="6.5" fill="#172033">x_2 (2 KB)</text>
+<rect x="18" y="136" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="143" text-anchor="middle" font-size="6.5" fill="#172033">… x_15 (2 KB)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">16-vector tile, 32 KB</text>
+<rect x="10" y="176" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="189" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="200" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#fff" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="146" width="58" height="38" fill="#fff" stroke="#1a7f37"/>
+<text x="241" y="157" text-anchor="middle" font-size="6.8" fill="#172033">acc file</text>
+<text x="241" y="167" text-anchor="middle" font-size="6.3" fill="#647083">16 slots</text>
+<text x="241" y="177" text-anchor="middle" font-size="6.3" fill="#647083">s0 … s15 (32 B)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<line x1="96" y1="120" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="165" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<path d="M212,180 L104,191 L96,191" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: register mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">16 token vectors written once,</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">reused across all 8 row-groups.</text>
+</g>
+</g>
+          <g transform="translate(305,5)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">2 · MAC_ABK_MV: column c of 64</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 1 fetch, 16 beats: 25.6 cyc</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="78" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="110" text-anchor="middle" font-size="6.5" fill="#172033">x_0 (2 KB)</text>
+<rect x="18" y="114" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="121" text-anchor="middle" font-size="6.5" fill="#172033">x_1 (2 KB)</text>
+<rect x="18" y="125" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="132" text-anchor="middle" font-size="6.5" fill="#172033">x_2 (2 KB)</text>
+<rect x="18" y="136" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="143" text-anchor="middle" font-size="6.5" fill="#172033">… x_15 (2 KB)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">16-vector tile, 32 KB</text>
+<rect x="10" y="176" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="189" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="200" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#e7f0fe" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#1f6feb">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fdf0e6" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="146" width="58" height="38" fill="#e7f5ec" stroke="#1a7f37"/>
+<text x="241" y="157" text-anchor="middle" font-size="6.8" fill="#172033">acc file</text>
+<text x="241" y="167" text-anchor="middle" font-size="6.3" fill="#647083">16 slots</text>
+<text x="241" y="177" text-anchor="middle" font-size="6.3" fill="#647083">s0 … s15 (32 B)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<line x1="96" y1="120" x2="122" y2="160" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<text x="99" y="165" font-size="6.8" fill="#1f6feb">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<path d="M212,180 L104,191 L96,191" fill="none" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: array mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">bank b fetches W[g][b][c] ONCE; beats</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">1..16: × x_0..x_15 → s_0..s_15.</text>
+</g>
+</g>
+          <g transform="translate(605,5)">
+<rect x="0" y="0" width="290" height="282" rx="9" fill="#fff" stroke="#d8dee8"/>
+<text x="10" y="17" font-size="11" font-weight="bold" fill="#172033">3 · RD_MACB (one command)</text>
+<text x="10" y="30" font-size="9" fill="#b54708" font-weight="bold">cost: 16 bursts ≈ 64 cyc</text>
+<g transform="translate(0,12)">
+<rect x="10" y="30" width="86" height="34" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="45" text-anchor="middle" font-size="8.5" fill="#172033">host / DMA</text>
+<text x="53" y="57" text-anchor="middle" font-size="7.5" fill="#647083">ISR queue, in order</text>
+<rect x="10" y="84" width="86" height="78" rx="6" fill="#fdf0e6" stroke="#b54708"/>
+<text x="53" y="98" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">Global Buffer</text>
+<rect x="18" y="103" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="110" text-anchor="middle" font-size="6.5" fill="#172033">x_0 (2 KB)</text>
+<rect x="18" y="114" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="121" text-anchor="middle" font-size="6.5" fill="#172033">x_1 (2 KB)</text>
+<rect x="18" y="125" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="132" text-anchor="middle" font-size="6.5" fill="#172033">x_2 (2 KB)</text>
+<rect x="18" y="136" width="70" height="9" fill="#ffe1c9" stroke="#b54708"/>
+<text x="53" y="143" text-anchor="middle" font-size="6.5" fill="#172033">… x_15 (2 KB)</text>
+<text x="53" y="156" text-anchor="middle" font-size="6.8" fill="#647083">16-vector tile, 32 KB</text>
+<rect x="10" y="176" width="86" height="30" rx="6" fill="#eef2f7" stroke="#d8dee8"/>
+<text x="53" y="189" text-anchor="middle" font-size="8" fill="#172033">GPR (32 B)</text>
+<text x="53" y="200" text-anchor="middle" font-size="6.8" fill="#647083">results to host</text>
+<rect x="112" y="30" width="168" height="228" rx="7" fill="#fbfcff" stroke="#d8dee8"/>
+<text x="196" y="44" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#172033">bank b (one of 16, all in lock-step)</text>
+<rect x="122" y="52" width="148" height="46" fill="#f1f4f9" stroke="#d8dee8"/>
+<text x="196" y="66" text-anchor="middle" font-size="7.5" fill="#172033">cell array: weight rows</text>
+<text x="196" y="77" text-anchor="middle" font-size="6.8" fill="#647083">DRAM row g = 64 cols × 32 B of W</text>
+<text x="196" y="88" text-anchor="middle" font-size="6.8" fill="#647083">(8 rows per bank for q_proj)</text>
+<line x1="196" y1="98" x2="196" y2="110" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<rect x="122" y="112" width="148" height="22" fill="#fff" stroke="#1f6feb"/>
+<text x="196" y="126" text-anchor="middle" font-size="7.5" fill="#172033">row buffer (open row g)</text>
+<line x1="196" y1="134" x2="196" y2="150" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="204" y="146" font-size="6.8" fill="#c5ccd8">32 B column c (16 fp16)</text>
+<rect x="122" y="152" width="80" height="26" fill="#fff" stroke="#b54708"/>
+<text x="162" y="163" text-anchor="middle" font-size="7.2" fill="#172033">16 × fp16 MAC</text>
+<text x="162" y="173" text-anchor="middle" font-size="6.5" fill="#647083">+ adder tree</text>
+<rect x="212" y="146" width="58" height="38" fill="#e7f5ec" stroke="#1a7f37"/>
+<text x="241" y="157" text-anchor="middle" font-size="6.8" fill="#172033">acc file</text>
+<text x="241" y="167" text-anchor="middle" font-size="6.3" fill="#647083">16 slots</text>
+<text x="241" y="177" text-anchor="middle" font-size="6.3" fill="#647083">s0 … s15 (32 B)</text>
+<line x1="202" y1="165" x2="210" y2="165" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<line x1="96" y1="120" x2="122" y2="160" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<text x="99" y="165" font-size="6.8" fill="#c5ccd8">GB[c]</text>
+<line x1="53" y1="64" x2="53" y2="82" stroke="#c5ccd8" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arrF)"/>
+<path d="M212,180 L104,191 L96,191" fill="none" stroke="#1f6feb" stroke-width="2.2" marker-end="url(#arrF)"/>
+<rect x="122" y="196" width="148" height="18" rx="4" fill="#fdf0e6" stroke="#d8dee8"/>
+<text x="196" y="208" text-anchor="middle" font-size="7.2" fill="#172033">datapath mode: register mode</text>
+<text x="122" y="228" font-size="7.2" fill="#647083">all 16 slots × 16 banks drained in</text>
+<text x="122" y="239" font-size="7.2" fill="#647083">one burst; one stall per 16 tokens.</text>
+</g>
+</g>
+        </svg>
+        <p class="cap">Fig. 11a &mdash; Same channel, same multipliers, same weight layout. Two storage additions (a 16-vector GB tile, a 16-slot accumulator file per bank) let the token loop move <i>inside</i> the fetch, and one burst-read replaces sixteen blocking drains.</p>
+      </div>
+      <p>The real ISR lines for the same projection (<code class="k">layer_ext_afree64_c16.trace</code>): the tile is filled once, then each row-group is <i>one</i> <code class="k">MAC_ABK_MV</code> and <i>one</i> <code class="k">RD_MACB</code>, and the whole layer sits inside a <code class="k">LOOP</code> so the host issues it once.</p>
+      <pre class="cmd">AiM LOOP 1                       <span class="c"># P4: the controller replays the block; host launches once per layer</span>
+<span class="c"># MV q_proj: K=1024 N=2048 G=2 rgroups=16 kchunks=1 cap=64 fill=True</span>
+AiM WR_GB 64 0 0xff              <span class="c"># tile fill: token 0 → group-0 channels (SW: token-parallel ×2)</span>
+AiM WR_GB 64 0 0xff00            <span class="c">#            token 26 → group-1 channels, interleaved</span>
+<span class="c"># ... 16 vectors per group, filled ONCE for this projection (dedup: KV reuses this tile)</span>
+AiM WR_BIAS 0 0xff
+AiM MAC_ABK_MV 64 0xff 100       <span class="c"># row-group 0: 64 fetches × 16 beats → 16 outputs × 16 tokens per bank</span>
+AiM RD_MACB 16 0 0xff            <span class="c"># one burst drains the 16-slot file of every bank</span>
+AiM WR_BIAS 0 0xff
+AiM MAC_ABK_MV 64 0xff 101       <span class="c"># row-group 1 (row switch, once per 16 tokens instead of once per token)</span>
+AiM RD_MACB 16 0 0xff
+<span class="c"># ... then the NEXT 16 tokens (4 groups cover 51), then the next projection</span>
+AiM WR_TILE 16 0 0xffff 0 4900   <span class="c"># P7: one descriptor for a whole activation-tile write (was 880 WR_SBK lines)</span>
+AiM ENDLOOP</pre>
+
+      <h3>Running the clock again: one (16-token tile, row-group)</h3>
+      <pre class="cmd"><span class="c">cycle    command           what happens                                                useful?</span>
+T+5      WR_BIAS           16 × 16 accumulator slots := 0                               no
+T+6      TMOD              array mode (32 idle)                                          no
+T+38     PREA / ACT16      open weight row g in all banks; wait nRCDRDMAC                no
+T+111    MAC_ABK_MV col 0  bank b fetches W[g][b][0..15] ONCE; 16 beats × x_0..x_15     YES ×16 tokens
+T+137    MAC_ABK_MV col 1  the PU (16 lanes @ 1 GHz) needs 25.6 DRAM cycles per column  YES ×16 tokens
+  ...
+T+1749   last column       s_0..s_15 of every bank hold 16 finished outputs each        YES
+T+1750   TMOD              register mode (32 idle)                                       no
+T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈ T+1850)  no
+<span class="c">--------------------------------------------------------------------------------------------</span>
+<span class="c">≈ 1,850 cycles for 16 tokens = 116 cycles per token, vs 432 on stock: 3.7× on this loop.</span>
+<span class="c">The MAC term alone improves 2.5× (256 → 102 cycles per token): the fabbed PU is now busy every cycle</span>
+<span class="c">instead of 1 cycle in 4. The rest comes from TMOD, row switches and drains happening 16× less often.</span></pre>
+
+      <div class="callout"><b>Charged honestly.</b> The simulator issues <code class="k">MAC_ABK_MV</code> at MAC16 timing (4 cycles) and the composition adds the PU occupancy analytically: 16 beats of 16 lanes at AiM&rsquo;s fabbed 1 GHz = 256 MACs = 16 ns = 25.6 DRAM cycles per column, i.e. +21.6 cycles per <code class="k">MAC_ABK_MV</code> column on top of the simulated stream. That is why the 16-channel layer is 0.486 ms and not the simulator&rsquo;s raw 0.219 ms. No multiplier is added; the PU is simply kept busy.</div>
+
+      <h3>What each piece of the fix removes</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Per channel, per layer (16 ch)</th><th class="num">stock</th><th class="num">P1 + P4 + P7 + dedup + tp2</th><th class="num">&divide;</th><th>removed by</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">MAC column commands (MAC16)</td><td class="num">263,976</td><td class="num">19,782</td><td class="num"><b>13.3&times;</b></td><td><b>P1</b>: 16 tokens per fetch (&divide;16, minus tile padding 64/51)</td></tr>
+          <tr><td class="rowlabel">in-bank weight traffic</td><td class="num">135 MB</td><td class="num">10.1 MB</td><td class="num"><b>13.3&times;</b></td><td><b>P1</b>: weights fetched 4&times; per layer instead of 63&times;</td></tr>
+          <tr><td class="rowlabel">GB column writes (WRGB)</td><td class="num">120,360</td><td class="num">27,824</td><td class="num">4.3&times;</td><td><b>P1</b> (tile filled once per K-chunk, not per row-group) + <b>dedup</b> (Q/KV, gate/up share a tile) + <b>tp2</b> (each channel group takes half the tokens)</td></tr>
+          <tr><td class="rowlabel">TMOD mode switches</td><td class="num">10,945</td><td class="num">791</td><td class="num">13.8&times;</td><td><b>P1</b>: two per (16 tokens, row-group) instead of two per (token, row-group)</td></tr>
+          <tr><td class="rowlabel">row switches (PREA)</td><td class="num">5,113</td><td class="num">389</td><td class="num">13.1&times;</td><td><b>P1</b>: a row is opened once per 16 tokens</td></tr>
+          <tr><td class="rowlabel">blocking drains</td><td class="num">4,590 (16 results each)</td><td class="num">762 (256 results each)</td><td class="num">6.0&times;</td><td><b>P1</b> <code class="k">RD_MACB</code>: one stall per 16 tokens; each moves 16&times; the data</td></tr>
+          <tr><td class="rowlabel">ISR lines from the host</td><td class="num">17,717 (6 launches)</td><td class="num">3,537 (1 launch)</td><td class="num">5.0&times;</td><td><b>P1</b> (fewer commands) + <b>P7</b> <code class="k">WR_TILE</code> (880 &rarr; 2 lines) + <b>P4</b> <code class="k">LOOP</code> (one launch per layer)</td></tr>
+          <tr><td class="rowlabel">simulated cycles</td><td class="num">2,283,344</td><td class="num">350,371</td><td class="num">6.5&times;</td><td>everything above</td></tr>
+          <tr><td class="rowlabel">AiM time per layer (with PU occupancy)</td><td class="num">1.427 ms</td><td class="num">0.486 ms</td><td class="num"><b>2.9&times;</b></td><td>the 16 beats are charged: +21.6 cycles per MV column</td></tr>
+          <tr><td class="rowlabel"><b>AE step, 16 channels, N = 4</b></td><td class="num"><b>28.55 ms</b></td><td class="num"><b>9.77 ms</b></td><td class="num"><b>2.9&times;</b></td><td>18 layers &times; (AiM + host segments); host launch once per layer (P4)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">Counters: <code class="k">sim_cache.json[layer_a_only_c16]</code> and <code class="k">sim_cache_paper.json[layer_ext_afree64_c16]</code>; totals summed over channels and divided by 16. Hardware added: 30 KB of GB SRAM per channel, 32 B of accumulator file per bank plus a select mux, a decode entry for <code class="k">RD_MACB</code>/<code class="k">WR_TILE</code>, and a KB-scale macro buffer in the SoC&rsquo;s memory controller for <code class="k">LOOP</code>. No multiplier, no clock change (Part III &sect;2 prices it).</p>
+
+      <div class="callout win"><b>Why it is efficient, in the terms of &sect;0.</b> LPDDR5 is a one-column-per-4-cycles machine, and AiM turns each column slot into 16 banks&rsquo; worth of work. Stock AiM wasted that 16&times; on redundancy (the same column re-fetched per token) and then paid 44 % of the layer in set-up and tear-down around each single-token fetch. P1 makes each column slot serve 16 tokens &mdash; so the 16&times; internal bandwidth is finally spent on <i>different</i> work &mdash; and, as a side effect, divides every per-fetch overhead by 16. What remains (the activation broadcast through the external pins, the PU&rsquo;s 16 beats) is the true cost of the workload, and Part III &sect;7&ndash;8 shows how far it can still be pushed.</div>
     </section>
 
     <section class="card" id="series">
