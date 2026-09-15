@@ -76,6 +76,7 @@
     <a href="#bcast">7 &middot; The last bottleneck: activation broadcast</a>
     <a href="#system">8 &middot; System view: hiding the AE (almost) entirely</a>
     <a href="#energy">9 &middot; Energy &amp; fair baselines</a>
+    <a href="#prior">10 &middot; How this differs from prior designs</a>
     <a href="#series">Series &amp; sources</a>
   </nav>
 
@@ -614,6 +615,54 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
       </div>
       <div class="callout win"><b>Energy is favorable in 10 of 12 cells</b> &mdash; including against the NX <i>theoretical floor</i>, because a GPU babysitting a memory-bound loop costs more than our whole budget; the losing cells are the AGX and Thor floors (0.79&times;, 0.87&times;). The three anchors: <b>NX realistic</b> (1.50&times;/1.79&times; on the module inside real humanoids, vs hypothetical-best software &mdash; unassailable), <b>AGX measured</b> (25&times;/22&times; vs today&rsquo;s actual deployed software), and <b>Thor</b> (near-parity latency with its hypothetical best, yet 1.47&times; less energy with the 2,070-TFLOP Blackwell GPU entirely freed; 6.6&times;/9.6&times; vs its measured stack &mdash; and LPDDR5X&rsquo;s faster pins speed only the XPU&rsquo;s bus, not the in-bank MAC path, so AiM ports to Thor&rsquo;s memory unchanged).</div>
       <p class="cap">The full deployment-platform survey &mdash; the landscape table, per-platform AE ladders, and the compiled-stack rung &mdash; is <a href="../03_deployment_platforms/report.html">Part IV</a>.</p>
+    </section>
+
+    <section class="card" id="prior">
+      <h2><span class="num">10</span>How this differs from prior in-DRAM designs</h2>
+      <p class="lead">Several published designs also reuse an in-bank fetch across more than one activation vector. To claim novelty honestly we did not argue from their papers &mdash; we <b>re-implemented each mechanism on our own substrate</b> and measured it: same machine (LPDDR5-AiM, 16 channels), same workload (&pi;<sub>0</sub> action expert, S = 51), same weight layout, the same <i>stock</i> attention path, and <b>none of our software or controller work</b> (no <code class="k">LOOP</code>, no dedup, no token-parallel). What is left is the ISA mechanism alone. Each model lives on its own branch (<code class="k">prior/cent</code>, <code class="k">prior/dots</code>, <code class="k">prior/p3-llm</code>, <code class="k">prior/lp-spec</code>).</p>
+      <div class="callout warn"><b>Mechanism transplant, stated up front.</b> We model the mechanism, not the authors&rsquo; platform, precision or clock. Where a published gain also rests on something our premise excludes &mdash; a faster column clock, INT4/INT8 operands, a logic die &mdash; we name it and do <b>not</b> credit it. These numbers are what each <i>idea</i> is worth on a GEMV-only LPDDR bank PIM running a 51-token flow-matching expert, not a restatement of anyone&rsquo;s published speedup.</div>
+
+      <div class="scroll">
+      <table>
+        <thead><tr><th>design</th><th>what it adds</th><th class="num">step ms</th><th class="num">vs stock</th><th class="num">energy mJ</th><th class="num">MAC cmds/ch</th><th class="num">acc/bank</th><th class="num">GB/ch</th><th class="num">multipliers</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Stock AiM</td><td>1 vector, 1 accumulator</td><td class="num">28.55</td><td class="num">1.00&times;</td><td class="num">434</td><td class="num">263,976</td><td class="num">2 B</td><td class="num">2 KB</td><td class="num">16</td></tr>
+          <tr><td class="rowlabel">CENT <span style="color:var(--muted);font-size:.85em;">ASPLOS&rsquo;25</span></td><td>32 addressable accumulator registers, no multi-vector command</td><td class="num">27.09</td><td class="num">1.05&times;</td><td class="num">427</td><td class="num">263,976</td><td class="num">64 B</td><td class="num">2 KB</td><td class="num">16</td></tr>
+          <tr><td class="rowlabel">DOTS <span style="color:var(--muted);font-size:.85em;">DATE&rsquo;25</span></td><td>8 result latches; weight row held open across 8 tokens (GB writes charged)</td><td class="num">31.77</td><td class="num">0.90&times;</td><td class="num">499</td><td class="num">263,976</td><td class="num">16 B</td><td class="num">4 KB</td><td class="num">16</td></tr>
+          <tr><td class="rowlabel">DOTS, their claim</td><td>same + split read/write I/O bus credited with hiding every GB write</td><td class="num">20.52</td><td class="num">1.39&times;</td><td class="num">313</td><td class="num">263,976</td><td class="num">16 B</td><td class="num">4 KB</td><td class="num">16</td></tr>
+          <tr><td class="rowlabel">P3-LLM <span style="color:var(--muted);font-size:.85em;">arXiv&rsquo;25</span></td><td>throughput-enhanced PCU: one row-buffer slice reused by 2 inputs</td><td class="num">18.63</td><td class="num">1.53&times;</td><td class="num">316</td><td class="num">158,376</td><td class="num">4 B</td><td class="num">4 KB</td><td class="num">16</td></tr>
+          <tr><td class="rowlabel">LP-Spec <span style="color:var(--muted);font-size:.85em;">ICCAD&rsquo;25</span></td><td>MPU: bank burst broadcast to 4 ALUs (depth 4)</td><td class="num"><b>14.81</b></td><td class="num"><b>1.93&times;</b></td><td class="num">279</td><td class="num">103,464</td><td class="num">8 B</td><td class="num">8 KB</td><td class="num"><b>64</b></td></tr>
+          <tr style="background:#e7f5ec;"><td class="rowlabel"><b>Ours (P1)</b></td><td><code class="k">MAC_ABK_MV</code>: one fetch, 26 beats, 26-slot file, burst drain</td><td class="num"><b>15.15</b></td><td class="num"><b>1.88&times;</b></td><td class="num"><b>261</b></td><td class="num"><b>57,000</b></td><td class="num">52 B</td><td class="num">52 KB</td><td class="num"><b>16</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">16 channels, N = 4, 20 &micro;s launch overhead. Every row uses the stock attention path and no P4/SW, so the comparison is the projection mechanism only; our complete design (this page&rsquo;s headline) reaches 8.19 ms. Data: <code class="k">04_data/prior_art.csv</code>, write-up in <code class="k">05_reports/prior_art_models.md</code>.</p>
+
+      <h3>What the measurements say</h3>
+      <ul class="notes">
+        <li><b>Accumulators alone are nearly worthless (CENT, 1.05&times;).</b> More result registers remove drains and mode switches, but every weight column is still fetched once per token. CENT has the register file our design needs and spends it on one vector at a time.</li>
+        <li><b>Latches without fetch reuse are worth little, and can lose (DOTS, 0.90&ndash;1.39&times;).</b> Holding the row open across 8 tokens removes row switches and drains, but each token still costs its own MAC command, so the 16&times; internal bandwidth is still spent 8 times on the same data. The row-major order DOTS needs also re-fills the Global Buffer per (row-group, token): charged, that is <i>slower than stock</i>; only its split read/write bus rescues it.</li>
+        <li><b>Depth bought with arithmetic works &mdash; it is the only row that beats us (LP-Spec, 1.93&times;).</b> Four ALUs per bank pair give depth 4 with a short command, so the PU never throttles. It costs <b>4&times; the multipliers</b>: 16.9 % of the die and 26.5 % of the density in the original paper.</li>
+        <li><b>Depth bought with clock works too, and less (P3-LLM, 1.53&times;).</b> Depth 2 from a PCU clocked at tCCD<sub>S</sub>. Its published speedups also need INT4/INT8 operands and a doubled command rate; our fp16, JEDEC-timing premise credits neither.</li>
+        <li><b>Depth bought with storage matches all of them at zero arithmetic (ours, 1.88&times;).</b> Within 2 % of the 4&times;-multiplier design on latency, with <b>4.6&times; fewer MAC commands</b> than any stock-depth design, the fewest mode switches, and the <b>lowest energy of any row</b> (261 mJ: 6 % under LP-Spec, 17 % under DOTS&rsquo;s best case).</li>
+      </ul>
+
+      <h3>Depth is the differentiator, once everything else is equal</h3>
+      <p>Give every mechanism our controller macros, our software mapping and a multi-vector attention path, and the ranking is exactly the ranking of depth:</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th class="num">depth reached</th><th>by</th><th class="num">step ms in our full design</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>stock AiM, CENT</td><td class="num">28.55</td></tr>
+          <tr><td class="num">2</td><td>P3-LLM</td><td class="num">17.98</td></tr>
+          <tr><td class="num">4</td><td>LP-Spec</td><td class="num">12.76</td></tr>
+          <tr><td class="num">8</td><td>DOTS</td><td class="num">11.27</td></tr>
+          <tr style="background:#e7f5ec;"><td class="num"><b>26</b></td><td><b>ours</b></td><td class="num"><b>8.19</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <div class="callout win"><b>The novelty claim, in one paragraph.</b> No prior design holds a <i>multi-vector activation tile resident in the DRAM-die buffer and sweeps it with a single command</i>. DOTS streams vectors through a two-slot buffer and keeps one command per vector; P3-LLM keeps one vector per command and reuses the row buffer across two consecutive commands; LP-Spec broadcasts one burst to four <i>added</i> ALUs; CENT has the accumulator file but no reuse at all. Ours reaches depth 26 &mdash; chosen by measurement, matched to the tokens a channel group owns &mdash; with <b>no added multipliers, no clock change and no precision change</b>, for 52 B of accumulator file per bank and 50 KB of Global Buffer SRAM per channel, keeping the stock command format.</div>
     </section>
 
     <section class="card" id="series">
