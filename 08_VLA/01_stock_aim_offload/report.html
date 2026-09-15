@@ -502,15 +502,23 @@ AiM RD_MAC 0 0xffff
 <span class="c"># ... row-groups 2..7, then "WR_GB 64" again for token 1, and so on for 51 tokens</span></pre>
 
       <h3>The loop order, and why it is forced</h3>
-      <pre class="cmd">for t in 0..50:                  <span class="c"># 51 suffix tokens, OUTERMOST</span>
-    WR_GB 64  x_t                <span class="c"># the GB holds only this one vector</span>
-    for g in 0..7:               <span class="c"># 8 row-groups = 8 DRAM rows per bank (rows 100..107)</span>
-        WR_BIAS                  <span class="c"># zero the accumulators</span>
-        MAC_ABK 64 row g         <span class="c"># for c in 0..63: 256 output rows += W[.][c] &middot; x_t[c]</span>
-        RD_MAC                   <span class="c"># drain 256 finished outputs, 16 per channel</span>
-<span class="c"># q_proj in the trace: 51 WR_GB, 408 MAC_ABK, 408 RD_MAC</span></pre>
+      <pre class="cmd"><span class="c"># HOST = one ISR line the host writes;  DMA = loop the AiM DMA unrolls from opsize</span>
+for t in 0..50:                                <span class="c"># HOST loop: 51 suffix tokens, OUTERMOST</span>
+    WR_GB 64                                   <span class="c"># HOST: 1 line</span>
+        for c in 0..63:                        <span class="c">#   DMA: 64 column writes, 4 cyc each</span>
+            GB[c] = x_t[16c .. 16c+15]         <span class="c">#   one 32 B segment = 16 bf16</span>
+    for g in 0..7:                             <span class="c"># HOST loop: 8 row-groups = DRAM rows 100..107</span>
+        WR_BIAS                                <span class="c"># HOST: acc_b = 0 in every bank</span>
+                                               <span class="c">#   (controller inserts TMOD, then PREA + ACT16 row g)</span>
+        MAC_ABK 64 row g                       <span class="c"># HOST: 1 line</span>
+            for c in 0..63:                    <span class="c">#   DMA: 64 column commands, 4 cyc each</span>
+                for every bank b, every channel:   <span class="c">#   in parallel, not a loop</span>
+                    acc_b += W[j_b][16c .. 16c+15] &middot; GB[c]   <span class="c"># 16 lanes</span>
+        RD_MAC                                 <span class="c"># HOST: (TMOD) 16 acc/channel -&gt; GPR, BLOCKING</span>
+<span class="c"># j_b = the output row bank b owns in row-group g; 16 banks x 16 channels = 256 outputs per MAC_ABK</span>
+<span class="c"># q_proj in the trace: 51 WR_GB, 408 MAC_ABK, 408 RD_MAC lines</span></pre>
       <ul class="notes">
-        <li><b>The 2,048 output direction is never swept one output at a time.</b> Within a row-group it is covered in parallel &mdash; 16 banks &times; 16 channels = 256 outputs per sweep &mdash; and serially over the 8 row-groups. The inner loop walks the 64 input columns (1,024 inputs) of those 256 rows.</li>
+        <li><b>The 2,048 output direction is never swept one output at a time.</b> Within a row-group it is covered in parallel &mdash; 16 banks &times; 16 channels = 256 outputs per sweep &mdash; and serially over the 8 row-groups. The inner <code class="k">c</code> loop walks the 64 input columns (1,024 inputs) of those 256 rows; it is not written by the host but unrolled by the DMA from <code class="k">opsize=64</code>, and <code class="k">c</code> indexes 32 B columns of 16 elements, not single numbers.</li>
         <li><b>Input-first is forced by the single accumulator.</b> A bank holds one partial sum, so it must finish its output row across all 1,024 inputs before the value can leave. The other order &mdash; visit all 8 row-groups for input column <i>c</i>, then <i>c</i>+1 &mdash; would need 8 partial sums per bank, so it would drain after every column: 64 &times; 8 = 512 <code class="k">RD_MAC</code> per token instead of 8, plus a row switch at every step because the 8 row-groups live in different DRAM rows. Input-first is the cheapest order the stock ISA allows.</li>
         <li><b>The token loop has to be outermost</b> for the same reason, one level up: the GB holds one token&rsquo;s vector, so every row-group of token <i>t</i> must be finished before <i>x</i><sub><i>t</i>+1</sub> may overwrite it. That is what turns 51 tokens into 51 passes over the whole weight matrix.</li>
       </ul>
