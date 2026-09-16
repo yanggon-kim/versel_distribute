@@ -743,9 +743,10 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <tr><td class="rowlabel">stock AiM (best mapping, AF-free)</td><td class="num">51.98</td><td class="num">28.55</td><td class="num">17.30</td><td>Part III baseline: fetch-per-token amortization; GeLU on host</td></tr>
           <tr><td class="rowlabel">+P1 MAC_ABK_MV</td><td class="num">18.86</td><td class="num">12.36</td><td class="num">9.26</td><td>MAC commands &divide;4, blocking reads &divide;16 per drain, weights on the parallel-bank path: the 44%+11%+16% slices collapse</td></tr>
           <tr><td class="rowlabel">+P4 LOOP macros</td><td class="num">17.02</td><td class="num">10.52</td><td class="num">7.42</td><td>launch overhead once per layer, not per segment; host-ISR stream 16&times; smaller</td></tr>
-          <tr><td class="rowlabel">+P7 WR_TILE</td><td class="num">14.01</td><td class="num">10.48</td><td class="num">7.38</td><td>activation-tile loads compress 64&times; in command count; small but free</td></tr>
+          <tr><td class="rowlabel">+P7 WR_TILE</td><td class="num">16.97</td><td class="num">10.48</td><td class="num">7.38</td><td>activation-tile loads compress 64&times; in command count; small but free</td></tr>
           <tr><td class="rowlabel">+dedup + token-parallel &times;2 (SW, 32 KB GB)</td><td class="num">17.31</td><td class="num">9.87</td><td class="num">6.19</td><td>&sect;7 below &mdash; the broadcast fix; 16-vector GB</td></tr>
-          <tr><td class="rowlabel"><b>+64-vector GB (128 KB, headline)</b></td><td class="num">14.01</td><td class="num"><b>8.15</b></td><td class="num"><b>5.26</b></td><td>bigger tile &rarr; fewer fill passes; only +2% over the 32 KB GB</td></tr>
+          <tr><td class="rowlabel">+64-vector GB (128 KB)</td><td class="num">17.25</td><td class="num">9.77</td><td class="num">6.07</td><td>bigger tile &rarr; fewer fill passes; only +1% over the 32 KB GB</td></tr>
+          <tr><td class="rowlabel"><b>+depth V = 26 (headline)</b></td><td class="num"><b>14.01</b></td><td class="num"><b>8.15</b></td><td class="num"><b>5.26</b></td><td>the tile matched to the 26 tokens a channel group owns &mdash; no padding (&sect;2)</td></tr>
           <tr><td class="rowlabel">token-parallel &times;4 (kept negative)</td><td class="num">21.64</td><td class="num">11.88</td><td class="num">6.99</td><td>&sect;7: blocking RD_MACB drains serialize across groups</td></tr>
         </tbody>
       </table>
