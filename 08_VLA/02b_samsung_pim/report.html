@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VLA Part III-2 — The Same Offload on Samsung&rsquo;s PIM: a Smaller Problem, and Why</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --text:#172033; --muted:#647083; --accent:#1f6feb;
+    --border:#d8dee8; --good:#1a7f37; --good-bg:#e7f5ec; --warn:#b54708; --warn-bg:#fdf0e6; --code:#0b1020;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:var(--bg);line-height:1.6;}
+  a{color:var(--accent);}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;width:min(100%,1200px);margin:0 auto;padding:36px 24px 64px;}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.9rem;}
+  nav.toc .crumb{color:var(--muted);font-size:.8rem;margin-bottom:14px;}
+  nav.toc a{display:block;padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;}
+  nav.toc a:hover{background:#eef5ff;color:var(--accent);}
+  main{min-width:0;}
+  header.page h1{font-size:clamp(1.7rem,3.6vw,2.4rem);line-height:1.14;margin:0;}
+  header.page .sub{color:var(--muted);margin-top:12px;font-size:1.05rem;}
+  .tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .tag{font-size:.78rem;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7;color:#43506a;border:1px solid var(--border);}
+  .tag.live{background:var(--good-bg);color:var(--good);}
+  .tag.warn{background:var(--warn-bg);color:var(--warn);}
+  section.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(23,32,51,.06);padding:26px 28px;margin-bottom:22px;scroll-margin-top:20px;}
+  section.card>h2{margin:0 0 6px;font-size:1.35rem;}
+  section.card>h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  .lead{color:var(--muted);margin:0 0 18px;}
+  h3{font-size:1.08rem;margin:24px 0 8px;}
+  p{margin:10px 0;}
+  code.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:#33415c;}
+  pre.cmd{background:var(--code);color:#e6edf7;border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.83rem;line-height:1.5;margin:12px 0;}
+  pre.cmd .c{color:#7d8aa5;}
+  .headline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:6px 0 8px;}
+  .kpi{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:#fbfcff;}
+  .kpi .v{font-size:1.5rem;font-weight:800;}
+  .kpi .l{font-size:.8rem;color:var(--muted);margin-top:2px;}
+  .callout{border-left:4px solid var(--accent);background:#f3f8ff;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;}
+  .callout.win{border-left-color:var(--good);background:var(--good-bg);}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg);}
+  .callout b{color:#33415c;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin:12px 0 4px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#f1f4f9;font-size:.82rem;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.rowlabel{font-weight:700;white-space:nowrap;}
+  tbody tr:hover{background:#f7faff;}
+  .scroll{overflow-x:auto;}
+  .fig{margin:18px 0;border:1px solid var(--border);border-radius:10px;background:#fcfdff;padding:14px 14px 6px;}
+  .fig svg{display:block;width:100%;height:auto;}
+  .fig .cap{color:var(--muted);font-size:.85rem;margin:6px 2px 8px;}
+  .cap{font-size:.84rem;color:var(--muted);margin:6px 2px 0;}
+  figure{margin:18px 0;}
+  figure img{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;background:#fff;}
+  ul.notes{margin:8px 0;padding-left:20px;}
+  ul.notes li{margin:6px 0;}
+  .footer{color:var(--muted);font-size:.9rem;border-top:1px solid var(--border);margin-top:26px;padding-top:18px;}
+  .footer a{text-decoration:none;}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr;} nav.toc{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
+    <a href="#overview">Overview</a>
+    <a href="#machine">1 &middot; Samsung&rsquo;s PIM: the machine</a>
+    <a href="#isa">2 &middot; The ISA, and the one rule that matters</a>
+    <a href="#sim">3 &middot; The simulator, retimed to LPDDR5</a>
+    <a href="#exec">4 &middot; How a GEMV runs, step by step</a>
+    <a href="#problem">5 &middot; The problem, quantified</a>
+    <a href="#smaller">6 &middot; Why the problem is smaller here</a>
+    <a href="#fix">7 &middot; What the fix is worth, and the ceiling</a>
+    <a href="#series">Series &amp; sources</a>
+  </nav>
+
+  <main>
+    <header class="page">
+      <h1>The Same Offload on Samsung&rsquo;s PIM &mdash; a Smaller Problem, and Why</h1>
+      <p class="sub"><a href="../02_stock_aim_offload/report.html">Part III</a> showed the &pi;<sub>0</sub> action expert losing on SK hynix AiM for an <i>ISA</i> reason: one in-bank fetch serves one activation vector and one accumulator. Is that SK hynix&rsquo;s mistake or a property of GEMV-only PIM? This page runs the identical workload on <b>Samsung&rsquo;s own simulator</b>, retimed to the same LPDDR5 timing, and finds the same disease with a <b>much smaller magnitude</b>. The reason is not a better ISA. It is that Samsung sized its compute unit to the command bus, so there is far less idle throughput for a fix to harvest &mdash; and the machine is 1.9&times; slower to begin with.</p>
+      <div class="tags">
+        <span class="tag">SAITPublic/PIMSimulator @ 3703d1f (DRAMSim2)</span>
+        <span class="tag">HBM-PIM retimed to LPDDR5-6400, 16 ch</span>
+        <span class="tag warn">stock Samsung: 52.3 ms/step</span>
+        <span class="tag live">same workload, same timing, same host model</span>
+      </div>
+    </header>
+
+    <section class="card" id="overview">
+      <h2>Overview</h2>
+      <p class="lead">A second vendor, held to the same test. Everything except the PIM ISA is identical to Part III: tCK = 0.625 ns, 32 B column, 12.8 GB/s per channel, 16 channels at Jetson AGX Orin parity, the same 51-token layer, the same host segments. What changes is the machine underneath.</p>
+      <div class="headline">
+        <div class="kpi"><div class="v">52.27 ms</div><div class="l">stock Samsung AE step @ 16 ch (AiM: 28.55)</div></div>
+        <div class="kpi"><div class="v">1.32&times;</div><div class="l">arithmetic wasted on output-tile padding (AiM: 1.03&times;)</div></div>
+        <div class="kpi"><div class="v">1.62&times;</div><div class="l">how far stock sits above its own compute floor (AiM: 5.4&times;)</div></div>
+        <div class="kpi"><div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM: 2.70&times;)</div></div>
+      </div>
+      <div class="callout"><b>The one-line answer.</b> The diagnosis transfers exactly, the fix transfers exactly, and <b>the payoff does not</b> &mdash; because the payoff is gated by how much MAC throughput each vendor put behind the bank, not by the ISA. Samsung&rsquo;s problem is smaller because Samsung left less on the table.</div>
+    </section>
+
+    <section class="card" id="machine">
+      <h2><span class="num">1</span>Samsung&rsquo;s PIM: the machine</h2>
+      <p class="lead">Same idea as AiM, three structural differences: one compute unit per <i>two</i> banks, a register-file programming model instead of a broadcast buffer, and a unit clocked at the column rate rather than 1 GHz.</p>
+
+      <div class="fig" id="fig-samsung">
+        <svg viewBox="0 0 900 340" role="img" aria-label="Samsung PIM channel block diagram. A channel holds 16 banks arranged in pairs; each pair shares one PIM unit containing 16 fp16 multiply-accumulate lanes, a command register file of 32 instructions, two vector register files GRF_A and GRF_B of eight 256-bit entries each, and two scalar register files. GRF_A holds the input vector, GRF_B is the only legal destination for MAC and therefore acts as the accumulator file. The host drives the unit by ordinary DRAM column commands: each non-jump instruction consumes one command, and address-aligned mode makes one instruction serve eight consecutive columns.">
+          <defs><marker id="arrS1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+          <rect x="10" y="60" width="140" height="86" rx="8" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="80" y="82" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">host controller</text>
+          <text x="80" y="99" text-anchor="middle" font-size="9" fill="#647083">ordinary ACT / RD / WR</text>
+          <text x="80" y="113" text-anchor="middle" font-size="9" fill="#647083">no PIM-specific opcode</text>
+          <text x="80" y="131" text-anchor="middle" font-size="9" fill="#b54708">1 column cmd = 1 instruction</text>
+          <line x1="150" y1="100" x2="196" y2="100" stroke="#647083" stroke-width="1.4" marker-end="url(#arrS1)"/>
+          <rect x="198" y="14" width="692" height="312" rx="10" fill="none" stroke="#eb6834" stroke-width="1.5"/>
+          <text x="212" y="34" font-size="11" font-weight="bold" fill="#eb6834">one channel &mdash; 16 banks, 8 PIM units (one per bank pair)</text>
+
+          <rect x="214" y="48" width="300" height="122" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+          <text x="364" y="66" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">bank pair 0 &mdash; the unit sits between them</text>
+          <rect x="226" y="76" width="120" height="30" rx="4" fill="#f1f4f9" stroke="#d8dee8"/><text x="286" y="95" text-anchor="middle" font-size="9" fill="#172033">bank 0 (EVEN)</text>
+          <rect x="382" y="76" width="120" height="30" rx="4" fill="#f1f4f9" stroke="#d8dee8"/><text x="442" y="95" text-anchor="middle" font-size="9" fill="#172033">bank 1 (ODD)</text>
+          <line x1="286" y1="106" x2="330" y2="122" stroke="#647083" stroke-width="1.2" marker-end="url(#arrS1)"/>
+          <line x1="442" y1="106" x2="398" y2="122" stroke="#647083" stroke-width="1.2" marker-end="url(#arrS1)"/>
+          <rect x="300" y="122" width="128" height="34" rx="5" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="364" y="136" text-anchor="middle" font-size="9" font-weight="bold" fill="#172033">PIM unit: 16 fp16 lanes</text>
+          <text x="364" y="149" text-anchor="middle" font-size="8" fill="#647083">MAC / ADD / MUL / MAD</text>
+
+          <rect x="530" y="48" width="346" height="122" rx="8" fill="#fbfcff" stroke="#d8dee8"/>
+          <text x="703" y="66" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">architectural state per unit &asymp; 544 B</text>
+          <rect x="542" y="76" width="152" height="26" rx="4" fill="#e7f0fe" stroke="#1f6feb"/><text x="618" y="93" text-anchor="middle" font-size="8.5" fill="#172033">CRF &mdash; 32 instructions</text>
+          <rect x="702" y="76" width="162" height="26" rx="4" fill="#fdf0e6" stroke="#b54708"/><text x="783" y="93" text-anchor="middle" font-size="8.5" fill="#172033">GRF_A &mdash; 8 &times; 256 b (input)</text>
+          <rect x="542" y="110" width="152" height="26" rx="4" fill="#e7f5ec" stroke="#1a7f37"/><text x="618" y="127" text-anchor="middle" font-size="8.5" fill="#172033">GRF_B &mdash; 8 &times; 256 b</text>
+          <rect x="702" y="110" width="162" height="26" rx="4" fill="#eef2f7" stroke="#d8dee8"/><text x="783" y="127" text-anchor="middle" font-size="8.5" fill="#172033">SRF_M / SRF_A &mdash; scalars</text>
+          <text x="703" y="152" text-anchor="middle" font-size="8.5" fill="#1a7f37">MAC may only write GRF_B &mdash; so GRF_B <tspan font-weight="bold">is</tspan> the accumulator file</text>
+
+          <rect x="214" y="186" width="662" height="60" rx="8" fill="#fff" stroke="#d8dee8"/>
+          <text x="226" y="205" font-size="10" font-weight="bold" fill="#172033">three modes, entered by ordinary ACT/PRE/WR to reserved rows</text>
+          <text x="226" y="222" font-size="9" fill="#647083">SB (normal DRAM) &rarr; HAB (all-bank) &rarr; HAB_PIM (the unit executes)</text>
+          <text x="226" y="237" font-size="9" fill="#647083">entering HAB_PIM resets the program counter and zeroes GRF_A/GRF_B &mdash; no published fixed cycle penalty, unlike AiM&rsquo;s 32-cycle TMOD</text>
+
+          <text x="214" y="268" font-size="9.5" fill="#172033" font-weight="bold">Per channel: 8 units &times; 16 lanes = 128 lanes at the column rate (400 MHz) = 51.2 GMAC/s</text>
+          <text x="214" y="285" font-size="9.5" fill="#1f6feb">AiM, for comparison: 16 units &times; 16 lanes = 256 lanes at 1 GHz = 256 GMAC/s &mdash; 5&times; more</text>
+          <text x="214" y="308" font-size="8.5" fill="#647083">[ASSUMPTION A15-3] the public HBM-PIM documentation gives the unit as rate-matched to the column access; we clock it at the retimed column rate.</text>
+        </svg>
+        <p class="cap">Fig. 1 &mdash; The Samsung channel. The programming model is a small register file per unit, not a per-channel broadcast buffer: GRF_A holds the input vector, GRF_B holds the accumulators, and the CRF holds a micro-kernel of up to 32 instructions.</p>
+      </div>
+
+      <div class="scroll">
+      <table>
+        <thead><tr><th>&nbsp;</th><th>SK hynix AiM (Part III)</th><th>Samsung HBM-PIM (here)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">compute unit placement</td><td>one per bank (16/channel)</td><td><b>one per two banks</b> (8/channel)</td></tr>
+          <tr><td class="rowlabel">lanes per unit</td><td>16 bf16</td><td>16 fp16</td></tr>
+          <tr><td class="rowlabel">unit clock</td><td><b>1 GHz</b>, independent of the bus</td><td><b>column rate</b> (400 MHz retimed)</td></tr>
+          <tr><td class="rowlabel">where the shared operand lives</td><td>2 KB Global Buffer per channel, broadcast to all banks</td><td>GRF_A, 8 &times; 256 b <i>per unit</i></td></tr>
+          <tr><td class="rowlabel">where results accumulate</td><td>one 16-bit accumulator per bank</td><td>GRF_B, 8 &times; 256 b per unit (MAC&rsquo;s only legal destination)</td></tr>
+          <tr><td class="rowlabel">how the host drives it</td><td>ISR commands on the DRAM command bus, <code class="k">opsize</code> unrolled by a DMA</td><td>ordinary column commands; each steps the unit&rsquo;s program counter</td></tr>
+          <tr><td class="rowlabel">mode switch cost</td><td>32-cycle <code class="k">TMOD</code>, charged on every array&harr;register transition</td><td>an ACT/PRE sequence plus a channel barrier; no fixed penalty</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <section class="card" id="isa">
+      <h2><span class="num">2</span>The ISA, and the one rule that matters</h2>
+      <p class="lead">Nine 32-bit instructions: <code class="k">NOP, ADD, MUL, MAC, MAD, MOV, FILL, JUMP, EXIT</code>. The interesting part is not the list but how instructions are <i>issued</i>.</p>
+
+      <h3>The execution rule</h3>
+      <pre class="cmd"><span class="c">// PIMRank::doPIM -- invoked once per incoming DRAM bus packet</span>
+do {
+    cCmd = crf.data[pimPC_];
+    ... EXIT / JUMP / execute ...
+    pimPC_++;
+} while (cCmd.type_ == JUMP);</pre>
+      <p>A <code class="k">JUMP</code> is free: it is folded into the same packet as the instruction it branches to. <b>Every non-JUMP instruction consumes exactly one host DRAM column command.</b> So the 32-entry command register file amortises instruction <i>storage</i>, not host <i>issue</i>: a 4,096-long GEMV runs from a six-instruction program written once by four writes, and the host still issues one column command per MAC.</p>
+      <div class="callout warn"><b>This is the fact that decides the AiM comparison.</b> Samsung&rsquo;s CRF plus <code class="k">JUMP</code> looks like a controller macro, and it is not one. Part IV&rsquo;s P4 &mdash; a loop the <i>memory controller</i> replays without host involvement &mdash; is unsolved on this machine too.</div>
+
+      <h3>Address-aligned mode: eight columns per instruction</h3>
+      <p>The second half of the story is the <code class="k">isAuto_</code> bit. In address-aligned mode the register indices come from the address itself:</p>
+      <pre class="cmd">GRF_A index = column &amp; 0x7
+GRF_B index = ((row &amp; 1) &lt;&lt; 2) | ((column &gt;&gt; 3) &amp; 0x3)</pre>
+      <p>One auto-indexed instruction therefore serves <b>eight consecutive column commands</b>, and a 64-column sweep walks every (input burst, output burst) pair. Samsung&rsquo;s stated motive is tolerance of memory-controller reordering; the side effect is code compression, and it is why Samsung&rsquo;s host-command count per layer (12.5 M) is far below its MAC-burst count (86.9 M) &mdash; roughly seven bursts per command.</p>
+      <p>What address-aligned mode does <i>not</i> do is share a fetch. Each <code class="k">MAC</code> still reads one bank burst, applies it to <b>one</b> GRF_A entry and accumulates into <b>one</b> GRF_B entry. The reuse factor is one, exactly as on AiM.</p>
+    </section>
+
+    <section class="card" id="sim">
+      <h2><span class="num">3</span>The simulator, retimed to LPDDR5</h2>
+      <p class="lead">There is no open-source simulator for Samsung LPDDR-PIM. Samsung&rsquo;s own LP5X-PIM Sim is a four-page tech note with no code. The only runnable Samsung-authored PIM simulator is <code class="k">SAITPublic/PIMSimulator</code> (DRAMSim2, modelling HBM-PIM / Aquabolt-XL), so we take it and retime it.</p>
+      <ul class="notes">
+        <li><b>What is held identical to Part III:</b> tCK = 0.625 ns, 32 B column, BL = 4, tCCD = 4, 12.8 GB/s per channel, 16 channels = 204.8 GB/s, the same &pi;<sub>0</sub> layer at S = 51, the same host segments and the same 18-layer &times; N-step composition. Only the PIM ISA differs.</li>
+        <li><b>What is assumed, and tagged:</b> LPDDR5 bank timings mirrored from the AiM study&rsquo;s preset (A15-2); the compute unit clocked at the column rate (A15-3); fp16 kept, no quantisation (A15-4); one unit per two banks as the HBM-PIM baseline, with the one-unit-per-bank organisation measured separately (A15-5); and the headline framing that this is a <i>retimed</i> HBM part, not a native LPDDR-PIM product (A15-6).</li>
+        <li><b>Validation:</b> the stock kernels are bit-identical to the pristine upstream branch after our patch (<code class="k">PIMKernelFixture.gemv</code> 4096 passed / 0 failed; <code class="k">PIMBenchFixture.gemv</code> 36,082 &rarr; 13,166 cycles, 2.74&times;).</li>
+        <li><b>Licence:</b> the simulator is Samsung proprietary, academic use only, no redistribution. Nothing Samsung-authored is committed or published; our changes live as a patch <i>script</i> that applies to a local clone.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="exec">
+      <h2><span class="num">4</span>How a GEMV runs, step by step</h2>
+      <p class="lead">Samsung&rsquo;s own reference kernel, <code class="k">PIMKernel::executeGemv</code>. The shape of the loop nest is the whole story.</p>
+      <pre class="cmd">for (output tile j)
+    for (b = 0; b &lt; num_batch; b++)          <span class="c">&lt;-- the batch loop is OUTSIDE the weight sweep</span>
+        changePIMMode(HAB, HAB_PIM)           <span class="c">// per output tile, per batch element</span>
+        for (input tile)
+            8 &times; WRITE GRF_A                  <span class="c">// this token's input burst</span>
+            64 &times; MAC  (address-aligned)      <span class="c">// one bank burst each, one GRF_A, one GRF_B</span>
+        8 &times; GRFB_TO_BANK                     <span class="c">// drain the accumulators</span></pre>
+      <p>With the batch loop outside the weight sweep, every weight is fetched once per batch element. For the action expert the batch <i>is</i> the token count, S = 51. Samsung&rsquo;s own balance figures say what that costs: peak compute 1.229 TFLOPS divided by peak weight fetch 1.229 TB/s is <b>1.00 FLOP per byte</b> &mdash; the machine is balanced for, and only for, a single-vector GEMV.</p>
+      <div class="callout warn"><b>Samsung said this in print, in 2021.</b> From the ISCA paper describing the silicon: <i>&ldquo;PIM-HBM improves the performance of GEMV by 11.2&times; and 3.2&times; for batch size of 1 and 2&hellip; for batch size of 4, the processor with HBM begins to outperform one with PIM-HBM&hellip; PIM-HBM does not improve performance if the batch size is 4 or larger.&rdquo;</i> The &pi;<sub>0</sub> action expert runs at batch 51.</div>
+    </section>
+
+    <section class="card" id="problem">
+      <h2><span class="num">5</span>The problem, quantified</h2>
+      <p class="lead">Counters from Samsung&rsquo;s simulator for one 16-channel layer, summed over channels, next to the same quantities on AiM.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>per layer, 16 channels</th><th class="num">Samsung, stock</th><th class="num">AiM, stock</th><th>what it means</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">in-bank weight fetches</td><td class="num">86,900,736</td><td class="num">67,578,000</td><td>every fetch serves exactly one token, so weight traffic is S&times; the minimum on both</td></tr>
+          <tr><td class="rowlabel">MAC bursts performed</td><td class="num">86,900,736</td><td class="num">67,578,000</td><td>equal to the fetches: reuse factor 1</td></tr>
+          <tr><td class="rowlabel">MAC bursts actually needed</td><td class="num">65,802,240</td><td class="num">65,802,240</td><td>the same arithmetic, by construction &mdash; identical workload</td></tr>
+          <tr><td class="rowlabel"><b>arithmetic padding</b></td><td class="num"><b>1.32&times;</b></td><td class="num">1.03&times;</td><td>Samsung wastes a third of its MAC work on output-tile quantisation (&sect;7)</td></tr>
+          <tr><td class="rowlabel">host column commands</td><td class="num">12,470,784</td><td class="num">&mdash;</td><td>address-aligned mode gives &asymp;7 bursts per command; AiM instead unrolls one ISR into 64 column commands</td></tr>
+          <tr><td class="rowlabel">accumulator drains</td><td class="num">0 <i>(in-register)</i></td><td class="num">73,440 blocking</td><td>GRF_B holds 8 outputs, so Samsung avoids AiM&rsquo;s blocking scalar read entirely</td></tr>
+          <tr><td class="rowlabel">channel barriers</td><td class="num">97,428</td><td class="num">&mdash;</td><td>mode changes per (output tile, batch element)</td></tr>
+          <tr><td class="rowlabel">simulated cycles</td><td class="num">4,392,368</td><td class="num">2,283,344</td><td>at tCK = 0.625 ns</td></tr>
+          <tr><td class="rowlabel"><b>PIM time per layer</b></td><td class="num"><b>2.745 ms</b></td><td class="num"><b>1.427 ms</b></td><td>Samsung is <b>1.92&times; slower</b> on the identical workload and timing</td></tr>
+          <tr><td class="rowlabel"><b>AE step (N = 4)</b></td><td class="num"><b>52.27 ms</b></td><td class="num"><b>28.55 ms</b></td><td>vs the XPU realistic bound of 6.30 ms</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">Samsung columns: <code class="k">04_data/phase15_samsung.csv</code>, tier <code class="k">stock</code>, 16 ch, N = 4. AiM columns: Part III. &ldquo;Fetches&rdquo; and &ldquo;bursts&rdquo; are defined identically on both machines (one 32 B bank access feeding 16 lanes).</p>
+      <div class="callout warn"><b>Same disease.</b> One fetch, one vector, one accumulator slot. At S = 51 both machines re-read the entire weight set once per token, and neither ISA has any way to express &ldquo;apply this fetch to the next token too&rdquo;. Samsung&rsquo;s source says it plainly: <code class="k">readOpd(EVEN_BANK)</code> performs one bank read per <code class="k">MAC</code>, address-aligned mode picks one GRF_A entry and one GRF_B entry, and the batch loop sits outside the weight sweep.</div>
+    </section>
+
+    <section class="card" id="smaller">
+      <h2><span class="num">6</span>Why the problem is smaller here</h2>
+      <p class="lead">Samsung is slower in absolute terms and yet has <i>less</i> of the problem this series is about. Both facts come from one design decision: how much MAC throughput each vendor put behind the bank.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>&nbsp;</th><th class="num">SK hynix AiM</th><th class="num">Samsung</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">lanes per channel</td><td class="num">16 banks &times; 16 = <b>256</b></td><td class="num">8 units &times; 16 = <b>128</b></td></tr>
+          <tr><td class="rowlabel">unit clock</td><td class="num">1 GHz</td><td class="num">400 MHz (column rate)</td></tr>
+          <tr><td class="rowlabel">MAC throughput per channel</td><td class="num"><b>256 GMAC/s</b></td><td class="num"><b>51.2 GMAC/s</b></td></tr>
+          <tr><td class="rowlabel">one 16-MAC burst vs the 2.5 ns column slot</td><td class="num">1 ns &rarr; <b>40 % utilised</b></td><td class="num">2.5 ns &rarr; <b>100 % utilised</b></td></tr>
+          <tr><td class="rowlabel"><b>stock layer vs its own compute floor</b></td><td class="num"><b>5.4&times; off</b></td><td class="num"><b>1.62&times; off</b></td></tr>
+          <tr><td class="rowlabel">layer after the ISA fix, vs that floor</td><td class="num">1.65&times; off</td><td class="num">1.32&times; off</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><b>AiM over-provisioned its compute unit by about 2.5&times; relative to its own command bus; Samsung sized its unit exactly to the column rate.</b> That single choice explains both observations. On AiM the stock ISA leaves 5.4&times; of latent MAC throughput on the floor, and an ISA fix that stops re-fetching harvests it. On Samsung there is almost nothing latent: the unit is already busy every column slot, so removing redundant fetches converts a command-bound design into a compute-bound one and then stops.</p>
+      <div class="callout"><b>The useful way to say it.</b> The <i>bug</i> is identical on both machines &mdash; an ISA that cannot express token reuse. The <i>bug&rsquo;s cost</i> is proportional to the throughput the machine cannot reach because of it. Samsung has a smaller problem because Samsung built a smaller engine: 5&times; less MAC throughput per channel, and correspondingly less of it stranded. Being harder to improve is not the same as being better &mdash; Samsung is 1.92&times; slower than AiM on the identical layer, before and after the fix.</div>
+      <figure>
+        <img src="assets/vendor_compare.png" alt="Two bar charts comparing SK hynix AiM and Samsung at 8, 16 and 32 channels. Left panel, PIM time per layer: AiM stock 2.7, 1.4 and 0.8 milliseconds falling to 0.9, 0.5 and 0.3 with the P1 fix; Samsung stock 4.6, 2.7 and 2.2 milliseconds falling only to 4.2, 2.5 and 2.0 with the MACV fix. Right panel, in-bank weight fetches per layer on a log scale: both vendors start near 70 to 140 million, AiM drops about thirteen times and Samsung about seven times. The fix removes the traffic it targets on both machines, but converts into time only on AiM.">
+        <figcaption class="cap">Fig. 2 &mdash; The same fix on two machines. <b>(b)</b> it removes the traffic it was designed to remove on both. <b>(a)</b> it converts into time only on the machine that had idle compute waiting. Samsung&rsquo;s fetch reduction is 7.29&times; (V = 8 divided by the 1.098 tile-tail padding) and buys 1.11&times;.</figcaption>
+      </figure>
+    </section>
+
+    <section class="card" id="fix">
+      <h2><span class="num">7</span>What the fix is worth, and the Samsung-specific ceiling</h2>
+      <p class="lead">We implemented the Part IV fix in Samsung&rsquo;s idiom &mdash; a new opcode <code class="k">MACV</code> in the first reserved ALU slot, plus the two storage additions it needs &mdash; and measured it.</p>
+      <pre class="cmd">MACV   w = BANK[col];  i = col &amp; 7;  j = (col &gt;&gt; 3) &amp; 7
+       for v in 0..V-1:   acc[v][j] += trf[v][i] * w      <span class="c">// one fetch, V tokens</span></pre>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>&nbsp;</th><th>AiM P1</th><th>Samsung MACV</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">resident activations</td><td>16-vector Global-Buffer tile, 32 KB/channel</td><td><b>TRF</b>, V &times; 8 bursts per unit = 16 KB/channel</td></tr>
+          <tr><td class="rowlabel">accumulators</td><td>16-slot per-bank file, 512 B/channel</td><td><b>acc</b>, V &times; 8 bursts per unit = 16 KB/channel</td></tr>
+          <tr><td class="rowlabel">added multipliers</td><td><b>none</b></td><td><b>none</b></td></tr>
+          <tr><td class="rowlabel">depth V</td><td>26</td><td>8 (= GRF_B depth)</td></tr>
+          <tr><td class="rowlabel">measured, 16 ch</td><td>1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)</td><td>2.745 &rarr; 2.463 ms/layer (<b>1.11&times;</b>)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>A correction to our own prior expectation, worth stating: we assumed Samsung&rsquo;s GRF_A/GRF_B already provided the storage the fix needs. <b>They do not.</b> In the stock mapping GRF_A holds eight <i>reduction</i> bursts of one token and GRF_B holds eight <i>output</i> bursts of that same token. Token amortisation needs V tokens resident <i>and</i> V &times; 8 accumulators &mdash; new storage on both machines. The requirement is structural, not vendor-specific.</p>
+
+      <h3>The ceiling Samsung hits instead: output-tile granularity</h3>
+      <p>Samsung&rsquo;s GEMV mapping computes <code class="k">num_output_tiles = ceil((out / total_PIM_blocks) / 8)</code>. The output dimension therefore quantises to a multiple of (units &times; 8), and the expert&rsquo;s projections are small relative to that quantum &mdash; 4,096 down to 256 for the MQA KV path and attention. The waste is measured, not derived:</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>configuration</th><th class="num">8 ch</th><th class="num">16 ch</th><th class="num">32 ch</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">arithmetic padding, stock (1 unit / 2 banks)</td><td class="num">1.12&times;</td><td class="num">1.32&times;</td><td class="num">2.13&times;</td></tr>
+          <tr><td class="rowlabel">arithmetic padding, 1 unit / bank</td><td class="num">&mdash;</td><td class="num">2.13&times;</td><td class="num">&mdash;</td></tr>
+          <tr><td class="rowlabel">AiM, for comparison</td><td class="num" colspan="3">&asymp;1.03&times; at every channel count</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><b>Padding grows with parallelism.</b> Spreading a narrow GEMV across more units makes it worse, and this is what absorbs added compute. Giving every bank its own unit &mdash; the organisation Samsung announced for LPDDR-PIM &mdash; doubles the units, but <code class="k">num_output_tiles</code> then saturates at 1 for six of the eight operations. Measured: the two widest projections speed up exactly 2.00&times;, the other six gain <b>nothing</b> and do twice the redundant arithmetic, so the layer improves 1.38&times; rather than the 1.79&times; we had projected before running it.</p>
+      <div class="callout"><b>Where this leaves the cross-vendor claim.</b> The diagnosis (a GEMV-only ISA cannot amortise a fetch across tokens) and the fix (storage, not arithmetic) are properties of the ISA class, not of one vendor &mdash; they transfer intact. The <i>payoff</i> is a property of the microarchitecture behind the bank, and it is large only where compute was left idle. For the full solution campaign on this machine, including the mapping fixes that attack the padding directly and the best combined stack, see <a href="../03_extended_isa/report.html#prior">Part IV</a>.</div>
+    </section>
+
+    <section class="card" id="series">
+      <h2>Series &amp; sources</h2>
+      <ul class="notes">
+        <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
+        <li><a href="../01_deployment_platforms/report.html"><b>Part II</b> &mdash; Deployment platforms &amp; baselines: where robots run VLAs, and what counts as fast</a></li>
+        <li><a href="../02_stock_aim_offload/report.html"><b>Part III</b> &mdash; LPDDR5, stock AiM, and why the offload loses 4.5&times;: the problem, quantified</a></li>
+        <li><b>Part III-2 (this page)</b> &mdash; the same offload on Samsung&rsquo;s PIM: a smaller problem, and why.</li>
+        <li><a href="../03_extended_isa/report.html"><b>Part IV</b> &mdash; Our ISA extensions: 28.55 &rarr; 8.15 ms per step, and how they differ from prior designs</a></li>
+      </ul>
+      <p class="cap">Sources: <code class="k">SAITPublic/PIMSimulator</code> @ <code class="k">3703d1f</code> (branch <code class="k">dev</code>; Samsung proprietary, academic use, not redistributed); Samsung HBM-PIM, ISCA 2021 &ldquo;Hardware Architecture and Software Stack for PIM Based on Commercial DRAM Technology&rdquo; (the batch-4 measurement and the balance figures); Aquabolt-XL, IEEE Micro 2022; our measurements in <code class="k">04_data/phase15_samsung.csv</code> with bring-up, ISA and retiming notes in <code class="k">05_reports/phase15_samsung_sim_notes.md</code> and the cross-vendor analysis in <code class="k">05_reports/phase15_samsung_generality.md</code>. Every number regenerates from the committed patch script and sweep.</p>
+      <footer class="footer">
+        <p>author : yang-gon kim &nbsp;&middot;&nbsp; email : yanggon@g.ucla.edu</p>
+        <p><a href="../02_stock_aim_offload/report.html">&larr; Part III</a> &nbsp;&middot;&nbsp; <a href="../03_extended_isa/report.html">Part IV &rarr;</a> &nbsp;&middot;&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+      </footer>
+    </section>
+  </main>
+</div>
+</body>
+</html>

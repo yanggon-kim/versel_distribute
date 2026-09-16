@@ -93,7 +93,7 @@
 
     <section class="card" id="overview">
       <h2>Overview</h2>
-      <p class="lead">Part III of four. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../03_extended_isa/report.html">Part IV</a> fixes it.</p>
+      <p class="lead">Part III of the series. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../03_extended_isa/report.html">Part IV</a> fixes it. <a href="../02b_samsung_pim/report.html"><b>Part III-2</b></a> runs the identical workload on Samsung&rsquo;s PIM and finds the same disease with a smaller magnitude &mdash; for a reason that says more about the two microarchitectures than about the two ISAs.</p>
       <div class="headline">
         <div class="kpi"><div class="v">28.5 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
         <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / realistic 2&times;</div></div>
@@ -1177,6 +1177,7 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
         <li><a href="../00_vla_algorithm/report.html"><b>Part I</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module</a></li>
         <li><a href="../01_deployment_platforms/report.html"><b>Part II</b> &mdash; Deployment platforms &amp; baselines: where robots run VLAs, and what counts as fast</a></li>
         <li><b>Part III (this page)</b> &mdash; LPDDR5, stock AiM, and why the offload loses 4.5&times;: the problem, quantified.</li>
+        <li><a href="../02b_samsung_pim/report.html"><b>Part III-2</b> &mdash; the same offload on Samsung&rsquo;s PIM: a smaller problem, and why</a></li>
         <li><a href="../03_extended_isa/report.html"><b>Part IV</b> &mdash; Our ISA extensions: 28.55 &rarr; 8.15 ms per step, and how they differ from prior designs</a></li>
       </ul>
       <p class="cap">Sources: arkhadem/aim_simulator @ <code class="k">0f28a07</code> (CENT, ASPLOS&rsquo;25; MIT); SK hynix AiM: HC34 poster + ISSCC&rsquo;22/JSSC&rsquo;23 papers; NVIDIA Jetson AGX Orin Technical Brief v1.2 (42 TFLOP/s bf16, 204.8 GB/s, spec-verified); trace generator, sweep scripts, and CSVs in the study workspace &mdash; every number regenerates from committed traces.</p>
