@@ -90,7 +90,7 @@
 
     <section class="card" id="overview">
       <h2>Overview</h2>
-      <p class="lead">Part I of a four-part series. This page explains the algorithm; <a href="../01_stock_aim_offload/report.html">Part II</a> offloads its memory-bound half onto stock LPDDR5-AiM processing-in-memory, and <a href="../02_extended_isa/report.html">Part III</a> fixes the ISA so the offload actually wins; <a href="../03_deployment_platforms/report.html">Part IV</a> surveys deployment platforms and baselines.</p>
+      <p class="lead">Part I of a four-part series. This page explains the algorithm; <a href="../02_stock_aim_offload/report.html">Part III</a> offloads its memory-bound half onto stock LPDDR5-AiM processing-in-memory, and <a href="../03_extended_isa/report.html">Part IV</a> fixes the ISA so the offload actually wins; <a href="../01_deployment_platforms/report.html">Part II</a> surveys deployment platforms and baselines.</p>
       <div class="headline">
         <div class="kpi"><div class="v">18 + 18</div><div class="l">VLM layers (gemma_2b, d=2048) + Action-Expert layers (gemma_300m, d=1024)</div></div>
         <div class="kpi"><div class="v">51</div><div class="l">suffix tokens per denoising step (1 state + 50 noisy actions)</div></div>
@@ -333,7 +333,7 @@
       <p>Suffix positions continue after the prefix (p = 816 &hellip; 866), so relative offsets against cached prefix keys are meaningful. Q is additionally scaled by d<sub>h</sub><sup>&minus;1/2</sup> = 1/16.</p>
       <p><b>MQA attention</b> &mdash; 8 query heads share ONE key/value head. Per head h, with the 867-long key sequence T = [prefix 816 ; suffix 51]:</p>
       <div class="eq">scores<sub>h</sub> = q<sub>h</sub> K<sup>T</sup> &isin; [51, 867] (fp32)&nbsp;&nbsp;&rarr;&nbsp;&nbsp;probs = softmax(scores + mask)&nbsp;&nbsp;&rarr;&nbsp;&nbsp;ctx<sub>h</sub> = probs &middot; V &isin; [51, 256]</div>
-      <p>MQA is what keeps the KV cache small (15&nbsp;MB instead of 8&times; that) &mdash; and, in Part II, what makes the cache cheap to keep resident inside memory banks.</p>
+      <p>MQA is what keeps the KV cache small (15&nbsp;MB instead of 8&times; that) &mdash; and, in Part III, what makes the cache cheap to keep resident inside memory banks.</p>
       <p><b>GeGLU MLP</b> &mdash; the gate path is nonlinear, the up path linear, their product goes down:</p>
       <div class="eq">MLP(x) = ( gelu(x W<sub>gate</sub>) &#8857; x W<sub>up</sub> ) W<sub>down</sub></div>
       <p>After layer 18: a final RMSNorm, then <code class="k">action_out_proj</code> maps the last 50 tokens [50,1024]&rarr;[50,32] = the velocity v<sub>&theta;</sub> for the Euler update.</p>
@@ -360,13 +360,13 @@
       <h3>Inside one Action-Expert denoising step (per layer &times;18, plus per-step ops)</h3>
       <div class="scroll">
       <table>
-        <thead><tr><th>Op</th><th>GEMM [M&times;K]&middot;[K&times;N]</th><th class="num">FLOPs</th><th class="num">Weight/KV bytes</th><th class="num">I</th><th>Where it runs in Parts II&ndash;III</th></tr></thead>
+        <thead><tr><th>Op</th><th>GEMM [M&times;K]&middot;[K&times;N]</th><th class="num">FLOPs</th><th class="num">Weight/KV bytes</th><th class="num">I</th><th>Where it runs in Parts III&ndash;III</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">q_proj</td><td>[51&times;1024]&middot;[1024&times;2048]</td><td class="num">214.0 M</td><td class="num">4.19 MB</td><td class="num">51</td><td>PIM</td></tr>
           <tr><td class="rowlabel">kv_proj</td><td>[51&times;1024]&middot;[1024&times;512]</td><td class="num">53.5 M</td><td class="num">1.05 MB</td><td class="num">51</td><td>PIM</td></tr>
           <tr><td class="rowlabel">RoPE(q,k) + scale</td><td>elementwise, 51&times;2304</td><td class="num">0.7 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host</td></tr>
           <tr><td class="rowlabel">attn scores</td><td>8&times; [51&times;256]&middot;[256&times;867]</td><td class="num">181.2 M</td><td class="num">0.44 MB (K)</td><td class="num">408</td><td>PIM (KV resident)</td></tr>
-          <tr><td class="rowlabel">softmax</td><td>elementwise, 8&times;51&times;867 fp32</td><td class="num">1.8 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host (Part II) &rarr; PIM (Part III)</td></tr>
+          <tr><td class="rowlabel">softmax</td><td>elementwise, 8&times;51&times;867 fp32</td><td class="num">1.8 M</td><td class="num">&mdash;</td><td class="num">&lt;1</td><td>host (Part III) &rarr; PIM (Part IV)</td></tr>
           <tr><td class="rowlabel">attn context</td><td>8&times; [51&times;867]&middot;[867&times;256]</td><td class="num">181.2 M</td><td class="num">0.44 MB (V)</td><td class="num">408</td><td>PIM (KV resident)</td></tr>
           <tr><td class="rowlabel">o_proj</td><td>[51&times;2048]&middot;[2048&times;1024]</td><td class="num">214.0 M</td><td class="num">4.19 MB</td><td class="num">51</td><td>PIM</td></tr>
           <tr><td class="rowlabel">mlp_gate (+gelu)</td><td>[51&times;1024]&middot;[1024&times;4096]</td><td class="num">427.8 M</td><td class="num">8.39 MB</td><td class="num">51</td><td>PIM</td></tr>
@@ -381,7 +381,7 @@
       </div>
       <p class="cap">Per denoising step: 18 &times; (per-layer rows) + per-step rows = <b>38.70&nbsp;GFLOPs</b>, <b>629.4&nbsp;MB</b> weights, <b>16.0&nbsp;MB</b> KV reads. Extracted from the machine-readable trace <code class="k">04_data/op_trace.csv</code> (351 ops/step) and cross-validated against a jax.eval_shape trace of the real openpi module.</p>
 
-      <div class="callout"><b>Why every projection has I &asymp; 51.</b> A GEMM [M&times;K]&middot;[K&times;N] does 2&middot;M&middot;K&middot;N FLOPs over 2&middot;K&middot;N weight bytes (bf16): I = M. All Action-Expert projections have M = S = 51 rows &mdash; the suffix length <i>is</i> the intensity. One token (S=1, LLM decode) gives I&asymp;1; a big prefill (M&asymp;800) gives I&asymp;800. S = 51 lands in the awkward middle: 4&times; too low for the Orin's ridge point, far too high to behave like the GEMV workloads processing-in-memory was designed for. That tension is the entire story of Parts II and III.</div>
+      <div class="callout"><b>Why every projection has I &asymp; 51.</b> A GEMM [M&times;K]&middot;[K&times;N] does 2&middot;M&middot;K&middot;N FLOPs over 2&middot;K&middot;N weight bytes (bf16): I = M. All Action-Expert projections have M = S = 51 rows &mdash; the suffix length <i>is</i> the intensity. One token (S=1, LLM decode) gives I&asymp;1; a big prefill (M&asymp;800) gives I&asymp;800. S = 51 lands in the awkward middle: 4&times; too low for the Orin's ridge point, far too high to behave like the GEMV workloads processing-in-memory was designed for. That tension is the entire story of Parts III and III.</div>
     </section>
 
     <section class="card" id="twophase">
@@ -397,8 +397,8 @@
         <img src="assets/roofline.png" alt="Log-log roofline of Jetson AGX Orin (42 TFLOP/s peak, 204.8 GB/s bandwidth, ridge point at 205 FLOPs per byte) with pi0 modules placed: softmax/norms/RoPE at intensity 0.8, AE projections at 51 and the AE full step at 60 sit deep in the memory-bound region reaching only about 10-12 TFLOP/s attainable; AE attention at 408, vision encoder near 733 and the VLM prefill layer at 840 sit on the compute-bound plateau.">
         <figcaption class="cap">Fig. 4 &mdash; The Orin roofline with &pi;<sub>0</sub>&rsquo;s modules placed by measured arithmetic intensity. The Action Expert (orange) sits deep in the memory-bound region at I&nbsp;&asymp;&nbsp;51&ndash;60 &mdash; capped at ~12&nbsp;TFLOP/s of the 42 available &mdash; while the VLM and vision encoder ride the compute plateau.</figcaption>
       </figure>
-      <p>(&ldquo;Floor&rdquo; here means the roofline minimum &mdash; bytes that must cross the memory interface divided by its bandwidth. The weights are 150&times; larger than Orin&rsquo;s 4&nbsp;MB L2 cache, so no software can avoid re-streaming them every step; the full baseline ladder from this ideal bound up to the measured 136&nbsp;ms/step stack is defined in <a href="../01_stock_aim_offload/report.html#ladder">Part II &sect;7</a>.)</p>
-      <p>The Action Expert dominates latency while starving the GPU: each of its N serial steps must stream 623&nbsp;MB of weights through a 204.8&nbsp;GB/s interface to do only 38.7&nbsp;GFLOPs of work. No amount of extra compute helps &mdash; only more effective memory bandwidth, or removing the weight traffic altogether by computing where the weights live. That is the premise <a href="../01_stock_aim_offload/report.html">Part II</a> puts to the test with LPDDR5 processing-in-memory.</p>
+      <p>(&ldquo;Floor&rdquo; here means the roofline minimum &mdash; bytes that must cross the memory interface divided by its bandwidth. The weights are 150&times; larger than Orin&rsquo;s 4&nbsp;MB L2 cache, so no software can avoid re-streaming them every step; the full baseline ladder from this ideal bound up to the measured 136&nbsp;ms/step stack is defined in <a href="../01_deployment_platforms/report.html#baselines">Part II &sect;3</a>.)</p>
+      <p>The Action Expert dominates latency while starving the GPU: each of its N serial steps must stream 623&nbsp;MB of weights through a 204.8&nbsp;GB/s interface to do only 38.7&nbsp;GFLOPs of work. No amount of extra compute helps &mdash; only more effective memory bandwidth, or removing the weight traffic altogether by computing where the weights live. That is the premise <a href="../02_stock_aim_offload/report.html">Part III</a> puts to the test with LPDDR5 processing-in-memory.</p>
     </section>
 
     <section class="card" id="breakdown">
@@ -436,21 +436,21 @@
         </tbody>
       </table>
       </div>
-      <div class="callout"><b>Why this breakdown motivates Parts II&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../01_stock_aim_offload/report.html">Part II</a>) attacks the physics; making it 2.9&times; faster (<a href="../02_extended_isa/report.html">Part III</a>) shrinks it to 39&nbsp;ms &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (388 ms cycle, 2.58 Hz).</div>
+      <div class="callout"><b>Why this breakdown motivates Parts III&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../02_stock_aim_offload/report.html">Part III</a>) attacks the physics; making it 2.9&times; faster (<a href="../03_extended_isa/report.html">Part IV</a>) shrinks it to 39&nbsp;ms &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (388 ms cycle, 2.58 Hz).</div>
     </section>
 
     <section class="card" id="series">
       <h2>Series &amp; sources</h2>
       <ul class="notes">
         <li><b>Part I (this page)</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module.</li>
-        <li><a href="../01_stock_aim_offload/report.html"><b>Part II</b> &mdash; Offloading the Action Expert to stock LPDDR5-AiM: ISA, mapping, and why it loses 5.8&times;</a></li>
-        <li><a href="../02_extended_isa/report.html"><b>Part III</b> &mdash; Eight problems, three AF-free ISA extensions: from 28.5 ms to 9.77 ms per step</a></li>
-              <li><a href="../03_deployment_platforms/report.html"><b>Part IV</b> &mdash; Deployment platforms: where robots actually run VLAs &amp; the speed/energy baseline matrix</a></li>
+        <li><a href="../01_deployment_platforms/report.html"><b>Part II</b> &mdash; Deployment platforms &amp; baselines: where robots run VLAs, and what counts as fast</a></li>
+        <li><a href="../02_stock_aim_offload/report.html"><b>Part III</b> &mdash; LPDDR5, stock AiM, and why the offload loses 4.5&times;: the problem, quantified</a></li>
+        <li><a href="../03_extended_isa/report.html"><b>Part IV</b> &mdash; Our ISA extensions: 28.55 &rarr; 8.15 ms per step, and how they differ from prior designs</a></li>
       </ul>
       <p class="cap">Sources: openpi @ <code class="k">15a9616</code> (model code, all dims verified with file:line references and an abstract-shape trace); &ldquo;Characterizing Vision-Language-Action Models across XPUs&rdquo; (arXiv:2604.24447) for measured Orin latency splits and utilization; our operator trace (38.70&nbsp;GFLOPs/step) matches the paper&rsquo;s implied AE numerator (64.5&nbsp;FLOPs/B &times; 600&nbsp;MB = 38.7&nbsp;G) exactly.</p>
       <footer class="footer">
         <p>author : yang-gon kim &nbsp;&middot;&nbsp; email : yanggon@g.ucla.edu</p>
-        <p><a href="../01_stock_aim_offload/report.html">Part II &rarr;</a> &nbsp;&middot;&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
+        <p><a href="../01_deployment_platforms/report.html">Part II &rarr;</a> &nbsp;&middot;&nbsp; <a href="../../index.html">&larr; back to Report Archive</a></p>
       </footer>
     </section>
   </main>
