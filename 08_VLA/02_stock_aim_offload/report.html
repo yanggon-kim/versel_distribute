@@ -382,6 +382,25 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
         <li><b>Clock convention:</b> we convert cycles at tCK&nbsp;=&nbsp;0.625&nbsp;ns &mdash; calibrated so one channel&rsquo;s external burst rate equals real LPDDR5-6400 x16 (12.8&nbsp;GB/s). Documented assumption; all ratios are tCK-independent.</li>
         <li><b>Validation:</b> the shipped micro-benchmarks and an all-ISR smoke trace run bit-identically before/after our study; a probe trace confirms the PREA&rarr;ACT16 row-management path fires as specified.</li>
       </ul>
+      <h3>Does the retiming create the problem? (measured on the fabbed GDDR6 model)</h3>
+      <p>AiM is fabricated in <b>GDDR6</b>; no LPDDR5-AiM part exists. We run the AiM ISA on the simulator&rsquo;s LPDDR5 device model so the machine sits at Jetson-Orin bandwidth parity, and the AiM-specific timings in that preset (<code class="k">nRCDRDMAC</code>, <code class="k">nRCDEWMUL</code>, <code class="k">nRCDRDAF</code>, <code class="k">nRCDRDCP</code>, <code class="k">nRCDWRCP</code>, <code class="k">nMODCH</code>) are <b>copied from the GDDR6-AiM preset</b>, which the simulator&rsquo;s authors calibrated from ISSCC, the SK hynix SDK and Xavier profiling. So the fair question is whether we created the pathology by retiming. We checked by running the <i>same two traces</i> on both device models of the same binary, changing nothing else.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>per layer, 16 channels</th><th class="num">GDDR6-AiM (fabbed preset)</th><th class="num">LPDDR5-AiM (retimed, used here)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">MAC column commands</td><td class="num">4,223,616</td><td class="num">4,223,616</td></tr>
+          <tr><td class="rowlabel">GB refills</td><td class="num">1,925,760</td><td class="num">1,925,760</td></tr>
+          <tr><td class="rowlabel">blocking accumulator reads</td><td class="num">73,440</td><td class="num">73,440</td></tr>
+          <tr><td class="rowlabel">mode switches</td><td class="num">173,040</td><td class="num">175,120</td></tr>
+          <tr><td class="rowlabel"><b>stock layer time</b></td><td class="num"><b>1.582 ms</b></td><td class="num"><b>1.427 ms</b></td></tr>
+          <tr><td class="rowlabel"><b>our design (Part IV, V = 26)</b></td><td class="num"><b>0.400 ms</b></td><td class="num"><b>0.396 ms</b></td></tr>
+          <tr><td class="rowlabel"><b>what the ISA fix is worth</b></td><td class="num"><b>3.95&times;</b></td><td class="num"><b>3.60&times;</b></td></tr>
+          <tr><td class="rowlabel">stock PU utilisation (16 MACs per column slot)</td><td class="num">50 % (2.0 ns slot)</td><td class="num">40 % (2.5 ns slot)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout win"><b>The command counts are identical</b>, because they are properties of the ISA and the mapping, not of the timing: one <code class="k">MAC_ABK</code> per (token, weight column), one GB refill per token, one blocking <code class="k">RD_MAC</code> per (token, row-group). Only their cost moves. <b>The problem is not an artifact of the retiming &mdash; on the part that was actually built it is slightly worse</b> (3.95&times; of headroom rather than 3.60&times;), and the &ldquo;AiM over-provisioned its PU&rdquo; finding holds on both (50 % busy on GDDR6, 40 % here). What the retiming <i>is</i> responsible for: the 12.8 GB/s-per-channel premise that makes 16 channels equal Orin, the exact share of each overhead slice, and all absolute times. Full runs: <code class="k">05_reports/gddr6_robustness.md</code>.</div>
+
     </section>
 
     <section class="card" id="what">
