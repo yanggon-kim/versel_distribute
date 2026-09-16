@@ -360,7 +360,7 @@
       <h3>Inside one Action-Expert denoising step (per layer &times;18, plus per-step ops)</h3>
       <div class="scroll">
       <table>
-        <thead><tr><th>Op</th><th>GEMM [M&times;K]&middot;[K&times;N]</th><th class="num">FLOPs</th><th class="num">Weight/KV bytes</th><th class="num">I</th><th>Where it runs in Parts III&ndash;III</th></tr></thead>
+        <thead><tr><th>Op</th><th>GEMM [M&times;K]&middot;[K&times;N]</th><th class="num">FLOPs</th><th class="num">Weight/KV bytes</th><th class="num">I</th><th>Where it runs in Parts III&ndash;IV</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">q_proj</td><td>[51&times;1024]&middot;[1024&times;2048]</td><td class="num">214.0 M</td><td class="num">4.19 MB</td><td class="num">51</td><td>PIM</td></tr>
           <tr><td class="rowlabel">kv_proj</td><td>[51&times;1024]&middot;[1024&times;512]</td><td class="num">53.5 M</td><td class="num">1.05 MB</td><td class="num">51</td><td>PIM</td></tr>
@@ -436,7 +436,7 @@
         </tbody>
       </table>
       </div>
-      <div class="callout"><b>Why this breakdown motivates Parts III&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../02_stock_aim_offload/report.html">Part III</a>) attacks the physics; making it 2.9&times; faster (<a href="../03_extended_isa/report.html">Part IV</a>) shrinks it to 39&nbsp;ms &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (388 ms cycle, 2.58 Hz).</div>
+      <div class="callout"><b>Why this breakdown motivates Parts III&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../02_stock_aim_offload/report.html">Part III</a>) attacks the physics; making it 3.5&times; faster (<a href="../03_extended_isa/report.html">Part IV</a>) shrinks it to 33&nbsp;ms &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (388 ms cycle, 2.58 Hz).</div>
     </section>
 
     <section class="card" id="series">
