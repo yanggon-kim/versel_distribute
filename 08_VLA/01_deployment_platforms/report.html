@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VLA Part II — Deployment Platforms: Where Robots Actually Run VLAs, and Which Baselines Matter</title>
+<title>VLA Part II — Deployment Platforms &amp; Baselines: Where Robots Run VLAs, and What Counts as Fast</title>
 <style>
   :root{
     color-scheme:light;
@@ -74,7 +74,7 @@
 
   <main>
     <header class="page">
-      <h1>Deployment Platforms: Where Robots Actually Run VLAs, and Which Baselines Matter</h1>
+      <h1>Deployment Platforms &amp; Baselines: Where Robots Run VLAs, and What Counts as Fast</h1>
       <p class="sub">Parts I&ndash;III built and accelerated the &pi;<sub>0</sub> Action Expert against Jetson AGX Orin. This part surveys <b>what robots actually carry in 2025&ndash;26</b> &mdash; Orin NX inside shipping Unitree G1 humanoids, AGX Orin on research arms, Jetson Thor on NVIDIA&rsquo;s GR00T reference humanoid &mdash; and evaluates our design against each platform&rsquo;s full baseline ladder in <b>both latency and energy</b>. Key facts: every deployable platform is <b>LPDDR-based</b> (AiM&rsquo;s home), and <b>energy favors our design in 11 of 12 matrix cells</b>, including against two of the three theoretical floors.</p>
       <div class="tags">
         <span class="tag">Orin NX &middot; AGX Orin &middot; Thor &middot; IQ10 &middot; Ascend</span>
@@ -142,9 +142,9 @@
 
     <section class="card" id="ladder">
       <h2><span class="num">4</span>The Action-Expert ladder on each platform</h2>
-      <p class="lead">Each platform&rsquo;s ladder (floor / realistic 2&times; / measured; <a href="../01_deployment_platforms/report.html#baselines">definitions</a>) with our design evaluated at that platform&rsquo;s channel budget: 16.97 ms at 8 channels (P1+P4+P7 tier; token-parallel is counter-productive at 8 ch), 9.77 ms at 16 channels (AF-free full design). Our design runs the action expert at 14.01 ms at 8 channels and 8.15 ms at 16 channels.</p>
+      <p class="lead">Each platform&rsquo;s ladder (floor / realistic 2&times; / measured; <a href="../01_deployment_platforms/report.html#baselines">definitions</a>) with our design evaluated at that platform&rsquo;s channel budget: 14.01 ms at 8 channels (P1+P4+P7 tier; token-parallel is counter-productive at 8 ch), 8.15 ms at 16 channels (AF-free full design). Our design runs the action expert at 14.01 ms at 8 channels and 8.15 ms at 16 channels.</p>
       <figure>
-        <img src="assets/platforms.png" alt="Grouped bar chart, log scale, of AE step latency per platform. Orin NX: floor 6.30, realistic 12.61, ours 16.97 ms. AGX Orin: floor 3.15, realistic 6.30, measured 136, ours 9.77 ms. Jetson Thor: floor 2.36, realistic 4.73, measured 36, ours 9.77 ms. Our green bars beat the realistic tier on NX and AGX and match it on Thor, and beat every measured stack by large factors.">
+        <img src="assets/platforms.png" alt="Grouped bar chart, log scale, of AE step latency per platform. Orin NX: floor 6.30, realistic 12.61, ours 14.01 ms. AGX Orin: floor 3.15, realistic 6.30, measured 136, ours 8.15 ms. Jetson Thor: floor 2.36, realistic 4.73, measured 36, ours 8.15 ms. Our green bars beat the realistic tier on NX and AGX and match it on Thor, and beat every measured stack by large factors.">
         <figcaption class="cap">Fig. 1 &mdash; The ladder per platform. Ours (green) sits below the hypothetical realistic tier on every platform (0.90&times; NX, 0.77&times; AGX, 0.58&times; Thor) but beats every <i>measured</i> stack by 4.4&ndash;17&times; &mdash; and wins on energy across the board. Thor&rsquo;s measured AE (&asymp;36 ms/step) derives from the paper&rsquo;s 246 ms end-to-end &times; the 59% AE share; NX was not measured by the paper.</figcaption>
       </figure>
     </section>

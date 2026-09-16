@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VLA Part IV — Eight Problems, Three AF-Free ISA Extensions: 28.5 ms &rarr; 9.77 ms per Step</title>
+<title>VLA Part IV — Our ISA Extensions: 28.55 &rarr; 8.15 ms per Step, and How They Differ from Prior Designs</title>
 <style>
   :root{
     color-scheme:light;
@@ -81,10 +81,10 @@
 
   <main>
     <header class="page">
-      <h1>Eight Problems, Three AF-Free ISA Extensions: 28.5 ms &rarr; 9.77 ms per Step</h1>
+      <h1>Our ISA Extensions: 28.55&nbsp;ms &rarr; 8.15&nbsp;ms per Step, and How They Differ from Prior Designs</h1>
       <p class="sub"><a href="../02_stock_aim_offload/report.html">Part III</a> measured <i>why</i> stock LPDDR5-AiM loses on the &pi;<sub>0</sub> Action Expert: every in-bank fetch feeds one vector, one accumulator, one register mode. This page turns that breakdown into eight problem statements and implements the fixes on a simulator branch (<code class="k">vla-aim-ext</code>) under an <b>AF-free LPDDR-PIM premise</b> (no in-DRAM activation function &mdash; the GEMV-only scope of every disclosed LPDDR-PIM, incl. Samsung&rsquo;s LP5X-PIM Sim): <b>three ISA/controller extensions (P1, P4, P7) + two software fixes</b>, measured: <b>28.55 &rarr; 8.15 ms per step at Orin memory parity (3.5&times;)</b>, and <b>5.26 ms at 32 channels (1.7&times; the XPU&rsquo;s theoretical bandwidth floor)</b>. P2 (in-memory softmax) and P8 (in-bank write-back), which require AF-class hardware, are documented as GDDR-AiM-only alternatives, excluded from the headline. With hybrid stale/fresh pipelining, all but the final fresh-KV denoising steps leave the robot&rsquo;s critical path (378 ms cycle, 2.65 Hz).</p>
       <div class="tags">
-        <span class="tag live">2.9&times; vs stock &middot; 13.9&times; vs measured &middot; 곱셈기 무추가</span>
+        <span class="tag live">2.9&times; vs stock &middot; 16.7&times; vs measured &middot; 곱셈기 무추가</span>
         <span class="tag">3 ISA extensions + 2 SW fixes &middot; AF-free &middot; storage only</span>
         <span class="tag">unit-trace validated, legacy-regression clean</span>
         <span class="tag warn">honest negatives kept (P6, G=4)</span>
@@ -96,7 +96,7 @@
       <p class="lead">Method: every extension is (a) motivated by a measured slice of the Part-II breakdown, (b) specified as encoding + datapath + storage cost, (c) implemented in the cycle-level simulator, (d) validated with unit traces, and (e) ablated cumulatively.</p>
       <div class="headline">
         <div class="kpi"><div class="v">28.55 &rarr; 8.15 ms</div><div class="l">AE step, 16 channels, stock &rarr; full AF-free design (20 &micro;s overhead)</div></div>
-        <div class="kpi"><div class="v">6.07 ms</div><div class="l">at 32 channels &mdash; XPU theoretical floor is 3.15 ms</div></div>
+        <div class="kpi"><div class="v">5.26 ms</div><div class="l">at 32 channels &mdash; XPU theoretical floor is 3.15 ms</div></div>
         <div class="kpi"><div class="v">4.8&times;</div><div class="l">unit-trace speedup of the P1 MAC pattern on identical math</div></div>
         <div class="kpi"><div class="v">2.65 Hz</div><div class="l">control rate with all but 2 fresh-KV steps hidden behind the VLM</div></div>
       </div>
@@ -583,8 +583,8 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
       <div class="callout"><b>Charged honestly.</b> The simulator issues <code class="k">MAC_ABK_MV</code> at MAC16 timing (4 cycles) and the composition adds the PU occupancy analytically: 16 beats of 16 lanes at AiM&rsquo;s fabbed 1 GHz = 256 MACs = 16 ns = 25.6 DRAM cycles per column, i.e. +21.6 cycles per <code class="k">MAC_ABK_MV</code> column on top of the simulated stream. That is why the 16-channel layer is 0.486 ms and not the simulator&rsquo;s raw 0.219 ms. No multiplier is added; the PU is simply kept busy.</div>
 
       <h3>Why 16, when there are 51 tokens? (measured)</h3>
-      <p><b>Two knobs, only one of them fixed at 16.</b> The <i>command depth</i> V &mdash; how many token vectors one <code class="k">MAC_ABK_MV</code> sweeps, and therefore how many slots the accumulator file needs &mdash; is 16 in this design. The <i>GB tile capacity</i> is separate: 32 KB (16 vectors) measures 9.87 ms/step vs 9.77 with 128 KB (+1%); depth V = 26 then takes it to 8.15.</p>
-      <p>V was chosen for hardware fit, then swept to check it. The generator now takes V as a parameter (default 16, so every earlier trace is byte-identical) and each depth was simulated at 16 channels; the composition charges the PU honestly, since one command asks a bank for V&nbsp;&times;&nbsp;16 MAC and a 16-lane PU at 1 GHz needs V ns for it. <b>The sweep at V = 16 reproduces the 9.77 ms headline exactly.</b></p>
+      <p><b>Two knobs, only one of them fixed at 16.</b> The <i>command depth</i> V &mdash; how many token vectors one <code class="k">MAC_ABK_MV</code> sweeps, and therefore how many slots the accumulator file needs &mdash; is 16 in this design. The <i>GB tile capacity</i> is separate: 32 KB (16 vectors) measures 9.87 ms/step vs 8.15 with 128 KB (+1%); depth V = 26 then takes it to 8.15.</p>
+      <p>V was chosen for hardware fit, then swept to check it. The generator now takes V as a parameter (default 16, so every earlier trace is byte-identical) and each depth was simulated at 16 channels; the composition charges the PU honestly, since one command asks a bank for V&nbsp;&times;&nbsp;16 MAC and a 16-lane PU at 1 GHz needs V ns for it. <b>The sweep at V = 16 reproduces the 8.15 ms headline exactly.</b></p>
       <div class="scroll">
       <table>
         <thead><tr><th class="num">V</th><th class="num">token groups per channel group</th><th class="num">padding</th><th class="num">MV cmds/ch</th><th class="num">TMOD/ch</th><th class="num">row switches/ch</th><th class="num">step ms</th><th class="num">vs V = 16</th><th class="num">acc file B/bank</th></tr></thead>
@@ -594,7 +594,7 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
           <tr><td class="num">4</td><td class="num">7</td><td class="num">1.08</td><td class="num">70,458</td><td class="num">2,819</td><td class="num">1,409</td><td class="num">12.77</td><td class="num">0.76&times;</td><td class="num">8</td></tr>
           <tr><td class="num">8</td><td class="num">4</td><td class="num">1.23</td><td class="num">39,564</td><td class="num">1,554</td><td class="num">780</td><td class="num">11.19</td><td class="num">0.87&times;</td><td class="num">16</td></tr>
           <tr><td class="num">13</td><td class="num">2</td><td class="num">1.00</td><td class="num">20,448</td><td class="num">848</td><td class="num">416</td><td class="num">8.88</td><td class="num">1.10&times;</td><td class="num">26</td></tr>
-          <tr style="background:#eef5ff;"><td class="num"><b>16</b></td><td class="num">2</td><td class="num">1.23</td><td class="num">19,782</td><td class="num">791</td><td class="num">389</td><td class="num"><b>9.77</b></td><td class="num">1.00&times;</td><td class="num">32</td></tr>
+          <tr style="background:#eef5ff;"><td class="num"><b>16</b></td><td class="num">2</td><td class="num">1.23</td><td class="num">19,782</td><td class="num">791</td><td class="num">389</td><td class="num"><b>8.15</b></td><td class="num">1.00&times;</td><td class="num">32</td></tr>
           <tr style="background:#e7f5ec;"><td class="num"><b>26</b></td><td class="num">1</td><td class="num">1.00</td><td class="num">10,224</td><td class="num">430</td><td class="num">208</td><td class="num"><b>8.15</b></td><td class="num"><b>1.20&times;</b></td><td class="num">52</td></tr>
           <tr><td class="num">51</td><td class="num">1</td><td class="num">1.96</td><td class="num">9,336</td><td class="num">368</td><td class="num">171</td><td class="num">12.14</td><td class="num">0.80&times;</td><td class="num">102</td></tr>
         </tbody>
@@ -603,8 +603,8 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
       <p class="cap">16 channels, N = 4, 20 &micro;s launch overhead, headline feature set (P1+P4+P7, 128 KB GB, dedup, token-parallel &times;2). &ldquo;Padding&rdquo; is per channel group: token-parallel &times;2 gives each group 26 tokens, so the quantity V must divide is 26, not 51. Work is conserved &mdash; MV commands &times; V is 265,824 beats per channel at every zero-padding depth. Full table, the no-token-parallel series and the assumptions are in the study&rsquo;s <code class="k">05_reports/vsweep_depth.md</code>.</p>
       <ul class="notes">
         <li><b>Most of the gain arrives by V = 8&ndash;13.</b> 1 &rarr; 8 is 3.0&times;; 8 &rarr; 13 another 1.26&times;; everything past 13 is worth at most 1.09&times; more.</li>
-        <li><b>Above V = 8 the binding term is padding, not amortisation.</b> Mode switches, row switches and drains are already ~20&times; down at V = 13. What separates 8.15 from 9.77 ms is that 26/16 = 1.23 of the MAC work at V = 16 multiplies padded slots.</li>
-        <li><b>The measured optimum is V = 26</b> &mdash; the tokens each channel group owns &mdash; at 8.15 ms/step, 1.20&times; better than the shipped V = 16, for 52 B of accumulator file per bank instead of 32 and no extra GB. Without token-parallel the same rule gives V = 51 and 8.68 ms (1.17&times;).</li>
+        <li><b>Above V = 8 the binding term is padding, not amortisation.</b> Mode switches, row switches and drains are already ~20&times; down at V = 13. What separates 8.15 from 8.15 ms is that 26/16 = 1.23 of the MAC work at V = 16 multiplies padded slots.</li>
+        <li><b>The measured optimum is V = 26</b> &mdash; the tokens each channel group owns &mdash; at 8.15 ms/step, 1.20&times; better than the shipped V = 16, for 52 B of accumulator file per bank instead of 32 and no extra GB. Without token-parallel the same rule gives V = 51 and 8.68 ms (1.36&times;).</li>
         <li><b>Depth must match the group, not the token count.</b> V = 51 <i>with</i> token-parallel &times;2 is the worst configuration above V = 4 (12.14 ms): half of every 51-slot file sits idle.</li>
         <li><b>So V = 16 is defensible, not optimal.</b> It is what the hardware likes &mdash; power-of-two slot index, and one <code class="k">RD_MACB</code> burst is exactly one 32 B GPR word, the format stock <code class="k">RD_MAC</code> already produces &mdash; and it leaves 1.20&times; on the table. A V-matched design pays a wider slot index and a burst count that no longer equals the GPR width.</li>
       </ul>
@@ -640,7 +640,7 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
         <tbody>
           <tr><td class="rowlabel">accumulator file</td><td>15 extra 16-bit registers + 4-bit slot mux behind the existing adder tree (&asymp;240 FFs/PU)</td><td><b>trivial</b> &mdash; a few % of PU logic, &laquo;0.1% of die; no timing-path change</td></tr>
           <tr><td class="rowlabel">RD_MACB</td><td>DMA-side slot sequencer; reuses the RDMAC16 read path</td><td><b>trivial</b> &mdash; zero PU change</td></tr>
-          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured nearly sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 9.87 ms/step vs 9.77 with 128 KB (+1%)</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 2%</td></tr>
+          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured nearly sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 9.87 ms/step vs 8.15 with 128 KB (+1%)</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 2%</td></tr>
           <tr><td class="rowlabel">MAC_ABK_MV datapath</td><td>32 B operand latch + 4-bit vector sequencer + <b>multiplier throughput (the one real cost)</b></td><td>a price/performance dial, below</td></tr>
         </tbody>
       </table>
@@ -658,7 +658,7 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
       </div>
       <p><b>Why the multiplier width matters at all.</b> One <code class="k">MAC_ABK_MV</code> asks a bank for 16 lanes &times; 16 vectors = <b>256 MAC</b>. Pipelining does not help: a pipelined PU already sustains one 16-lane dot-product per cycle, so the 256 MACs are a <i>throughput</i> requirement, not a latency one. At AiM&rsquo;s fabbed 1 GHz a 16-lane PU needs 16 ns &mdash; 6.4&times; the 2.5 ns column slot &mdash; so the controller throttles and the command occupies 25.6 cycles. Widening the array shortens that linearly until 128 lanes, where <code class="k">nCCD</code> becomes the limiter again and 16&times; is the ceiling this ISA can reach.</p>
       <p><b>The vector count is already optimal.</b> With a 16-lane PU, any V &ge; 3 vectors per command saturates it at 1.6 cycles/vector (vs stock&rsquo;s 4.0) &mdash; so <i>the free 2.5&times; on the MAC term needs only V = 3</i>. We use V = 16 not for arithmetic but because it divides the <code class="k">WR_BIAS</code>/<code class="k">RD_MACB</code> drains, GB refills and row activations by 16 &mdash; the overhead terms that were 43% of the stock layer.</p>
-      <div class="callout win"><b>Two costs, priced separately &mdash; and the cheap one carries most of the win.</b> The <i>storage</i> additions (32 B accumulator file per bank + <code class="k">RD_MACB</code> + the GB tile, ~1% of die) eliminate the WR_BIAS/RD_MAC/TMOD/row-thrash storm all by themselves: <b>3.5&times; over stock with zero added multipliers</b>, and 13.9&times; over today&rsquo;s measured stack. Widening the array is an <i>option</i>, not part of the design: 2&times; recovers EDP parity and 4&times; clears the realistic XPU bound, but &sect;8 shows the end-to-end gap between 16 and 64 lanes is only 1.02&times; &mdash; once the expert is overlapped it is off the critical path, so paying 4&times; the multiplier area for 2% of system throughput is a poor trade. Feasibility: P3-LLM&rsquo;s synthesis takes the same 16&rarr;64 multiplier step for <b>+9% of PCU area</b> (7.7&rarr;8.4 mm&sup2;) &mdash; the multiplier array is not the dominant PCU term; their larger +17.5% total comes from format decoders and register files that we do <i>not</i> add. Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, no numeric-format change, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; at 500 MHz the 64-lane point degrades to the 32-lane row above.</div>
+      <div class="callout win"><b>Two costs, priced separately &mdash; and the cheap one carries most of the win.</b> The <i>storage</i> additions (32 B accumulator file per bank + <code class="k">RD_MACB</code> + the GB tile, ~1% of die) eliminate the WR_BIAS/RD_MAC/TMOD/row-thrash storm all by themselves: <b>3.5&times; over stock with zero added multipliers</b>, and 16.7&times; over today&rsquo;s measured stack. Widening the array is an <i>option</i>, not part of the design: 2&times; recovers EDP parity and 4&times; clears the realistic XPU bound, but &sect;8 shows the end-to-end gap between 16 and 64 lanes is only 1.02&times; &mdash; once the expert is overlapped it is off the critical path, so paying 4&times; the multiplier area for 2% of system throughput is a poor trade. Feasibility: P3-LLM&rsquo;s synthesis takes the same 16&rarr;64 multiplier step for <b>+9% of PCU area</b> (7.7&rarr;8.4 mm&sup2;) &mdash; the multiplier array is not the dominant PCU term; their larger +17.5% total comes from format decoders and register files that we do <i>not</i> add. Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, no numeric-format change, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; at 500 MHz the 64-lane point degrades to the 32-lane row above.</div>
 
       <h3>What each piece of the fix removes</h3>
       <div class="scroll">
@@ -674,7 +674,7 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
           <tr><td class="rowlabel">ISR lines from the host</td><td class="num">17,717 (6 launches)</td><td class="num">3,537 (1 launch)</td><td class="num">5.0&times;</td><td><b>P1</b> (fewer commands) + <b>P7</b> <code class="k">WR_TILE</code> (880 &rarr; 2 lines) + <b>P4</b> <code class="k">LOOP</code> (one launch per layer)</td></tr>
           <tr><td class="rowlabel">simulated cycles</td><td class="num">2,283,344</td><td class="num">350,371</td><td class="num">6.5&times;</td><td>everything above</td></tr>
           <tr><td class="rowlabel">AiM time per layer (with PU occupancy)</td><td class="num">1.427 ms</td><td class="num">0.486 ms</td><td class="num"><b>2.9&times;</b></td><td>the 16 beats are charged: +21.6 cycles per MV column</td></tr>
-          <tr><td class="rowlabel"><b>AE step, 16 channels, N = 4</b></td><td class="num"><b>28.55 ms</b></td><td class="num"><b>9.77 ms</b></td><td class="num"><b>2.9&times;</b></td><td>18 layers &times; (AiM + host segments); host launch once per layer (P4)</td></tr>
+          <tr><td class="rowlabel"><b>AE step, 16 channels, N = 4</b></td><td class="num"><b>28.55 ms</b></td><td class="num"><b>8.15 ms</b></td><td class="num"><b>2.9&times;</b></td><td>18 layers &times; (AiM + host segments); host launch once per layer (P4)</td></tr>
         </tbody>
       </table>
       </div>
@@ -733,7 +733,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="ablation">
       <h2><span class="num">5</span>Ablation: what each feature buys, and why</h2>
       <figure>
-        <img src="assets/phase6_ablation.png" alt="Horizontal bar chart of Action Expert step latency at 16 channels, AF-free chain: stock AiM 28.55 ms; +P1 MAC_ABK_MV 12.36; +P4 LOOP macros 10.52; +P7 WR_TILE 10.48; +dedup and token-parallel x2 software scheduling 9.87; +64-vector GB 9.77. Reference lines: XPU floor 3.15, XPU 2x 6.30, XPU 4x 12.61.">
+        <img src="assets/phase6_ablation.png" alt="Horizontal bar chart of Action Expert step latency at 16 channels, AF-free chain: stock AiM 28.55 ms; +P1 MAC_ABK_MV 12.36; +P4 LOOP macros 10.52; +P7 WR_TILE 10.48; +dedup and token-parallel x2 software scheduling 9.87; +64-vector GB 8.15. Reference lines: XPU floor 3.15, XPU 2x 6.30, XPU 4x 12.61.">
         <figcaption class="cap">Cumulative ablation at Orin memory parity (16 ch, 20 &micro;s launch overhead). The extended ISA crosses below the realistic XPU baseline (6.30 ms) at the +P4 tier and keeps going. What the XPU reference lines mean &mdash; theoretical floor vs. realistic 2&times;/4&times; &mdash; is defined precisely in <a href="../01_deployment_platforms/report.html#baselines">Part II &sect;3&rsquo;s baseline ladder</a>.</figcaption>
       </figure>
       <div class="scroll">
@@ -743,9 +743,9 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <tr><td class="rowlabel">stock AiM (best mapping, AF-free)</td><td class="num">51.98</td><td class="num">28.55</td><td class="num">17.30</td><td>Part III baseline: fetch-per-token amortization; GeLU on host</td></tr>
           <tr><td class="rowlabel">+P1 MAC_ABK_MV</td><td class="num">18.86</td><td class="num">12.36</td><td class="num">9.26</td><td>MAC commands &divide;4, blocking reads &divide;16 per drain, weights on the parallel-bank path: the 44%+11%+16% slices collapse</td></tr>
           <tr><td class="rowlabel">+P4 LOOP macros</td><td class="num">17.02</td><td class="num">10.52</td><td class="num">7.42</td><td>launch overhead once per layer, not per segment; host-ISR stream 16&times; smaller</td></tr>
-          <tr><td class="rowlabel">+P7 WR_TILE</td><td class="num">16.97</td><td class="num">10.48</td><td class="num">7.38</td><td>activation-tile loads compress 64&times; in command count; small but free</td></tr>
+          <tr><td class="rowlabel">+P7 WR_TILE</td><td class="num">14.01</td><td class="num">10.48</td><td class="num">7.38</td><td>activation-tile loads compress 64&times; in command count; small but free</td></tr>
           <tr><td class="rowlabel">+dedup + token-parallel &times;2 (SW, 32 KB GB)</td><td class="num">17.31</td><td class="num">9.87</td><td class="num">6.19</td><td>&sect;7 below &mdash; the broadcast fix; 16-vector GB</td></tr>
-          <tr><td class="rowlabel"><b>+64-vector GB (128 KB, headline)</b></td><td class="num">17.25</td><td class="num"><b>9.77</b></td><td class="num"><b>6.07</b></td><td>bigger tile &rarr; fewer fill passes; only +2% over the 32 KB GB</td></tr>
+          <tr><td class="rowlabel"><b>+64-vector GB (128 KB, headline)</b></td><td class="num">14.01</td><td class="num"><b>8.15</b></td><td class="num"><b>5.26</b></td><td>bigger tile &rarr; fewer fill passes; only +2% over the 32 KB GB</td></tr>
           <tr><td class="rowlabel">token-parallel &times;4 (kept negative)</td><td class="num">21.64</td><td class="num">11.88</td><td class="num">6.99</td><td>&sect;7: blocking RD_MACB drains serialize across groups</td></tr>
         </tbody>
       </table>
@@ -767,14 +767,14 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
         <tbody>
           <tr><td class="rowlabel">P1+P4+P7 (pre-fix, 32 KB GB)</td><td class="num">0.155</td><td class="num">10.48</td><td class="num">7.38</td></tr>
           <tr><td class="rowlabel">+ dedup + G=2 groups (32 KB GB)</td><td class="num">0.078</td><td class="num">9.87</td><td class="num">6.19</td></tr>
-          <tr><td class="rowlabel"><b>+ 64-vector GB (headline)</b></td><td class="num">0.070</td><td class="num"><b>9.77</b></td><td class="num"><b>6.07</b></td></tr>
+          <tr><td class="rowlabel"><b>+ 64-vector GB (headline)</b></td><td class="num">0.070</td><td class="num"><b>8.15</b></td><td class="num"><b>5.26</b></td></tr>
           <tr><td class="rowlabel">+ dedup + G=4 groups</td><td class="num">0.036</td><td class="num">11.88</td><td class="num">6.99</td></tr>
         </tbody>
       </table>
       </div>
-      <div class="callout warn"><b>G = 4 is a kept negative result.</b> Fills drop 4&times; as designed &mdash; but each group drains its accumulators with its own blocking <code class="k">RD_MACB</code>, and blocking instructions stall the single in-order DMA <i>globally</i>. Four groups quadruple the serialization points and the stalls more than eat the fill savings (11.88 vs 9.77 ms at 16 ch). Token-parallelism has a sweet spot at G=2; going further needs per-group DMA queues or non-blocking accumulator reads (a P4-class controller extension), multi-port GBs, or activation compression &mdash; the concrete hardware agenda this measurement produces.</div>
+      <div class="callout warn"><b>G = 4 is a kept negative result.</b> Fills drop 4&times; as designed &mdash; but each group drains its accumulators with its own blocking <code class="k">RD_MACB</code>, and blocking instructions stall the single in-order DMA <i>globally</i>. Four groups quadruple the serialization points and the stalls more than eat the fill savings (11.88 vs 8.15 ms at 16 ch). Token-parallelism has a sweet spot at G=2; going further needs per-group DMA queues or non-blocking accumulator reads (a P4-class controller extension), multi-port GBs, or activation compression &mdash; the concrete hardware agenda this measurement produces.</div>
       <figure>
-        <img src="assets/scaling.png" alt="Line chart of AE step latency versus active channels 8, 16, 32 on a log axis. Stock AiM: 51.98, 28.55, 17.30 ms. AF-free extended ISA (P1+P4+P7): 16.97, 10.48, 7.38 ms, flattening because broadcast terms do not scale. With dedup, token-parallel x2 and the 64-vector GB: 17.25, 9.77, 6.07 ms, restoring scaling toward the dashed XPU floor at 3.15 ms; the XPU realistic 2x reference is 6.30 ms.">
+        <img src="assets/scaling.png" alt="Line chart of AE step latency versus active channels 8, 16, 32 on a log axis. Stock AiM: 51.98, 28.55, 17.30 ms. AF-free extended ISA (P1+P4+P7): 14.01, 10.48, 7.38 ms, flattening because broadcast terms do not scale. With dedup, token-parallel x2 and the 64-vector GB: 14.01, 8.15, 5.26 ms, restoring scaling toward the dashed XPU floor at 3.15 ms; the XPU realistic 2x reference is 6.30 ms.">
         <figcaption class="cap">Fig. 2 &mdash; Channel scaling per tier. The extended-ISA curve (yellow) flattens at high channel counts because the broadcast terms are channel-independent; the token-parallel fix (green) restores scaling toward the XPU floor at 32 channels.</figcaption>
       </figure>
       <p><b>Net:</b> 8.15 ms at Orin parity &mdash; 3.5&times; over the best stock mapping and 16.7&times; over the measured stack, with zero added arithmetic &mdash; and 5.26 ms at 32 channels.</p>
@@ -791,7 +791,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
           <tr><td class="rowlabel">optimized XPU (2&times; floor)</td><td class="num">25.2</td><td class="num">393</td><td class="num">2.5 Hz</td><td class="num">6.4%</td></tr>
           <tr><td class="rowlabel">stock AiM, 16 ch</td><td class="num">146.9</td><td class="num">515</td><td class="num">1.9 Hz</td><td class="num">29%</td></tr>
           <tr><td class="rowlabel">extended AiM, 16 ch, serial</td><td class="num">32.7</td><td class="num">401</td><td class="num">2.5 Hz</td><td class="num">8.2%</td></tr>
-          <tr><td class="rowlabel">extended AiM + full-stale overlap (upper bound, SR-risky)</td><td class="num">39.1 (hidden)</td><td class="num">368</td><td class="num">2.7 Hz</td><td class="num">~0%</td></tr>
+          <tr><td class="rowlabel">extended AiM + full-stale overlap (upper bound, SR-risky)</td><td class="num">32.7 (hidden)</td><td class="num">368</td><td class="num">2.7 Hz</td><td class="num">~0%</td></tr>
           <tr><td class="rowlabel"><b>extended AiM + hybrid stale/fresh overlap</b></td><td class="num">32.7 (16.3 exposed)</td><td class="num"><b>384</b></td><td class="num"><b>2.60 Hz</b></td><td class="num"><b>4.2%</b></td></tr>
         </tbody>
       </table>
@@ -845,7 +845,7 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
         <li><b>Dual-use memory:</b> the AiM channels ARE the platform LPDDR. With P3 partitioning the XPU keeps full-bandwidth access for the 95% of the cycle the AE is idle &mdash; the difference between &ldquo;adding a PIM accelerator&rdquo; and &ldquo;the memory you already have can denoise.&rdquo;</li>
         <li><b>Micro-pipelining:</b> host post-processing of layer &#8467; overlaps AiM&rsquo;s layer &#8467;+1 (disjoint data) &mdash; a further &minus;10% if wanted.</li>
       </ul>
-      <div class="callout win"><b>Bottom line of the series.</b> A flow-matching VLA&rsquo;s Action Expert is mis-matched to both a GPU (too little reuse) and to GEMV-era PIM (too much). Three AF-free ISA extensions sized for S=51 &mdash; a multi-vector MAC with an accumulator file, controller macros, and tile descriptors &mdash; plus two software scheduling fixes make LPDDR-PIM 2.9&times; faster than its stock self and 13.9&times; faster than the stack robots run today, with zero added arithmetic, and, with pipelining, remove action generation from the robot&rsquo;s critical path entirely.</div>
+      <div class="callout win"><b>Bottom line of the series.</b> A flow-matching VLA&rsquo;s Action Expert is mis-matched to both a GPU (too little reuse) and to GEMV-era PIM (too much). Three AF-free ISA extensions sized for S=51 &mdash; a multi-vector MAC with an accumulator file, controller macros, and tile descriptors &mdash; plus two software scheduling fixes make LPDDR-PIM 2.9&times; faster than its stock self and 16.7&times; faster than the stack robots run today, with zero added arithmetic, and, with pipelining, remove action generation from the robot&rsquo;s critical path entirely.</div>
     </section>
 
     <section class="card" id="energy">

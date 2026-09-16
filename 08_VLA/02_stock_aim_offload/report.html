@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VLA Part III — Offloading the Action Expert to Stock LPDDR5-AiM (and Why It Loses 4.5&times;)</title>
+<title>VLA Part III — LPDDR5, Stock AiM, and Why the Offload Loses 4.5&times;: the Problem, Quantified</title>
 <style>
   :root{
     color-scheme:light;
@@ -81,7 +81,7 @@
 
   <main>
     <header class="page">
-      <h1>Offloading the Action Expert to Stock LPDDR5-AiM &mdash; and Why It Loses 4.5&times;</h1>
+      <h1>LPDDR5, Stock AiM, and Why the Offload Loses 4.5&times;: the Problem, Quantified</h1>
       <p class="sub"><a href="../00_vla_algorithm/report.html">Part I</a> showed the &pi;<sub>0</sub> Action Expert is memory-bound: 623&nbsp;MB of weights re-streamed for 38.7&nbsp;GFLOPs, every step. Processing-in-memory should fix exactly this. We map the AE onto a cycle-level SK&nbsp;hynix AiM-style <b>LPDDR5-PIM simulator</b> at Jetson-Orin memory parity (16 &times; x16 LPDDR5-6400 channels = 204.8&nbsp;GB/s) &mdash; and the stock offload <b>loses</b>: <b>28.5&nbsp;ms per denoising step vs. 6.3&nbsp;ms</b> for a realistic XPU baseline. This page explains the machine, the mapping, the measured breakdown, and the crossover law that makes a &ldquo;memory-bound&rdquo; workload lose on PIM.</p>
       <div class="tags">
         <span class="tag">aim_simulator @ 0f28a07 (Ramulator 2.0)</span>
@@ -1164,7 +1164,7 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
         <li><b>Each limitation exists for a hardware reason.</b> One GB vector: the GB is a 2 KB broadcast SRAM sized for GEMV. One accumulator/bank: a single 16-bit MAC register minimizes area in DRAM periphery. TMOD: the shared datapath multiplexes array and register access. Blocking reads: the single in-order DMA is the hazard mechanism. All are sensible for S = 1 &mdash; and all are wrong for S = 51.</li>
       </ul>
       <figure>
-        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 28.5 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 9.77 ms.">
+        <img src="assets/crossover.png" alt="Log-log chart of AE step latency versus suffix token count S at 16 channels. The XPU weight-streaming floor is flat at 3.15 ms. The stock AiM MAC-command bound grows linearly from 0.23 ms at S=1, crossing the XPU line at S around 14 and reaching an ideal 11.7 ms at S=51, with the measured stock point at 28.5 ms. The extended AiM fetch bound is a staircase at 0.19 ms per 16-token group, far below both, with the measured extended point at 8.15 ms.">
         <figcaption class="cap">Fig. 4 &mdash; The crossover, drawn. Ideal resource bounds (lines) vs. measured points (squares) at S = 51. Stock AiM wins the S &le; ~14 GEMV regime it was designed for and loses linearly beyond it; the extended ISA of Part IV (green) restores fetch-bound scaling.</figcaption>
       </figure>
       <div class="callout warn"><b>The workload sits in a dead zone.</b> S = 51 is too little reuse for the XPU&rsquo;s 42 TFLOP/s peak (it runs at 29% of peak, bandwidth-starved) and too much reuse for stock AiM&rsquo;s per-command amortization (it runs at 3.3 TFLOP/s, fetch-starved in a different way). Neither machine fits &mdash; which is precisely the research opening. <a href="../03_extended_isa/report.html">Part IV</a> adds the missing amortization to the AiM ISA and flips the result.</div>
