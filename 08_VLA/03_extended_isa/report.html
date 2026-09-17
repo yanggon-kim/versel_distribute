@@ -69,10 +69,10 @@
     <a href="#overview">Overview</a>
     <a href="#problems">1 &middot; Eight problems, with evidence</a>
     <a href="#p1">2 &middot; P1: the multi-vector MAC</a>
-    <a href="#rest">3 &middot; P4, P7 and the supporting cast</a>
+    <a href="#rest">3 &middot; P4: LOOP macros, and the supporting cast</a>
     <a href="#validate">4 &middot; Validation</a>
     <a href="#ablation">5 &middot; Ablation results</a>
-    <a href="#bcast">6 &middot; The last bottleneck: activation broadcast</a>
+    <a href="#bcast">6 &middot; SW: dedup + token-parallel (the broadcast fix)</a>
     <a href="#system">7 &middot; System view: hiding the AE (almost) entirely</a>
     <a href="#energy">8 &middot; Energy &amp; fair baselines</a>
     <a href="#prior">9 &middot; How this differs from prior designs</a>
@@ -84,7 +84,7 @@
       <h1>Our ISA Extensions: 28.55&nbsp;ms &rarr; 8.15&nbsp;ms per Step, and How They Differ from Prior Designs</h1>
       <p class="sub"><a href="../02_stock_aim_offload/report.html">Part III</a> measured <i>why</i> stock LPDDR5-AiM loses on the &pi;<sub>0</sub> Action Expert: every in-bank fetch feeds one vector, one accumulator, one register mode. This page turns that breakdown into eight problem statements and implements the fixes on a simulator branch (<code class="k">vla-aim-ext</code>) under an <b>AF-free LPDDR-PIM premise</b> (no in-DRAM activation function &mdash; the GEMV-only scope of every disclosed LPDDR-PIM, incl. Samsung&rsquo;s LP5X-PIM Sim): <b>three ISA/controller extensions (P1, P4, P7) + two software fixes</b>, measured: <b>28.55 &rarr; 8.15 ms per step at Orin memory parity (3.5&times;)</b>, and <b>5.26 ms at 32 channels (1.7&times; the XPU&rsquo;s theoretical bandwidth floor)</b>. P2 (in-memory softmax) and P8 (in-bank write-back), which require AF-class hardware, are documented as GDDR-AiM-only alternatives, excluded from the headline. With hybrid stale/fresh pipelining, all but the final fresh-KV denoising steps leave the robot&rsquo;s critical path (378 ms cycle, 2.65 Hz).</p>
       <div class="tags">
-        <span class="tag live">2.9&times; vs stock &middot; 16.7&times; vs measured &middot; 곱셈기 무추가</span>
+        <span class="tag live">3.5&times; vs stock &middot; 16.7&times; vs measured &middot; 곱셈기 무추가</span>
         <span class="tag">3 ISA extensions + 2 SW fixes &middot; AF-free &middot; storage only</span>
         <span class="tag">unit-trace validated, legacy-regression clean</span>
         <span class="tag warn">honest negatives kept (P6, G=4)</span>
@@ -123,8 +123,9 @@
     </section>
 
     <section class="card" id="p1">
-      <h2><span class="num">2</span>P1 &mdash; <code class="k">MAC_ABK_MV</code>: teaching one fetch to feed sixteen tokens</h2>
+      <h2><span class="num">2</span>P1 &mdash; <code class="k">MAC_ABK_MV</code>: teaching one fetch to feed a whole token tile</h2>
       <p class="lead">The core insight from Part III&rsquo;s crossover: the XPU wins because its cache lets one weight read serve all 51 tokens. P1 gives AiM the same amortization, in-bank.</p>
+      <div class="callout"><b>Depth note.</b> The shipped design sweeps <b>V = 26</b> token vectors per fetch &mdash; the tokens one channel group owns (&sect;<i>Why 26</i>, below). The toy machine, the three-frame figure and the &ldquo;running the clock&rdquo; walkthrough use a <b>16-token tile</b> because it fits on a screen and matches the 16-wide GPR word that stock <code class="k">RD_MAC</code> already produces. Every mechanism is identical at either depth; only the slot count changes.</div>
 
       <h3>The idea, without any hardware</h3>
       <p>Strip away channels, banks, commands and buffers. A projection is just this: <code class="k">Y[t][j] = &Sigma;<sub>k</sub> X[t][k] &middot; W[j][k]</code>, with S = 51 tokens, N = 2,048 outputs and K = 1,024 inputs. Three loops, and the only thing that separates stock from P1 is <i>where the token loop sits relative to the read of W</i>.</p>
@@ -137,7 +138,7 @@ for t in 0 .. S-1:                 <span class="c"># 51 tokens</span>
         Y[t][j] = acc
 <span class="c"># every W[j][k] is read S = 51 times: the weight loop is inside the token loop</span></pre>
       <pre class="cmd"><span class="c">(b) P1 ORDER — tile the token loop by V and sink it BELOW the read of W</span>
-for t0 in 0 .. S-1 step V:         <span class="c"># V = 16 → 4 tiles cover 51 tokens</span>
+for t0 in 0 .. S-1 step V:         <span class="c"># V = 26 → 2 tiles cover 51 tokens</span>
     for j in 0 .. N-1:
         acc[0 .. V-1] = 0          <span class="c"># V accumulators, one per token in the tile</span>
         for k in 0 .. K-1:
@@ -145,7 +146,7 @@ for t0 in 0 .. S-1 step V:         <span class="c"># V = 16 → 4 tiles cover 51
             for i in 0 .. V-1:     <span class="c"># … and reused V times</span>
                 acc[i] += w * X[t0+i][k]
         Y[t0 .. t0+V-1][j] = acc[0 .. V-1]
-<span class="c"># every W[j][k] is read ceil(S/V) = 4 times instead of 51</span></pre>
+<span class="c"># every W[j][k] is read ceil(S/V) = 2 times instead of 51</span></pre>
       <p>This is an ordinary register-tiling transform, and it is legal because the token dimension is a reduction-free outer product: token <i>t</i>&rsquo;s result never depends on token <i>t</i>&rsquo;s neighbours. <b>What it costs is exactly two things</b>: <i>V</i> partial sums must stay live while <i>k</i> advances, and <i>V</i> input vectors must be readable while <i>w</i> is held. A CPU or GPU does this in registers and cache without anyone noticing. Stock AiM cannot, because it has one accumulator per bank and one vector in the Global Buffer &mdash; so the inner <code class="k">i</code> loop has nowhere to live, and the token loop is forced back to the outside. <b>P1 is that storage, and nothing else.</b></p>
 
       <h3>How the algorithm maps onto the machine</h3>
@@ -156,9 +157,9 @@ for t0 in 0 .. S-1 step V:         <span class="c"># V = 16 → 4 tiles cover 51
           <tr><td class="rowlabel">inner <code class="k">k</code>, 16 at a time</td><td>the 16 PU lanes fed by one 32 B column fetch</td><td colspan="2">same &mdash; 16 multipliers, one column</td></tr>
           <tr><td class="rowlabel">rest of <code class="k">k</code> (64 columns)</td><td>the column sweep the DMA unrolls from <code class="k">opsize=64</code></td><td colspan="2">same</td></tr>
           <tr><td class="rowlabel"><code class="k">j</code> (outputs)</td><td>spread across banks &times; channels; 256 values of <i>j</i> advance at once, the rest become row-groups</td><td colspan="2">same</td></tr>
-          <tr><td class="rowlabel"><code class="k">X[t0..t0+V-1]</code></td><td>the Global Buffer</td><td>1 vector (2 KB)</td><td><b>V vectors resident</b> (32 KB)</td></tr>
-          <tr><td class="rowlabel"><code class="k">acc[0..V-1]</code></td><td>the per-bank accumulator</td><td>1 slot (16 bit)</td><td><b>V slots</b> (32 B)</td></tr>
-          <tr><td class="rowlabel">inner <code class="k">i</code> loop</td><td>beats inside one command, driven by the PU clock</td><td><b>cannot exist</b></td><td>16 beats per column fetch</td></tr>
+          <tr><td class="rowlabel"><code class="k">X[t0..t0+V-1]</code></td><td>the Global Buffer</td><td>1 vector (2 KB)</td><td><b>V vectors resident</b> (52 KB at V = 26)</td></tr>
+          <tr><td class="rowlabel"><code class="k">acc[0..V-1]</code></td><td>the per-bank accumulator</td><td>1 slot (16 bit)</td><td><b>V slots</b> (52 B at V = 26)</td></tr>
+          <tr><td class="rowlabel">inner <code class="k">i</code> loop</td><td>beats inside one command, driven by the PU clock</td><td><b>cannot exist</b></td><td>V = 26 beats per column fetch</td></tr>
           <tr><td class="rowlabel"><code class="k">Y[...] = acc[...]</code></td><td>the drain to the host</td><td><code class="k">RD_MAC</code>, 1 value per bank</td><td><code class="k">RD_MACB</code>, V values per bank in one burst</td></tr>
         </tbody>
       </table>
@@ -544,27 +545,32 @@ for t in 0..50:                <span class="c"># 51 tokens</span>
               16 lanes -&gt; acc
         RD_MAC                 <span class="c"># Y[t][j-group]</span>
 <span class="c"># q_proj in the trace: 51 WR_GB, 408 MAC_ABK, 408 RD_MAC</span></pre>
-      <pre class="cmd"><span class="c">P1, per channel — the t loop is tiled and its remainder sinks into the command</span>
-fill: for v in 0..25:  WR_GB 64     <span class="c"># X tile resident (26 tokens in this channel group)</span>
-for vg in 0..1:                     <span class="c"># which slice of 16 the acc file holds (16 + 10)</span>
-    for g in 0..15:                 <span class="c"># row-groups (8 channels per group, so twice as many)</span>
-        WR_BIAS                     <span class="c"># acc[0..15] = 0</span>
-        MAC_ABK_MV 64:
-          for c in 0..63:           <span class="c"># the k loop, one fetch each</span>
-              for i in 0..15:       <span class="c"># the NEW i loop: 16 beats in the PU</span>
-                  16 lanes -&gt; acc[i]
-        RD_MACB                     <span class="c"># Y[16 tokens][j-group] in one burst</span>
-<span class="c"># q_proj in the trace: 51 WR_GB, 64 MAC_ABK_MV, 64 RD_MACB (2 channel groups x 2 slices x 16 row-groups)</span></pre>
+      <pre class="cmd"><span class="c">P1 (V = 26), per channel — the t loop is tiled and its remainder sinks into the command</span>
+fill: for v in 0..25:  WR_GB 64     <span class="c"># X tile resident: the 26 tokens this channel group owns</span>
+for g in 0..15:                     <span class="c"># row-groups (8 channels per group, so twice as many as stock)</span>
+    WR_BIAS                         <span class="c"># acc[0..25] = 0</span>
+    MAC_ABK_MV 64:
+      for c in 0..63:               <span class="c"># the k loop, one fetch each</span>
+          for i in 0..25:           <span class="c"># the NEW i loop: 26 beats in the PU</span>
+              16 lanes -&gt; acc[i]
+    RD_MACB 26                      <span class="c"># Y[26 tokens][j-group] in one burst</span>
+<span class="c"># q_proj in the trace: 51 WR_GB, 32 MAC_ABK_MV, 32 RD_MACB (2 channel groups x 16 row-groups; each channel sees 16)</span>
+<span class="c"># the real lines, layer_ext_afree64_v26_c16.trace:</span>
+AiM WR_BIAS 0 0xff00
+AiM WR_BIAS 0 0xff
+AiM MAC_ABK_MV 64 0xff00 100        <span class="c"># group 1, weight row-group 0</span>
+AiM MAC_ABK_MV 64 0xff 100          <span class="c"># group 0, its own replica of the same row-group</span>
+AiM RD_MACB 26 0 0xff00             <span class="c"># 26 slots x 16 banks = 416 results, one burst</span>
+AiM RD_MACB 26 0 0xff</pre>
       <ul class="notes">
-        <li><b>The new loop is the <code class="k">i</code> loop</b>, innermost, inside each column fetch, run by the PU &mdash; not by the host and not by the DMA. The row-group loop already existed in stock.</li>
-        <li><b>The column stays outside the beats.</b> Fetch once, then sweep the 16 resident tokens. Reversed, every beat would need its own fetch and nothing would be saved.</li>
-        <li><b><code class="k">vg</code> selects which slice of 16 tokens the accumulator file is holding</b> (26 tokens = one slice of 16 plus one of 10); it does not refill the tile.</li>
-        <li><b>Row-groups double from 8 to 16</b> because token-parallel &times;2 leaves 8 channels per group: one sweep covers 16 banks &times; 8 channels = 128 outputs instead of 256. Each group holds a full weight replica and computes all 2,048 outputs for its own tokens.</li>
-        <li><b>Deeper nesting, far less work.</b> Loop depth costs nothing; trip count &times; per-iteration cost does. Per channel for q_proj: stock 51 &times; 8 = 408 sweeps &rarr; 26,112 column fetches, 408 drains, 408 row switches; P1 2 &times; 16 = 32 sweeps &rarr; 2,048 fetches, 32 drains, 32 row switches. That is 4 fetches per output produced versus 0.31. The <code class="k">i</code> loop added one level and removed a factor of 16 from an outer one.</li>
-        <li><b>Token-parallel is fetch-neutral per channel.</b> Halving the tokens per group halves <code class="k">vg</code> and halving the channels doubles <code class="k">g</code>, so with or without the split each channel issues 32 sweeps (the no-split trace: G = 1, rgroups = 8, 4 slices &rarr; 32). Its gain is the fill stream: each group pushes 26 vectors through its own pins instead of 51, and the two groups do it concurrently.</li>
+        <li><b>The new loop is the <code class="k">i</code> loop</b>, innermost, inside each column fetch, run by the PU &mdash; not by the host and not by the DMA. The row-group loop already existed in stock. At V = 26 the tile is one slice, so the slice loop that a 16-deep file needed (16 + 10) is gone.</li>
+        <li><b>The column stays outside the beats.</b> Fetch once, then sweep the 26 resident tokens. Reversed, every beat would need its own fetch and nothing would be saved.</li>
+                <li><b>Row-groups double from 8 to 16</b> because token-parallel &times;2 leaves 8 channels per group: one sweep covers 16 banks &times; 8 channels = 128 outputs instead of 256. Each group holds a full weight replica and computes all 2,048 outputs for its own tokens.</li>
+        <li><b>Deeper nesting, far less work.</b> Loop depth costs nothing; trip count &times; per-iteration cost does. Per channel for q_proj: stock 51 &times; 8 = 408 sweeps &rarr; 26,112 column fetches, 408 drains, 408 row switches; P1 1 &times; 16 = 16 sweeps &rarr; 1,024 fetches, 16 drains, 16 row switches. That is 4 fetches per output produced versus 0.16. The <code class="k">i</code> loop added one level and removed a factor of 26 from an outer one.</li>
+        <li><b>Token-parallel is fetch-neutral per channel.</b> Halving the tokens per group halves the slice count and halving the channels doubles <code class="k">g</code>, so with or without the split each channel issues 16 sweeps (the no-split trace: G = 1, rgroups = 8, 2 slices of 26 &rarr; 16). Its gain is the fill stream: each group pushes 26 vectors through its own pins instead of 51, and the two groups do it concurrently (&sect;6).</li>
       </ul>
 
-      <h3>Running the clock again: one (16-token tile, row-group)</h3>
+      <h3>Running the clock again: one (16-token tile, row-group) &mdash; V = 16 example</h3>
       <pre class="cmd"><span class="c">cycle    command           what happens                                                useful?</span>
 T+5      WR_BIAS           16 × 16 accumulator slots := 0                               no
 T+6      TMOD              array mode (32 idle)                                          no
@@ -580,11 +586,11 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
 <span class="c">The MAC term alone improves 2.5× (256 → 102 cycles per token): the fabbed PU is now busy 100 % of the time</span>
 <span class="c">instead of 40 % (Fig. 6b). The rest comes from TMOD, row switches and drains happening 16× less often.</span></pre>
 
-      <div class="callout"><b>Charged honestly.</b> The simulator issues <code class="k">MAC_ABK_MV</code> at MAC16 timing (4 cycles) and the composition adds the PU occupancy analytically: 16 beats of 16 lanes at AiM&rsquo;s fabbed 1 GHz = 256 MACs = 16 ns = 25.6 DRAM cycles per column, i.e. +21.6 cycles per <code class="k">MAC_ABK_MV</code> column on top of the simulated stream. That is why the 16-channel layer is 0.486 ms and not the simulator&rsquo;s raw 0.219 ms. No multiplier is added; the PU is simply kept busy.</div>
+      <div class="callout"><b>Charged honestly.</b> The simulator issues <code class="k">MAC_ABK_MV</code> at MAC16 timing (4 cycles) and the composition adds the PU occupancy analytically: 16 beats of 16 lanes at AiM&rsquo;s fabbed 1 GHz = 256 MACs = 16 ns = 25.6 DRAM cycles per column, i.e. +21.6 cycles per <code class="k">MAC_ABK_MV</code> column on top of the simulated stream. That is why the 16-channel layer is 0.486 ms and not the simulator&rsquo;s raw 0.219 ms at V = 16. At the shipped V = 26 the same charge is 26 beats = 416 MACs = 26 ns = <b>41.6 cycles per column (+37.6)</b>, and the layer is 0.396 ms on a raw 0.156 ms. No multiplier is added; the PU is simply kept busy.</div>
 
-      <h3>Why 16, when there are 51 tokens? (measured)</h3>
-      <p><b>Two knobs, only one of them fixed at 16.</b> The <i>command depth</i> V &mdash; how many token vectors one <code class="k">MAC_ABK_MV</code> sweeps, and therefore how many slots the accumulator file needs &mdash; is 16 in this design. The <i>GB tile capacity</i> is separate: 32 KB (16 vectors) measures 9.87 ms/step vs 9.77 with 128 KB (+1%); depth V = 26 then takes it to 8.15.</p>
-      <p>V was chosen for hardware fit, then swept to check it. The generator now takes V as a parameter (default 16, so every earlier trace is byte-identical) and each depth was simulated at 16 channels; the composition charges the PU honestly, since one command asks a bank for V&nbsp;&times;&nbsp;16 MAC and a 16-lane PU at 1 GHz needs V ns for it. <b>The sweep at V = 16 reproduces the 8.15 ms headline exactly.</b></p>
+      <h3 id="why26">Why 26, when there are 51 tokens? (measured)</h3>
+      <p><b>Two knobs.</b> The <i>command depth</i> V &mdash; how many token vectors one <code class="k">MAC_ABK_MV</code> sweeps, and therefore how many slots the accumulator file needs &mdash; was first set to 16 for hardware fit (one <code class="k">RD_MACB</code> burst = one 32 B GPR word), then swept. The <i>GB tile capacity</i> is separate and matters little: 32 KB (16 vectors) measures 9.87 ms/step vs 9.77 with 128 KB (+1%). <b>Depth is what matters: V = 26 takes 9.77 to 8.15 ms.</b></p>
+      <p>The generator takes V as a parameter (default 16, so every earlier trace is byte-identical) and each depth was simulated at 16 channels; the composition charges the PU honestly, since one command asks a bank for V&nbsp;&times;&nbsp;16 MAC and a 16-lane PU at 1 GHz needs V ns for it. The sweep reproduces the earlier 9.77 ms V = 16 point exactly, and V = 26 is the 8.15 ms headline.</p>
       <div class="scroll">
       <table>
         <thead><tr><th class="num">V</th><th class="num">token groups per channel group</th><th class="num">padding</th><th class="num">MV cmds/ch</th><th class="num">TMOD/ch</th><th class="num">row switches/ch</th><th class="num">step ms</th><th class="num">vs V = 16</th><th class="num">acc file B/bank</th></tr></thead>
@@ -594,7 +600,7 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
           <tr><td class="num">4</td><td class="num">7</td><td class="num">1.08</td><td class="num">70,458</td><td class="num">2,819</td><td class="num">1,409</td><td class="num">12.77</td><td class="num">0.76&times;</td><td class="num">8</td></tr>
           <tr><td class="num">8</td><td class="num">4</td><td class="num">1.23</td><td class="num">39,564</td><td class="num">1,554</td><td class="num">780</td><td class="num">11.19</td><td class="num">0.87&times;</td><td class="num">16</td></tr>
           <tr><td class="num">13</td><td class="num">2</td><td class="num">1.00</td><td class="num">20,448</td><td class="num">848</td><td class="num">416</td><td class="num">8.88</td><td class="num">1.10&times;</td><td class="num">26</td></tr>
-          <tr style="background:#eef5ff;"><td class="num"><b>16</b></td><td class="num">2</td><td class="num">1.23</td><td class="num">19,782</td><td class="num">791</td><td class="num">389</td><td class="num"><b>8.15</b></td><td class="num">1.00&times;</td><td class="num">32</td></tr>
+          <tr style="background:#eef5ff;"><td class="num"><b>16</b></td><td class="num">2</td><td class="num">1.23</td><td class="num">19,782</td><td class="num">791</td><td class="num">389</td><td class="num"><b>9.77</b></td><td class="num">1.00&times;</td><td class="num">32</td></tr>
           <tr style="background:#e7f5ec;"><td class="num"><b>26</b></td><td class="num">1</td><td class="num">1.00</td><td class="num">10,224</td><td class="num">430</td><td class="num">208</td><td class="num"><b>8.15</b></td><td class="num"><b>1.20&times;</b></td><td class="num">52</td></tr>
           <tr><td class="num">51</td><td class="num">1</td><td class="num">1.96</td><td class="num">9,336</td><td class="num">368</td><td class="num">171</td><td class="num">12.14</td><td class="num">0.80&times;</td><td class="num">102</td></tr>
         </tbody>
@@ -603,8 +609,8 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
       <p class="cap">16 channels, N = 4, 20 &micro;s launch overhead, headline feature set (P1+P4+P7, 128 KB GB, dedup, token-parallel &times;2). &ldquo;Padding&rdquo; is per channel group: token-parallel &times;2 gives each group 26 tokens, so the quantity V must divide is 26, not 51. Work is conserved &mdash; MV commands &times; V is 265,824 beats per channel at every zero-padding depth. Full table, the no-token-parallel series and the assumptions are in the study&rsquo;s <code class="k">05_reports/vsweep_depth.md</code>.</p>
       <ul class="notes">
         <li><b>Most of the gain arrives by V = 8&ndash;13.</b> 1 &rarr; 8 is 3.0&times;; 8 &rarr; 13 another 1.26&times;; everything past 13 is worth at most 1.09&times; more.</li>
-        <li><b>Above V = 8 the binding term is padding, not amortisation.</b> Mode switches, row switches and drains are already ~20&times; down at V = 13. What separates 8.15 from 8.15 ms is that 26/16 = 1.23 of the MAC work at V = 16 multiplies padded slots.</li>
-        <li><b>The measured optimum is V = 26</b> &mdash; the tokens each channel group owns &mdash; at 8.15 ms/step, 1.20&times; better than the shipped V = 16, for 52 B of accumulator file per bank instead of 32 and no extra GB. Without token-parallel the same rule gives V = 51 and 8.68 ms (1.36&times;).</li>
+        <li><b>Above V = 8 the binding term is padding, not amortisation.</b> Mode switches, row switches and drains are already ~20&times; down at V = 13. What separates 9.77 from 8.15 ms is that 26/16 = 1.23 of the MAC work at V = 16 multiplies padded slots.</li>
+        <li><b>The measured optimum is V = 26</b> &mdash; the tokens each channel group owns &mdash; at 8.15 ms/step, 1.20&times; better than the original V = 16, for 52 B of accumulator file per bank instead of 32 and no extra GB. Without token-parallel the same rule gives V = 51 and 8.68 ms (1.36&times;).</li>
         <li><b>Depth must match the group, not the token count.</b> V = 51 <i>with</i> token-parallel &times;2 is the worst configuration above V = 4 (12.14 ms): half of every 51-slot file sits idle.</li>
         <li><b>So V = 16 is defensible, not optimal.</b> It is what the hardware likes &mdash; power-of-two slot index, and one <code class="k">RD_MACB</code> burst is exactly one 32 B GPR word, the format stock <code class="k">RD_MAC</code> already produces &mdash; and it leaves 1.20&times; on the table. A V-matched design pays a wider slot index and a burst count that no longer equals the GPR width.</li>
       </ul>
@@ -638,9 +644,9 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
       <table>
         <thead><tr><th>Addition</th><th>Hardware delta</th><th>Cost class</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">accumulator file</td><td>15 extra 16-bit registers + 4-bit slot mux behind the existing adder tree (&asymp;240 FFs/PU)</td><td><b>trivial</b> &mdash; a few % of PU logic, &laquo;0.1% of die; no timing-path change</td></tr>
+          <tr><td class="rowlabel">accumulator file</td><td>25 extra 16-bit registers + 5-bit slot mux behind the existing adder tree (&asymp;400 FFs/PU; 52 B per bank)</td><td><b>trivial</b> &mdash; a few % of PU logic, &laquo;0.1% of die; no timing-path change</td></tr>
           <tr><td class="rowlabel">RD_MACB</td><td>DMA-side slot sequencer; reuses the RDMAC16 read path</td><td><b>trivial</b> &mdash; zero PU change</td></tr>
-          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>32 KB</b> SRAM/channel &mdash; <b>measured nearly sufficient</b>: with dedup + token-parallel, the 16-vector GB gives 9.87 ms/step vs 8.15 with 128 KB (+1%)</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 2%</td></tr>
+          <tr><td class="rowlabel">bigger GB</td><td>2 KB &rarr; <b>52 KB</b> SRAM/channel (a 26-vector tile). Measured: at V = 16 the 32 KB tile gives 9.87 ms vs 9.77 with 128 KB (+1%); at V = 26 the 26-vector tile (8.19 ms, the paper&rsquo;s design point) and the 64-vector 128 KB tile (8.15 ms, this page) are within 0.5%</td><td><b>modest</b> &mdash; ~0.1&ndash;0.5 mm&sup2; in DRAM-periphery logic, ~1%-class of an LPDDR die [estimate]; the 64-vector version buys only 0.5%</td></tr>
           <tr><td class="rowlabel">MAC_ABK_MV datapath</td><td>32 B operand latch + 4-bit vector sequencer + <b>multiplier throughput (the one real cost)</b></td><td>a price/performance dial, below</td></tr>
         </tbody>
       </table>
@@ -649,45 +655,228 @@ T+1782   RD_MACB           16 bursts, one DMA stall for 256 results/channel (≈
       <table>
         <thead><tr><th>PU multiplier array (@ AiM&rsquo;s fabbed 1 GHz)</th><th>Extra area</th><th class="num">MV occupancy</th><th class="num">AE step</th><th class="num">vs stock</th><th class="num">vs XPU-2&times;</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel"><b>16 lanes &mdash; AiM exactly as fabbed (our design)</b></td><td><b>zero</b></td><td class="num">25.6 cyc</td><td class="num"><b>8.15 ms</b></td><td class="num"><b>3.5&times;</b></td><td class="num">0.77&times;</td></tr>
-          <tr><td class="rowlabel">32 lanes (2&times;) &mdash; option</td><td>~2&times; array</td><td class="num">12.8 cyc</td><td class="num">6.67 ms</td><td class="num">4.3&times;</td><td class="num">0.94&times;</td></tr>
-          <tr><td class="rowlabel">64 lanes (4&times;) &mdash; option</td><td>~4&times; array</td><td class="num">6.4 cyc</td><td class="num">5.94 ms</td><td class="num">4.8&times;</td><td class="num">1.06&times;</td></tr>
-          <tr><td class="rowlabel">128 lanes (8&times;) &mdash; wasteful</td><td>~8&times; array</td><td class="num">4.0 cyc <i>(nCCD floor)</i></td><td class="num">5.66 ms</td><td class="num">5.0&times;</td><td class="num">1.11&times;</td></tr>
+          <tr><td class="rowlabel"><b>16 lanes &mdash; AiM exactly as fabbed (our design)</b></td><td><b>zero</b></td><td class="num">41.6 cyc</td><td class="num"><b>8.15 ms</b></td><td class="num"><b>3.5&times;</b></td><td class="num">0.77&times;</td></tr>
+          <tr><td class="rowlabel">32 lanes (2&times;) &mdash; option</td><td>~2&times; array</td><td class="num">20.8 cyc</td><td class="num">5.75 ms</td><td class="num">5.0&times;</td><td class="num">1.10&times;</td></tr>
+          <tr><td class="rowlabel">64 lanes (4&times;) &mdash; option</td><td>~4&times; array</td><td class="num">10.4 cyc</td><td class="num">4.56 ms</td><td class="num">6.3&times;</td><td class="num">1.38&times;</td></tr>
+          <tr><td class="rowlabel">128 lanes (8&times;) &mdash; option</td><td>~8&times; array</td><td class="num">5.2 cyc</td><td class="num">3.96 ms</td><td class="num">7.2&times;</td><td class="num">1.59&times;</td></tr>
         </tbody>
       </table>
       </div>
-      <p><b>Why the multiplier width matters at all.</b> One <code class="k">MAC_ABK_MV</code> asks a bank for 16 lanes &times; 16 vectors = <b>256 MAC</b>. Pipelining does not help: a pipelined PU already sustains one 16-lane dot-product per cycle, so the 256 MACs are a <i>throughput</i> requirement, not a latency one. At AiM&rsquo;s fabbed 1 GHz a 16-lane PU needs 16 ns &mdash; 6.4&times; the 2.5 ns column slot &mdash; so the controller throttles and the command occupies 25.6 cycles. Widening the array shortens that linearly until 128 lanes, where <code class="k">nCCD</code> becomes the limiter again and 16&times; is the ceiling this ISA can reach.</p>
-      <p><b>The vector count is already optimal.</b> With a 16-lane PU, any V &ge; 3 vectors per command saturates it at 1.6 cycles/vector (vs stock&rsquo;s 4.0) &mdash; so <i>the free 2.5&times; on the MAC term needs only V = 3</i>. We use V = 16 not for arithmetic but because it divides the <code class="k">WR_BIAS</code>/<code class="k">RD_MACB</code> drains, GB refills and row activations by 16 &mdash; the overhead terms that were 43% of the stock layer.</p>
-      <div class="callout win"><b>Two costs, priced separately &mdash; and the cheap one carries most of the win.</b> The <i>storage</i> additions (32 B accumulator file per bank + <code class="k">RD_MACB</code> + the GB tile, ~1% of die) eliminate the WR_BIAS/RD_MAC/TMOD/row-thrash storm all by themselves: <b>3.5&times; over stock with zero added multipliers</b>, and 16.7&times; over today&rsquo;s measured stack. Widening the array is an <i>option</i>, not part of the design: 2&times; recovers EDP parity and 4&times; clears the realistic XPU bound, but &sect;8 shows the end-to-end gap between 16 and 64 lanes is only 1.02&times; &mdash; once the expert is overlapped it is off the critical path, so paying 4&times; the multiplier area for 2% of system throughput is a poor trade. Feasibility: P3-LLM&rsquo;s synthesis takes the same 16&rarr;64 multiplier step for <b>+9% of PCU area</b> (7.7&rarr;8.4 mm&sup2;) &mdash; the multiplier array is not the dominant PCU term; their larger +17.5% total comes from format decoders and register files that we do <i>not</i> add. Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, no numeric-format change, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; at 500 MHz the 64-lane point degrades to the 32-lane row above.</div>
+      <p><b>Why the multiplier width matters at all.</b> One <code class="k">MAC_ABK_MV</code> asks a bank for 16 lanes &times; 26 vectors = <b>416 MAC</b>. Pipelining does not help: a pipelined PU already sustains one 16-lane dot-product per cycle, so the 416 MACs are a <i>throughput</i> requirement, not a latency one. At AiM&rsquo;s fabbed 1 GHz a 16-lane PU needs 26 ns &mdash; 10.4&times; the 2.5 ns column slot &mdash; so the controller throttles and the command occupies 41.6 cycles. Widening the array shortens that linearly; <code class="k">nCCD</code> becomes the limiter again only at ~166 lanes (416 MAC in one 2.5 ns slot), so even 128 lanes are still PU-bound at this depth.</p>
+      <p><b>The arithmetic needs far less depth than the bookkeeping.</b> With a 16-lane PU, any V &ge; 3 vectors per command saturates it at 1.6 cycles/vector (vs stock&rsquo;s 4.0) &mdash; so <i>the free 2.5&times; on the MAC term needs only V = 3</i>. We use V = 26 not for arithmetic but because it divides the <code class="k">WR_BIAS</code>/<code class="k">RD_MACB</code> drains, GB refills and row activations by 26 &mdash; the overhead terms that were 54% of the stock layer (Part III &sect;8) &mdash; and because 26 is exactly the tokens one channel group owns, so no slot is ever padded.</p>
+      <div class="callout win"><b>Two costs, priced separately &mdash; and the cheap one carries most of the win.</b> The <i>storage</i> additions (32 B accumulator file per bank + <code class="k">RD_MACB</code> + the GB tile, ~1% of die) eliminate the WR_BIAS/RD_MAC/TMOD/row-thrash storm all by themselves: <b>3.5&times; over stock with zero added multipliers</b>, and 16.7&times; over today&rsquo;s measured stack. Widening the array is an <i>option</i>, not part of the design: 2&times; already clears the realistic XPU bound (1.10&times;) and 4&times; reaches 1.38&times;, but &sect;8 shows the end-to-end gap between 16 and 64 lanes is only 1.02&times; &mdash; once the expert is overlapped it is off the critical path, so paying 4&times; the multiplier area for 2% of system throughput is a poor trade. Feasibility: P3-LLM&rsquo;s synthesis takes the same 16&rarr;64 multiplier step for <b>+9% of PCU area</b> (7.7&rarr;8.4 mm&sup2;) &mdash; the multiplier array is not the dominant PCU term; their larger +17.5% total comes from format decoders and register files that we do <i>not</i> add. Samsung&rsquo;s Aquabolt-XL fabbed a far heavier per-bank <i>programmable</i> PCU (CRF/GRF/SRF) in HBM2 at only <b>+5.4% device power</b>. Our deltas keep AiM&rsquo;s philosophy: no cell-array or sense-amp changes, no programmable control, no numeric-format change, ISR-only interface extension. LPDDR-specific risk: mobile thermal may cap the PU clock &mdash; at 500 MHz the 64-lane point degrades to the 32-lane row above.</div>
 
       <h3>What each piece of the fix removes</h3>
       <div class="scroll">
       <table>
-        <thead><tr><th>Per channel, per layer (16 ch)</th><th class="num">stock</th><th class="num">P1 + P4 + P7 + dedup + tp2</th><th class="num">&divide;</th><th>removed by</th></tr></thead>
+        <thead><tr><th>Per channel, per layer (16 ch)</th><th class="num">stock</th><th class="num">P1 + P4 + P7 + dedup + tp2, V = 26</th><th class="num">&divide;</th><th>removed by</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">MAC column commands (MAC16)</td><td class="num">263,976</td><td class="num">19,782</td><td class="num"><b>13.3&times;</b></td><td><b>P1</b>: 16 tokens per fetch (&divide;16, minus tile padding 64/51)</td></tr>
-          <tr><td class="rowlabel">in-bank weight traffic</td><td class="num">135 MB</td><td class="num">10.1 MB</td><td class="num"><b>13.3&times;</b></td><td><b>P1</b>: weights fetched 4&times; per layer instead of 63&times;</td></tr>
-          <tr><td class="rowlabel">GB column writes (WRGB)</td><td class="num">120,360</td><td class="num">27,824</td><td class="num">4.3&times;</td><td><b>P1</b> (tile filled once per K-chunk, not per row-group) + <b>dedup</b> (Q/KV, gate/up share a tile) + <b>tp2</b> (each channel group takes half the tokens)</td></tr>
-          <tr><td class="rowlabel">TMOD mode switches</td><td class="num">10,945</td><td class="num">791</td><td class="num">13.8&times;</td><td><b>P1</b>: two per (16 tokens, row-group) instead of two per (token, row-group)</td></tr>
-          <tr><td class="rowlabel">row switches (PREA)</td><td class="num">5,113</td><td class="num">389</td><td class="num">13.1&times;</td><td><b>P1</b>: a row is opened once per 16 tokens</td></tr>
-          <tr><td class="rowlabel">blocking drains</td><td class="num">4,590 (16 results each)</td><td class="num">762 (256 results each)</td><td class="num">6.0&times;</td><td><b>P1</b> <code class="k">RD_MACB</code>: one stall per 16 tokens; each moves 16&times; the data</td></tr>
-          <tr><td class="rowlabel">ISR lines from the host</td><td class="num">17,717 (6 launches)</td><td class="num">3,537 (1 launch)</td><td class="num">5.0&times;</td><td><b>P1</b> (fewer commands) + <b>P7</b> <code class="k">WR_TILE</code> (880 &rarr; 2 lines) + <b>P4</b> <code class="k">LOOP</code> (one launch per layer)</td></tr>
-          <tr><td class="rowlabel">simulated cycles</td><td class="num">2,283,344</td><td class="num">350,371</td><td class="num">6.5&times;</td><td>everything above</td></tr>
-          <tr><td class="rowlabel">AiM time per layer (with PU occupancy)</td><td class="num">1.427 ms</td><td class="num">0.486 ms</td><td class="num"><b>2.9&times;</b></td><td>the 16 beats are charged: +21.6 cycles per MV column</td></tr>
-          <tr><td class="rowlabel"><b>AE step, 16 channels, N = 4</b></td><td class="num"><b>28.55 ms</b></td><td class="num"><b>8.15 ms</b></td><td class="num"><b>2.9&times;</b></td><td>18 layers &times; (AiM + host segments); host launch once per layer (P4)</td></tr>
+          <tr><td class="rowlabel">MAC column commands (MAC16)</td><td class="num">263,976</td><td class="num">10,224</td><td class="num"><b>25.8&times;</b></td><td><b>P1</b>: 26 tokens per fetch (&divide;26, minus tile padding 52/51)</td></tr>
+          <tr><td class="rowlabel">in-bank weight traffic</td><td class="num">135 MB</td><td class="num">5.2 MB</td><td class="num"><b>25.8&times;</b></td><td><b>P1</b>: weights fetched &asymp;2&times; per layer instead of 63&times;</td></tr>
+          <tr><td class="rowlabel">GB column writes (WRGB)</td><td class="num">120,360</td><td class="num">27,824</td><td class="num">4.3&times;</td><td><b>P1</b> (tile filled once per K-chunk, not per row-group) + <b>dedup</b> (Q/KV, gate/up share a tile) + <b>tp2</b> (each channel group takes half the tokens) &mdash; &sect;6</td></tr>
+          <tr><td class="rowlabel">TMOD mode switches</td><td class="num">10,945</td><td class="num">430</td><td class="num">25.5&times;</td><td><b>P1</b>: two per (26 tokens, row-group) instead of two per (token, row-group)</td></tr>
+          <tr><td class="rowlabel">row switches (PREA)</td><td class="num">5,113</td><td class="num">208</td><td class="num">24.6&times;</td><td><b>P1</b>: a row is opened once per 26 tokens</td></tr>
+          <tr><td class="rowlabel">blocking drains</td><td class="num">4,590 (16 results each)</td><td class="num">408 (416 results each)</td><td class="num">11.3&times;</td><td><b>P1</b> <code class="k">RD_MACB</code>: one stall per 26 tokens; each moves 26&times; the data</td></tr>
+          <tr><td class="rowlabel">ISR lines from the host</td><td class="num">17,717 (6 launches)</td><td class="num">2,475 (1 launch)</td><td class="num">7.2&times;</td><td><b>P1</b> (fewer commands) + <b>P7</b> <code class="k">WR_TILE</code> (880 &rarr; 2 lines) + <b>P4</b> <code class="k">LOOP</code> (one launch per layer) &mdash; &sect;3</td></tr>
+          <tr><td class="rowlabel">simulated cycles</td><td class="num">2,283,344</td><td class="num">249,117</td><td class="num">9.2&times;</td><td>everything above</td></tr>
+          <tr><td class="rowlabel">AiM time per layer (with PU occupancy)</td><td class="num">1.427 ms</td><td class="num">0.396 ms</td><td class="num"><b>3.6&times;</b></td><td>the 26 beats are charged: +37.6 cycles per MV column</td></tr>
+          <tr><td class="rowlabel"><b>AE step, 16 channels, N = 4</b></td><td class="num"><b>28.55 ms</b></td><td class="num"><b>8.15 ms</b></td><td class="num"><b>3.5&times;</b></td><td>18 layers &times; (AiM + host segments); host launch once per layer (P4)</td></tr>
         </tbody>
       </table>
       </div>
-      <p class="cap">Counters: <code class="k">sim_cache.json[layer_a_only_c16]</code> and <code class="k">sim_cache_paper.json[layer_ext_afree64_c16]</code>; totals summed over channels and divided by 16. Hardware added: 30 KB of GB SRAM per channel, 32 B of accumulator file per bank plus a select mux, a decode entry for <code class="k">RD_MACB</code>/<code class="k">WR_TILE</code>, and a KB-scale macro buffer in the SoC&rsquo;s memory controller for <code class="k">LOOP</code>. No multiplier, no clock change (Part IV &sect;2 prices it).</p>
+      <p class="cap">Counters: <code class="k">sim_cache.json[layer_a_only_c16]</code> and <code class="k">sim_cache_paper.json[layer_ext_afree64_v26_c16]</code>; totals summed over channels and divided by 16. Hardware added: a 26-vector GB tile (52 KB per channel suffices &mdash; 8.19 ms; the 64-vector 128 KB tile measured on this page is 8.15), 52 B of accumulator file per bank plus a select mux, a decode entry for <code class="k">RD_MACB</code>/<code class="k">WR_TILE</code>, and a KB-scale macro buffer in the SoC&rsquo;s memory controller for <code class="k">LOOP</code>. No multiplier, no clock change (Part IV &sect;2 prices it).</p>
 
-      <div class="callout win"><b>Why it is efficient, in the terms of Part III &sect;1.</b> LPDDR5 is a one-column-per-4-cycles machine, and AiM turns each column slot into 16 banks&rsquo; worth of work. Stock AiM spent that 16&times; on redundancy: the 16 columns fetched in a slot are new weights, but the same 16 are fetched again for each of the 51 tokens (63&times; per layer once attention&rsquo;s K/V re-reads are counted), so only one byte in 63 of the channel&rsquo;s 204.8 GB/s internal traffic is a <i>new</i> weight byte &mdash; about 3.3 GB/s of unique weights per channel, a quarter of what the 12.8 GB/s external pins stream to a GPU that reuses each weight from cache across all 51 tokens. On top of that it paid 54 % of the layer around each single-token fetch: 21 % loading vectors and 33 % in mode switches, row switches and drains. P1 makes each column slot serve 16 tokens &mdash; so the 16&times; internal bandwidth is finally spent on <i>different</i> work &mdash; and, as a side effect, divides every per-fetch overhead by 16. What remains (the activation broadcast through the external pins, the PU&rsquo;s 16 beats) is the true cost of the workload, and Part IV &sect;6&ndash;8 shows how far it can still be pushed.</div>
+      <div class="callout win"><b>Why it is efficient, in the terms of Part III &sect;1.</b> LPDDR5 is a one-column-per-4-cycles machine, and AiM turns each column slot into 16 banks&rsquo; worth of work. Stock AiM spent that 16&times; on redundancy: the 16 columns fetched in a slot are new weights, but the same 16 are fetched again for each of the 51 tokens (63&times; per layer once attention&rsquo;s K/V re-reads are counted), so only one byte in 63 of the channel&rsquo;s 204.8 GB/s internal traffic is a <i>new</i> weight byte &mdash; about 3.3 GB/s of unique weights per channel, a quarter of what the 12.8 GB/s external pins stream to a GPU that reuses each weight from cache across all 51 tokens. On top of that it paid 54 % of the layer around each single-token fetch: 21 % loading vectors and 33 % in mode switches, row switches and drains. P1 makes each column slot serve 26 tokens &mdash; so the 16&times; internal bandwidth is finally spent on <i>different</i> work &mdash; and, as a side effect, divides every per-fetch overhead by 26. What remains (the activation broadcast through the external pins, the PU&rsquo;s 26 beats) is the true cost of the workload, and Part IV &sect;6&ndash;8 shows how far it can still be pushed.</div>
     </section>
 
 
     <section class="card" id="rest">
-      <h2><span class="num">3</span>P4, P3, P7, P8 &mdash; the supporting cast</h2>
-      <h3>P4 &mdash; <code class="k">LOOP n &hellip; ENDLOOP</code> controller macros</h3>
-      <p>Samsung&rsquo;s HBM-PIM stores micro-kernels in a command register file and replays them with a zero-cycle JUMP; we add the trace-level equivalent: the controller expands a buffered ISR block n times with <b>zero per-iteration host issue</b>. Command issue timing is unchanged by design (the DMA still paces one command per cycle, exactly as a controller draining its macro buffer would) &mdash; verified: a 10&times;-unrolled body and its LOOP form simulate to the identical 6,644 cycles. What changes: a layer shrinks from 17.7 k host ISRs to ~2.5 k (7&times;), launch overhead amortizes once per layer instead of once per host segment, and a self-running denoising step (with an Euler MAD at the DMA) becomes plausible.</p>
+      <h2><span class="num">3</span>P4 &mdash; <code class="k">LOOP n &hellip; ENDLOOP</code>: the host issues a layer once &mdash; plus the supporting cast (P3, P7, P8)</h2>
+      <p class="lead">P1 fixed what happens <i>inside</i> the DRAM. Someone still has to <i>send</i> the commands, and that is the host. P4 takes the host out of the loop.</p>
+
+      <h3>The problem P4 solves</h3>
+      <p>Every time the host hands the memory controller a batch of ISRs it pays a <b>kernel launch</b> &mdash; the driver/dispatch handshake that gets a piece of work started. We charge it at <b>20 &micro;s</b> [assumption, swept 5&ndash;50 &micro;s in Part III]. A layer of the Action Expert alternates between AiM work and small host-side kernels (norms, RoPE, softmax, GeLU&#8857;, residuals), and every host kernel is a <code class="k">SYNC</code> point at which the ISR stream stops and a new launch is needed to restart it:</p>
+      <pre class="cmd"><span class="c">one layer, as the trace is laid out (the six SYNC points are the six host segments)</span>
+SYNC  # HOST: rmsnorm1          &rarr; AiM: q_proj, kv_proj
+SYNC  # HOST: rope              &rarr; AiM: attention (scores, context)
+SYNC  # HOST: softmax           &rarr; AiM: o_proj
+SYNC  # HOST: residual_rmsnorm2 &rarr; AiM: mlp_gate, mlp_up
+SYNC  # HOST: gelu_gate_mul_up  &rarr; AiM: mlp_down
+SYNC  # HOST: residual
+<span class="c"># 6 launches x 20 us = 120 us per layer; x 18 layers = 2.16 ms per step -- 26 % of an 8.15 ms step spent starting things</span></pre>
+      <p>Even with P1, the AiM segments are now so short that this fixed cost stops being noise. It is the second-largest term left after P1 (the ablation in &sect;5: 12.36 &rarr; 10.52 ms when P4 is added).</p>
+
+      <h3>The concept</h3>
+      <p><code class="k">LOOP n &hellip; ENDLOOP</code> marks a block of ISRs that the memory controller <b>buffers</b> in a small macro buffer and <b>replays n times by itself</b>. The host issues the block once &mdash; one launch &mdash; and the controller paces everything after that, including the <code class="k">SYNC</code> points: at each one the DMA blocks, the host&rsquo;s own kernel runs, and the controller resumes the block without the host re-issuing anything. Samsung&rsquo;s HBM-PIM stores micro-kernels in a command register file and replays them with a zero-cycle <code class="k">JUMP</code>; P4 is the trace-level equivalent, but with one difference that matters: Samsung&rsquo;s CRF amortizes instruction <i>storage</i> while every non-<code class="k">JUMP</code> instruction still costs one host column command, whereas P4 removes the host from the loop entirely (Part III-2 &sect;2).</p>
+      <div class="fig">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Block diagram, stock issue path versus P4. Stock: the host issues six launches per layer into the memory controller frontend, which decodes one ISR per cycle into the sixteen channels. P4: the host issues one launch containing LOOP, the layer body and ENDLOOP; the controller frontend captures the body into a kilobyte-scale macro buffer and replays it n times through the same one-ISR-per-cycle DMA, unchanged.">
+          <defs>
+            <marker id="arrP4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- STOCK -->
+          <text x="14" y="24" font-size="12" font-weight="bold" fill="#b54708">STOCK: the host restarts the stream at every SYNC</text>
+          <rect x="14" y="38" width="412" height="58" rx="7" fill="#fff" stroke="#d8dee8"/>
+          <text x="24" y="56" font-size="9.5" font-weight="bold" fill="#172033">host (GPU driver / issue queue)</text>
+          <g font-size="7.5" fill="#fff">
+            <rect x="24" y="64" width="60" height="22" rx="4" fill="#b54708"/><text x="54" y="78" text-anchor="middle">launch 1</text>
+            <rect x="90" y="64" width="60" height="22" rx="4" fill="#b54708"/><text x="120" y="78" text-anchor="middle">launch 2</text>
+            <rect x="156" y="64" width="60" height="22" rx="4" fill="#b54708"/><text x="186" y="78" text-anchor="middle">launch 3</text>
+            <rect x="222" y="64" width="60" height="22" rx="4" fill="#b54708"/><text x="252" y="78" text-anchor="middle">launch 4</text>
+            <rect x="288" y="64" width="60" height="22" rx="4" fill="#b54708"/><text x="318" y="78" text-anchor="middle">launch 5</text>
+            <rect x="354" y="64" width="60" height="22" rx="4" fill="#b54708"/><text x="384" y="78" text-anchor="middle">launch 6</text>
+          </g>
+          <line x1="220" y1="96" x2="220" y2="126" stroke="#b54708" stroke-width="1.4" marker-end="url(#arrP4)"/>
+          <text x="230" y="116" font-size="8.5" fill="#b54708" font-weight="bold">6 x 20 &micro;s per layer</text>
+          <rect x="14" y="128" width="412" height="58" rx="7" fill="#fff" stroke="#d8dee8"/>
+          <text x="24" y="146" font-size="9.5" font-weight="bold" fill="#172033">memory controller frontend</text>
+          <text x="24" y="162" font-size="8.5" fill="#647083">AiM FIFO (strict order) &middot; DMA decodes <tspan font-weight="bold">1 ISR / cycle</tspan> &middot; opsize unrolled into per-column requests</text>
+          <text x="24" y="176" font-size="8.5" fill="#647083">stream empties at each SYNC &rarr; waits for the next launch</text>
+          <line x1="220" y1="186" x2="220" y2="216" stroke="#647083" stroke-width="1.4" marker-end="url(#arrP4)"/>
+          <g font-size="7" fill="#172033">
+            <rect x="14" y="218" width="412" height="44" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="24" y="234" font-size="9.5" font-weight="bold">16 LPDDR5-AiM channels</text>
+            <rect x="24" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/><rect x="48" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/><rect x="72" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/><rect x="96" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/>
+            <rect x="120" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/><rect x="144" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/><rect x="168" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/><rect x="192" y="242" width="20" height="12" fill="#f1f4f9" stroke="#d8dee8"/>
+            <text x="222" y="252" font-size="8" fill="#647083">&hellip; &times;16, each with 16 banks + PU + GB</text>
+          </g>
+          <text x="14" y="286" font-size="10.5" font-weight="bold" fill="#b54708">2.16 ms per step is launch overhead</text>
+          <!-- divider -->
+          <line x1="450" y1="14" x2="450" y2="290" stroke="#d8dee8" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <!-- P4 -->
+          <text x="474" y="24" font-size="12" font-weight="bold" fill="#1a7f37">P4: the host issues once; the controller replays</text>
+          <rect x="474" y="38" width="412" height="58" rx="7" fill="#fff" stroke="#d8dee8"/>
+          <text x="484" y="56" font-size="9.5" font-weight="bold" fill="#172033">host</text>
+          <rect x="484" y="64" width="300" height="22" rx="4" fill="#1a7f37"/>
+          <text x="634" y="78" text-anchor="middle" font-size="7.5" fill="#fff">launch 1:  LOOP n  +  whole layer body  +  ENDLOOP</text>
+          <line x1="680" y1="96" x2="680" y2="126" stroke="#1a7f37" stroke-width="1.4" marker-end="url(#arrP4)"/>
+          <text x="690" y="116" font-size="8.5" fill="#1a7f37" font-weight="bold">1 x 20 &micro;s per layer</text>
+          <rect x="474" y="128" width="412" height="78" rx="7" fill="#fff" stroke="#d8dee8"/>
+          <text x="484" y="146" font-size="9.5" font-weight="bold" fill="#172033">memory controller frontend</text>
+          <rect x="484" y="154" width="170" height="44" rx="5" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="569" y="169" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#1a7f37">macro buffer (KB SRAM)</text>
+          <text x="569" y="182" text-anchor="middle" font-size="7.5" fill="#172033">holds the LOOP body</text>
+          <text x="569" y="193" text-anchor="middle" font-size="7.5" fill="#172033">replay counter: n</text>
+          <text x="664" y="169" font-size="8.5" fill="#647083">&rarr; same AiM FIFO</text>
+          <text x="664" y="182" font-size="8.5" fill="#647083">&rarr; DMA still <tspan font-weight="bold">1 ISR / cycle</tspan></text>
+          <text x="664" y="195" font-size="8.5" fill="#647083">&rarr; SYNC: block, host kernel, resume</text>
+          <line x1="680" y1="206" x2="680" y2="226" stroke="#647083" stroke-width="1.4" marker-end="url(#arrP4)"/>
+          <g font-size="7" fill="#172033">
+            <rect x="474" y="228" width="412" height="34" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="484" y="244" font-size="9.5" font-weight="bold">16 LPDDR5-AiM channels &mdash; see an identical command stream</text>
+            <text x="484" y="256" font-size="8" fill="#647083">timing-neutral: LOOP form and unrolled form simulate to the same cycle count</text>
+          </g>
+          <text x="474" y="286" font-size="10.5" font-weight="bold" fill="#1a7f37">0.36 ms per step &mdash; the macro buffer lives in the SoC, not in the DRAM</text>
+        </svg>
+        <div class="cap">Fig. 3a &mdash; Where P4 lives. Nothing on the DRAM die changes; the macro buffer is KB-scale SRAM in the SoC&rsquo;s memory controller. The channels cannot tell whether the stream came from the host or from the buffer.</div>
+      </div>
+
+      <h3>Step by step: one layer under P4</h3>
+      <ol class="notes" style="padding-left:22px;">
+        <li><b>Issue once.</b> The host writes <code class="k">LOOP n</code>, the layer&rsquo;s ISR body and <code class="k">ENDLOOP</code> into the controller &mdash; one launch, 20 &micro;s.</li>
+        <li><b>Capture.</b> The controller frontend copies every line between <code class="k">LOOP</code> and <code class="k">ENDLOOP</code> into the macro buffer (in the simulator: load-time expansion in the trace frontend, <code class="k">m_lines</code>). Nesting is rejected; an <code class="k">EOC</code> inside a body is rejected.</li>
+        <li><b>Replay.</b> For each of the n iterations the DMA reads the body line by line at one ISR per cycle &mdash; exactly the pace a host-fed FIFO had. Column unrolling, preconditions (ACT/PRE), <code class="k">TMOD</code> guards: all unchanged.</li>
+        <li><b>SYNC inside the body.</b> The DMA blocks, the host&rsquo;s kernel (norm, RoPE, softmax, GeLU&#8857;) runs on its own data, then the controller continues from the next buffered line. The host does not re-issue the stream; it only signals completion.</li>
+        <li><b>Done.</b> After the n-th <code class="k">ENDLOOP</code> the frontend falls through to the lines after the block (<code class="k">EOC</code>).</li>
+      </ol>
+      <div class="fig">
+        <svg viewBox="0 0 900 200" role="img" aria-label="Two timelines of one layer, not to scale. Stock: six repetitions of launch 20 microseconds, host kernel, AiM segment. P4: one launch of 20 microseconds followed by the whole layer body, with host kernels running at the SYNC points inside it; per-layer launch cost drops from 120 to 20 microseconds.">
+          <text x="14" y="22" font-size="11" font-weight="bold" fill="#b54708">STOCK &mdash; one layer: 6 launches</text>
+          <g font-size="7.5">
+            <rect x="14" y="30" width="34" height="26" fill="#b54708"/><text x="31" y="46" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="48" y="30" width="46" height="26" fill="#d8dee8"/><text x="71" y="46" text-anchor="middle" fill="#172033">rmsnorm</text>
+            <rect x="94" y="30" width="60" height="26" fill="#1f6feb"/><text x="124" y="46" text-anchor="middle" fill="#fff">q/kv AiM</text>
+            <rect x="154" y="30" width="34" height="26" fill="#b54708"/><text x="171" y="46" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="188" y="30" width="40" height="26" fill="#d8dee8"/><text x="208" y="46" text-anchor="middle" fill="#172033">rope</text>
+            <rect x="228" y="30" width="80" height="26" fill="#1f6feb"/><text x="268" y="46" text-anchor="middle" fill="#fff">attention AiM</text>
+            <rect x="308" y="30" width="34" height="26" fill="#b54708"/><text x="325" y="46" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="342" y="30" width="46" height="26" fill="#d8dee8"/><text x="365" y="46" text-anchor="middle" fill="#172033">softmax</text>
+            <rect x="388" y="30" width="56" height="26" fill="#1f6feb"/><text x="416" y="46" text-anchor="middle" fill="#fff">o_proj</text>
+            <rect x="444" y="30" width="34" height="26" fill="#b54708"/><text x="461" y="46" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="478" y="30" width="46" height="26" fill="#d8dee8"/><text x="501" y="46" text-anchor="middle" fill="#172033">rmsnorm</text>
+            <rect x="524" y="30" width="72" height="26" fill="#1f6feb"/><text x="560" y="46" text-anchor="middle" fill="#fff">gate/up AiM</text>
+            <rect x="596" y="30" width="34" height="26" fill="#b54708"/><text x="613" y="46" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="630" y="30" width="46" height="26" fill="#d8dee8"/><text x="653" y="46" text-anchor="middle" fill="#172033">GeLU&#8857;</text>
+            <rect x="676" y="30" width="60" height="26" fill="#1f6feb"/><text x="706" y="46" text-anchor="middle" fill="#fff">down AiM</text>
+            <rect x="736" y="30" width="34" height="26" fill="#b54708"/><text x="753" y="46" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="770" y="30" width="46" height="26" fill="#d8dee8"/><text x="793" y="46" text-anchor="middle" fill="#172033">residual</text>
+          </g>
+          <text x="14" y="74" font-size="9" fill="#b54708">6 &times; 20 &micro;s = <tspan font-weight="bold">120 &micro;s of launch per layer</tspan>; the stream stops dead at every SYNC until the host restarts it</text>
+
+          <text x="14" y="108" font-size="11" font-weight="bold" fill="#1a7f37">P4 &mdash; one layer: 1 launch, the controller paces the rest</text>
+          <g font-size="7.5">
+            <rect x="14" y="116" width="34" height="26" fill="#1a7f37"/><text x="31" y="132" text-anchor="middle" fill="#fff">launch</text>
+            <rect x="48" y="116" width="838" height="26" fill="none" stroke="#1a7f37" stroke-dasharray="4 3"/>
+            <text x="467" y="112" text-anchor="middle" font-size="8" fill="#1a7f37" font-weight="bold">LOOP 1 &hellip; ENDLOOP: the whole layer, from the macro buffer</text>
+            <rect x="52" y="120" width="46" height="18" fill="#d8dee8"/><text x="75" y="132" text-anchor="middle" fill="#172033">rmsnorm</text>
+            <rect x="98" y="120" width="70" height="18" fill="#1f6feb"/><text x="133" y="132" text-anchor="middle" fill="#fff">q/kv AiM</text>
+            <rect x="168" y="120" width="40" height="18" fill="#d8dee8"/><text x="188" y="132" text-anchor="middle" fill="#172033">rope</text>
+            <rect x="208" y="120" width="96" height="18" fill="#1f6feb"/><text x="256" y="132" text-anchor="middle" fill="#fff">attention AiM</text>
+            <rect x="304" y="120" width="46" height="18" fill="#d8dee8"/><text x="327" y="132" text-anchor="middle" fill="#172033">softmax</text>
+            <rect x="350" y="120" width="66" height="18" fill="#1f6feb"/><text x="383" y="132" text-anchor="middle" fill="#fff">o_proj</text>
+            <rect x="416" y="120" width="46" height="18" fill="#d8dee8"/><text x="439" y="132" text-anchor="middle" fill="#172033">rmsnorm</text>
+            <rect x="462" y="120" width="90" height="18" fill="#1f6feb"/><text x="507" y="132" text-anchor="middle" fill="#fff">gate/up AiM</text>
+            <rect x="552" y="120" width="46" height="18" fill="#d8dee8"/><text x="575" y="132" text-anchor="middle" fill="#172033">GeLU&#8857;</text>
+            <rect x="598" y="120" width="70" height="18" fill="#1f6feb"/><text x="633" y="132" text-anchor="middle" fill="#fff">down AiM</text>
+            <rect x="668" y="120" width="46" height="18" fill="#d8dee8"/><text x="691" y="132" text-anchor="middle" fill="#172033">residual</text>
+            <text x="724" y="132" font-size="8" fill="#1a7f37">&larr; SYNC points: host kernel, then resume</text>
+          </g>
+          <text x="14" y="160" font-size="9" fill="#1a7f37">1 &times; 20 &micro;s = <tspan font-weight="bold">20 &micro;s per layer</tspan>; the AiM segments themselves are cycle-identical to the stock-issued ones</text>
+          <text x="14" y="184" font-size="8.5" fill="#647083">Not to scale. Grey = host kernel on the XPU, blue = AiM ISR segment, orange/green = kernel launch (20 &micro;s each).</text>
+        </svg>
+        <div class="cap">Fig. 3b &mdash; The same layer, issued two ways. P4 does not shorten any AiM segment; it removes five of the six launches per layer.</div>
+      </div>
+
+      <h3>Example: the real trace</h3>
+      <p>In our layer traces the <i>whole layer</i> is one macro block with n = 1. The point is not the replay count; it is that the host hands the controller the entire layer&rsquo;s stream in one launch and the 18-layer step is charged one launch per layer in the composition. The replay semantics themselves are checked by the unit pair below.</p>
+      <pre class="cmd"><span class="c"># layer_ext_afree64_v26_c16.trace — 2,475 host ISR lines wrapped in one macro</span>
+AiM LOOP 1                        <span class="c"># the whole layer is one controller macro block</span>
+AiM SYNC                          <span class="c"># HOST: rmsnorm1 — the host kernel runs here, then the block resumes</span>
+AiM WR_GB 64 0 0xff               <span class="c"># q_proj: tile fill, group 0 …</span>
+AiM WR_GB 64 0 0xff00             <span class="c"># … interleaved with group 1 (§6)</span>
+  &hellip;
+AiM WR_BIAS 0 0xff00
+AiM MAC_ABK_MV 64 0xff00 100
+AiM RD_MACB 26 0 0xff00
+  &hellip;
+AiM SYNC                          <span class="c"># HOST: rope</span>
+  &hellip;                             <span class="c"># attention, softmax, o_proj, rmsnorm2, gate/up, GeLU⊙, down</span>
+AiM SYNC                          <span class="c"># HOST: residual</span>
+AiM ENDLOOP
+AiM EOC
+
+<span class="c"># unit check, test/vla_ext/: the same 2-ISR body as LOOP 10 and unrolled x10 → identical 6,644 cycles</span>
+AiM LOOP 10
+AiM MAC_ABK 64 0xffff 0
+AiM COPY_BKGB 64 0xffff 0 100
+AiM ENDLOOP</pre>
+
+      <h3>Pseudo-code, before and after</h3>
+      <pre class="cmd"><span class="c">BEFORE — one launch per host segment (the composition counts one per SYNC)</span>
+for layer in 0..17:
+    for seg in [rmsnorm1, rope, softmax, residual_rmsnorm2, gelu_gate_mul_up, residual]:
+        launch(seg)                        <span class="c"># 20 µs driver/dispatch</span>
+        run host kernel(seg)               <span class="c"># its own compute, charged separately</span>
+        issue the AiM ISRs that follow it  <span class="c"># WR_GB / WR_BIAS / MAC_ABK_MV / RD_MACB …</span>
+<span class="c"># 6 launches x 18 layers x 20 µs = 2.16 ms per step</span></pre>
+      <pre class="cmd"><span class="c">AFTER (P4) — one launch per layer; the controller owns the stream</span>
+for layer in 0..17:
+    launch( LOOP 1 { SYNC; &lt;q/kv ISRs&gt;; SYNC; &lt;attention ISRs&gt;; SYNC; &lt;o_proj&gt;;
+                     SYNC; &lt;gate/up&gt;; SYNC; &lt;down&gt;; SYNC } )        <span class="c"># 20 µs, once</span>
+    <span class="c"># controller replays the block; at each SYNC the host kernel runs, then the block resumes</span>
+<span class="c"># 1 launch x 18 layers x 20 µs = 0.36 ms per step</span></pre>
+
+      <h3>What it costs, what it buys</h3>
+      <ul class="notes">
+        <li><b>Hardware:</b> a macro buffer sized for the largest loop body &mdash; KB-scale SRAM in the SoC&rsquo;s memory controller, <b>nothing on the DRAM die</b>. Two decode rules: no nesting; <code class="k">EOC</code> inside a body is rejected at load.</li>
+        <li><b>Timing-neutral in the memory system.</b> The DMA still decodes one ISR per cycle; the channels see a byte-identical stream. Verified: a 10&times;-unrolled body and its <code class="k">LOOP</code> form simulate to the identical 6,644 cycles.</li>
+        <li><b>Host stream:</b> 17,717 &rarr; 2,475 ISR lines per layer (7.2&times;). Most of that shrink is P1 issuing fewer commands; P4 is what lets one launch carry them.</li>
+        <li><b>Measured:</b> 12.36 &rarr; 10.52 ms per step at 16 channels when P4 is added on top of P1 (&sect;5) &mdash; 1.17&times;, for zero DRAM change and no arithmetic. Sensitivity to the launch assumption is in Part III (5 &rarr; 50 &micro;s).</li>
+        <li><b>Opens a door:</b> with the host out of the issue loop, a self-running denoising step (an Euler update at the DMA) becomes plausible &mdash; not evaluated here.</li>
+      </ul>
+
+      <h3>The supporting cast</h3>
       <h3>P3 &mdash; per-channel mode partition (CFR 3)</h3>
       <p>A 32-bit mask CFR marks each channel AiM-mode or conventional-mode, scoping Part III&rsquo;s mutual exclusion to within a partition. Its value is not layer latency &mdash; it is the <b>enabler for &sect;8</b>: streaming next-observation KV into masked channels while the others denoise, and letting the XPU use idle AiM capacity as ordinary memory.</p>
       <h3>P7 &mdash; <code class="k">WR_TILE</code> descriptors</h3>
@@ -757,11 +946,162 @@ AF_SCALED 0xffff              <span class="c"># x * (1/sum) applied at context o
     <section class="card" id="bcast">
       <h2><span class="num">6</span>The last bottleneck: activation broadcast &mdash; and its sweet spot</h2>
       <p class="lead">After P1+P4+P7, the layer profile flips: <b>WR_GB activation streaming dominates at 61% of the AiM layer &mdash; and it does not scale with channel count</b>, because the same token tile is broadcast serially into every channel&rsquo;s GB through its 12.8 GB/s port. The bound is physical: you can only (a) send fewer bytes, (b) send <i>different</i> bytes to different channels, or (c) add GB write ports (hardware).</p>
-      <h3>Two software fixes, measured</h3>
+      <h3>SW &mdash; the two fixes, as a block diagram</h3>
+      <p><b>&ldquo;SW&rdquo; means software:</b> no hardware is added or changed. Both fixes are decisions about <i>which command stream the trace generator emits</i>. They attack the same physical fact &mdash; the activation tile enters each channel&rsquo;s GB through that channel&rsquo;s own 12.8 GB/s pins, one 32 B vector per <code class="k">WR_GB</code> column &mdash; from two sides: <b>dedup</b> sends the tile fewer times, <b>token-parallel</b> sends each channel a smaller tile.</p>
+      <div class="fig">
+        <svg viewBox="0 0 900 330" role="img" aria-label="Block diagram, before and after the software fixes. Before: one 51-token activation tile is written into all sixteen channels' Global Buffers, and written again for the next projection that reads the same input. After: channels 0 to 7 form group 0 and receive tokens 0 to 25, channels 8 to 15 form group 1 and receive tokens 26 to 50; each group holds its own full copy of the weights; the tile stays resident so kv_proj reads it without a second fill.">
+          <defs>
+            <marker id="arrSW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#647083"/>
+            </marker>
+          </defs>
+          <!-- BEFORE -->
+          <text x="14" y="24" font-size="12" font-weight="bold" fill="#b54708">BEFORE: every channel gets every token, every op</text>
+          <rect x="14" y="36" width="412" height="40" rx="7" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="220" y="52" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">host: normalized activation tile x&#770; &nbsp;[51 tokens &times; 1024]</text>
+          <text x="220" y="67" text-anchor="middle" font-size="8" fill="#647083">q_proj needs it &middot; kv_proj needs the SAME tile &middot; gate needs x&#770;&#8322; &middot; up needs the SAME x&#770;&#8322;</text>
+          <g stroke="#b54708" stroke-width="1.2" marker-end="url(#arrSW)">
+            <line x1="60" y1="76" x2="40" y2="104"/><line x1="120" y1="76" x2="115" y2="104"/><line x1="220" y1="76" x2="220" y2="104"/><line x1="320" y1="76" x2="325" y2="104"/><line x1="380" y1="76" x2="400" y2="104"/>
+          </g>
+          <text x="440" y="94" font-size="8" fill="#b54708" font-weight="bold" text-anchor="end">51 WR_GB &times; 16 channels</text>
+          <g font-size="7" fill="#172033">
+            <rect x="14" y="106" width="412" height="96" rx="7" fill="#fff" stroke="#d8dee8"/>
+            <text x="24" y="122" font-size="9.5" font-weight="bold">16 channels &mdash; one group, mask 0xffff</text>
+            <rect x="24" y="130" width="46" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="47" y="142" text-anchor="middle">ch 0</text><text x="47" y="153" text-anchor="middle" fill="#b54708">GB: 51 vec</text>
+            <rect x="74" y="130" width="46" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="97" y="142" text-anchor="middle">ch 1</text><text x="97" y="153" text-anchor="middle" fill="#b54708">GB: 51 vec</text>
+            <rect x="124" y="130" width="46" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="147" y="142" text-anchor="middle">ch 2</text><text x="147" y="153" text-anchor="middle" fill="#b54708">GB: 51 vec</text>
+            <text x="190" y="149" font-size="9" fill="#647083">&hellip;</text>
+            <rect x="210" y="130" width="46" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="233" y="142" text-anchor="middle">ch 13</text><text x="233" y="153" text-anchor="middle" fill="#b54708">GB: 51 vec</text>
+            <rect x="260" y="130" width="46" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="283" y="142" text-anchor="middle">ch 14</text><text x="283" y="153" text-anchor="middle" fill="#b54708">GB: 51 vec</text>
+            <rect x="310" y="130" width="46" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="333" y="142" text-anchor="middle">ch 15</text><text x="333" y="153" text-anchor="middle" fill="#b54708">GB: 51 vec</text>
+            <text x="24" y="178" font-size="8.5" fill="#172033">weights: <tspan font-weight="bold">one copy</tspan>, striped over all 16 channels (each channel holds 1/16 of every matrix)</text>
+            <text x="24" y="192" font-size="8.5" fill="#b54708">the fill is SERIAL per channel (51 &times; 64 columns through one 12.8 GB/s port) and REPEATED per op</text>
+          </g>
+          <text x="14" y="226" font-size="9" fill="#172033">per channel, q_proj + kv_proj: <tspan font-weight="bold">2 &times; 51 &times; 64 = 6,528</tspan> GB column writes</text>
+          <text x="14" y="242" font-size="9" fill="#172033">per channel, per layer: <tspan font-weight="bold">120,360</tspan> (stock) &rarr; 61 % of the AiM layer after P1+P4+P7</text>
+          <text x="14" y="270" font-size="10.5" font-weight="bold" fill="#b54708">does not shrink with more channels: each new channel</text>
+          <text x="14" y="284" font-size="10.5" font-weight="bold" fill="#b54708">still needs the whole tile through its own pins</text>
+          <!-- divider -->
+          <line x1="450" y1="14" x2="450" y2="320" stroke="#d8dee8" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <!-- AFTER -->
+          <text x="474" y="24" font-size="12" font-weight="bold" fill="#1a7f37">AFTER: half the tile per channel, loaded once per input</text>
+          <rect x="474" y="36" width="412" height="40" rx="7" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="577" y="52" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">tokens 0&ndash;25</text>
+          <text x="783" y="52" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#172033">tokens 26&ndash;50</text>
+          <line x1="680" y1="38" x2="680" y2="74" stroke="#1a7f37" stroke-width="1" stroke-dasharray="3 2"/>
+          <text x="680" y="67" text-anchor="middle" font-size="8" fill="#647083">the same x&#770;, split by token</text>
+          <line x1="577" y1="76" x2="577" y2="104" stroke="#1a7f37" stroke-width="1.4" marker-end="url(#arrSW)"/>
+          <line x1="783" y1="76" x2="783" y2="104" stroke="#1a7f37" stroke-width="1.4" marker-end="url(#arrSW)"/>
+          <text x="577" y="96" text-anchor="middle" font-size="8" fill="#1a7f37" font-weight="bold">26 WR_GB &times; 8 ch</text>
+          <text x="783" y="96" text-anchor="middle" font-size="8" fill="#1a7f37" font-weight="bold">25 WR_GB &times; 8 ch</text>
+          <g font-size="7" fill="#172033">
+            <rect x="474" y="106" width="200" height="96" rx="7" fill="#fff" stroke="#1a7f37"/>
+            <text x="484" y="122" font-size="9.5" font-weight="bold">group 0 &mdash; ch 0&ndash;7, mask 0x00ff</text>
+            <rect x="484" y="130" width="42" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="505" y="142" text-anchor="middle">ch 0</text><text x="505" y="153" text-anchor="middle" fill="#1a7f37">GB: 26 vec</text>
+            <rect x="530" y="130" width="42" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="551" y="142" text-anchor="middle">ch 1</text><text x="551" y="153" text-anchor="middle" fill="#1a7f37">GB: 26 vec</text>
+            <text x="588" y="149" font-size="9" fill="#647083">&hellip;</text>
+            <rect x="606" y="130" width="42" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="627" y="142" text-anchor="middle">ch 7</text><text x="627" y="153" text-anchor="middle" fill="#1a7f37">GB: 26 vec</text>
+            <text x="484" y="178" font-size="8.5">weights: <tspan font-weight="bold">replica 0</tspan> (full 623 MB, striped over 8 ch)</text>
+            <text x="484" y="192" font-size="8.5" fill="#1a7f37">computes all 2,048 outputs for ITS 26 tokens</text>
+            <rect x="686" y="106" width="200" height="96" rx="7" fill="#fff" stroke="#1a7f37"/>
+            <text x="696" y="122" font-size="9.5" font-weight="bold">group 1 &mdash; ch 8&ndash;15, mask 0xff00</text>
+            <rect x="696" y="130" width="42" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="717" y="142" text-anchor="middle">ch 8</text><text x="717" y="153" text-anchor="middle" fill="#1a7f37">GB: 25 vec</text>
+            <rect x="742" y="130" width="42" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="763" y="142" text-anchor="middle">ch 9</text><text x="763" y="153" text-anchor="middle" fill="#1a7f37">GB: 25 vec</text>
+            <text x="800" y="149" font-size="9" fill="#647083">&hellip;</text>
+            <rect x="818" y="130" width="42" height="30" fill="#f1f4f9" stroke="#d8dee8"/><text x="839" y="142" text-anchor="middle">ch 15</text><text x="839" y="153" text-anchor="middle" fill="#1a7f37">GB: 25 vec</text>
+            <text x="696" y="178" font-size="8.5">weights: <tspan font-weight="bold">replica 1</tspan> (another 623 MB)</text>
+            <text x="696" y="192" font-size="8.5" fill="#1a7f37">computes all 2,048 outputs for ITS 25 tokens</text>
+          </g>
+          <rect x="474" y="212" width="412" height="30" rx="5" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="484" y="225" font-size="8.5" font-weight="bold" fill="#1a7f37">dedup:</text>
+          <text x="522" y="225" font-size="8.5" fill="#172033">after q_proj the tile is STILL in the GB &rarr; kv_proj&rsquo;s fill is skipped (fill=False in the trace)</text>
+          <text x="484" y="237" font-size="8" fill="#647083">valid when the whole per-group tile fits (26 &le; cap) and K is one chunk &mdash; q&rarr;kv and gate&rarr;up qualify; o_proj (K=2048) and down (K=4096) do not</text>
+          <text x="474" y="262" font-size="9" fill="#172033">per channel, q_proj + kv_proj: <tspan font-weight="bold">1 &times; 26 &times; 64 = 1,664</tspan> GB column writes (3.9&times; fewer)</text>
+          <text x="474" y="278" font-size="9" fill="#172033">per channel, per layer: <tspan font-weight="bold">27,824</tspan> (4.3&times;); costs 623 MB of a 64 GB pool</text>
+          <text x="474" y="306" font-size="10.5" font-weight="bold" fill="#1a7f37">the two groups fill and compute CONCURRENTLY on their own buses</text>
+        </svg>
+        <div class="cap">Fig. 6a &mdash; The broadcast fix. Token-parallel makes each channel&rsquo;s tile half as long; dedup makes it arrive half as often. Weight replication is the price: memory capacity, which the 64 GB LPDDR pool has to spare.</div>
+      </div>
+
+      <h3>Step by step: q_proj then kv_proj, one layer</h3>
+      <ol class="notes" style="padding-left:22px;">
+        <li><b>Split the tokens, not the outputs.</b> Group 0 (channels 0&ndash;7) owns tokens 0&ndash;25; group 1 (channels 8&ndash;15) owns tokens 26&ndash;50. Each group holds a <i>complete</i> copy of every weight matrix, so each computes all N outputs for its own tokens &mdash; no cross-group reduction is ever needed.</li>
+        <li><b>Fill both GBs at once.</b> The generator builds the two groups&rsquo; command lists separately and <b>round-robin merges</b> them (<code class="k">merge_groups</code>), so the stream alternates <code class="k">0xff</code>, <code class="k">0xff00</code>, <code class="k">0xff</code>, &hellip; The single in-order DMA still issues one ISR per cycle, but consecutive ISRs land on different channel buses, so the two fills proceed concurrently instead of back to back.</li>
+        <li><b>Sweep q_proj</b> in both groups, interleaved the same way: <code class="k">WR_BIAS</code> / <code class="k">MAC_ABK_MV</code> / <code class="k">RD_MACB</code> per row-group, each group against its own replica.</li>
+        <li><b>Do not refill.</b> kv_proj consumes the identical normalized tile. It is still resident in every GB, so its fill is skipped (<code class="k">skip_fill=True</code> &rarr; <code class="k">fill=False</code>) and the sweep starts immediately. The same holds for mlp_gate &rarr; mlp_up.</li>
+        <li><b>Host reassembles by token index.</b> Group 0&rsquo;s results are rows 0&ndash;25 of Y, group 1&rsquo;s are rows 26&ndash;50 &mdash; a placement, not a computation.</li>
+      </ol>
+      <div class="fig">
+        <svg viewBox="0 0 900 190" role="img" aria-label="Two timelines of q_proj followed by kv_proj, not to scale. Before: fill 51 vectors into all channels, q MAC sweep, fill the same 51 vectors again, kv MAC sweep. After: group 0 and group 1 fill 26 and 25 vectors concurrently, both groups sweep q_proj concurrently, then sweep kv_proj with no refill.">
+          <text x="14" y="22" font-size="11" font-weight="bold" fill="#b54708">BEFORE &mdash; one group, every op refills</text>
+          <g font-size="7.5">
+            <rect x="14" y="30" width="200" height="26" fill="#b54708"/><text x="114" y="46" text-anchor="middle" fill="#fff">fill: 51 vec &rarr; all 16 ch (serial per ch)</text>
+            <rect x="214" y="30" width="150" height="26" fill="#1f6feb"/><text x="289" y="46" text-anchor="middle" fill="#fff">q_proj MAC sweep</text>
+            <rect x="364" y="30" width="200" height="26" fill="#b54708"/><text x="464" y="46" text-anchor="middle" fill="#fff">fill AGAIN: the same 51 vec</text>
+            <rect x="564" y="30" width="110" height="26" fill="#1f6feb"/><text x="619" y="46" text-anchor="middle" fill="#fff">kv_proj sweep</text>
+          </g>
+          <text x="14" y="74" font-size="9" fill="#b54708">6,528 GB column writes per channel for the pair; the orange blocks are 61 % of the AiM layer after P1</text>
+
+          <text x="14" y="104" font-size="11" font-weight="bold" fill="#1a7f37">AFTER &mdash; two groups, interleaved; the tile stays resident</text>
+          <g font-size="7.5">
+            <rect x="14" y="112" width="102" height="14" fill="#1a7f37"/><text x="65" y="122" text-anchor="middle" fill="#fff">g0 fill: 26 vec &rarr; ch 0&ndash;7</text>
+            <rect x="14" y="128" width="98" height="14" fill="#1a7f37"/><text x="63" y="138" text-anchor="middle" fill="#fff">g1 fill: 25 vec &rarr; ch 8&ndash;15</text>
+            <rect x="120" y="112" width="150" height="14" fill="#1f6feb"/><text x="195" y="122" text-anchor="middle" fill="#fff">g0 q_proj sweep (replica 0)</text>
+            <rect x="120" y="128" width="150" height="14" fill="#1f6feb"/><text x="195" y="138" text-anchor="middle" fill="#fff">g1 q_proj sweep (replica 1)</text>
+            <rect x="274" y="112" width="110" height="14" fill="#1f6feb"/><text x="329" y="122" text-anchor="middle" fill="#fff">g0 kv_proj sweep</text>
+            <rect x="274" y="128" width="110" height="14" fill="#1f6feb"/><text x="329" y="138" text-anchor="middle" fill="#fff">g1 kv_proj sweep</text>
+            <text x="392" y="127" font-size="8.5" fill="#1a7f37" font-weight="bold">&larr; no refill: dedup</text>
+            <text x="392" y="140" font-size="8" fill="#647083">the stream alternates 0xff / 0xff00 line by line (merge_groups)</text>
+          </g>
+          <text x="14" y="162" font-size="9" fill="#1a7f37">1,664 GB column writes per channel for the pair (3.9&times; fewer); the two rows run on independent channel buses at the same time</text>
+          <text x="14" y="180" font-size="8.5" fill="#647083">Not to scale. Orange/green = WR_GB fill through the external pins, blue = in-bank MAC sweep.</text>
+        </svg>
+        <div class="cap">Fig. 6b &mdash; The fill stream before and after. Token-parallel shortens each fill and overlaps the two; dedup removes the second one entirely.</div>
+      </div>
+
+      <h3>Example: the real trace</h3>
+      <pre class="cmd"><span class="c"># layer_ext_afree64_v26_c16.trace — q_proj: G=2 rgroups=16 kchunks=1 cap=64 fill=True</span>
+AiM WR_GB 64 0 0xff               <span class="c"># group 0, token 0    } the generator emits the two groups'</span>
+AiM WR_GB 64 0 0xff00             <span class="c"># group 1, token 26   } lists round-robin, so the fills overlap</span>
+AiM WR_GB 64 0 0xff               <span class="c"># group 0, token 1</span>
+AiM WR_GB 64 0 0xff00             <span class="c"># group 1, token 27</span>
+  &hellip;                             <span class="c"># 26 + 25 fills, then the sweep, still alternating:</span>
+AiM WR_BIAS 0 0xff00
+AiM WR_BIAS 0 0xff
+AiM MAC_ABK_MV 64 0xff00 100      <span class="c"># group 1, row-group 0 of replica 1</span>
+AiM MAC_ABK_MV 64 0xff 100        <span class="c"># group 0, row-group 0 of replica 0 (same weight address, different channels)</span>
+AiM RD_MACB 26 0 0xff00
+AiM RD_MACB 26 0 0xff
+  &hellip;
+<span class="c"># kv_proj: G=2 rgroups=4 kchunks=1 cap=64 fill=False   ← dedup: no WR_GB at all, straight into WR_BIAS/MAC/RD</span>
+AiM WR_BIAS 0 0xff00
+AiM WR_BIAS 0 0xff
+AiM MAC_ABK_MV 64 0xff00 2100
+  &hellip;</pre>
+
+      <h3>Pseudo-code, before and after</h3>
+      <pre class="cmd"><span class="c">BEFORE — one channel group, one fill per op</span>
+for op in [q_proj, kv_proj]:              <span class="c"># both read the same x̂ — loaded twice</span>
+    for v in 0..50:  WR_GB 64 0 0xffff    <span class="c"># every channel receives all 51 vectors, serially</span>
+    for rg in row-groups(op):
+        WR_BIAS; MAC_ABK_MV 64 0xffff; RD_MACB 26
+<span class="c"># per channel: 2 x 51 fills for the pair; every channel's pins carry the whole tile</span></pre>
+      <pre class="cmd"><span class="c">AFTER (SW) — two channel groups with replicated weights; fill once per distinct input</span>
+g0 = channels 0..7  (mask 0x00ff), tokens 0..25,  weight replica 0
+g1 = channels 8..15 (mask 0xff00), tokens 26..50, weight replica 1
+
+fill:  for v in 0..25: WR_GB 64 0 0x00ff  ‖  for v in 0..24: WR_GB 64 0 0xff00   <span class="c"># round-robin interleaved</span>
+q_proj:  for rg in row-groups: {WR_BIAS; MAC_ABK_MV; RD_MACB} on g0  ‖  the same on g1
+kv_proj: for rg in row-groups: {WR_BIAS; MAC_ABK_MV; RD_MACB} on g0  ‖  the same on g1   <span class="c"># NO fill: tile resident (dedup)</span>
+<span class="c"># per channel: 1 x 26 fills for the pair (3.9x fewer); both groups' pins busy at once</span>
+<span class="c"># dedup precondition: one K-chunk and 26 &lt;= GB capacity, else the GB holds only the last pass</span></pre>
       <ul class="notes">
-        <li><b>Dedup:</b> Q/KV share the same normalized input tile, as do gate/up &mdash; fill the GB once per distinct input instead of once per op. Pure trace-scheduling.</li>
-        <li><b>Token-parallel channel groups:</b> split the 51 tokens (and the 408 attention vectors) across G channel groups, <b>replicating the weights per group</b> &mdash; a capacity trade (G &times; 623 MB out of the 64 GB LPDDR pool) that hardware designers get for free. Each group streams only its share, concurrently on independent channel buses; interleaved ISR emission lets the groups&rsquo; controllers overlap despite the single in-order DMA.</li>
+        <li><b>Why replicate the weights rather than split them?</b> Splitting outputs across groups would leave every group needing every token (the fill problem unchanged). Splitting <i>tokens</i> needs every group to hold every weight &mdash; 623 MB per group. That is a capacity trade, and capacity is the one thing a 64 GB LPDDR pool has in abundance.</li>
+        <li><b>Why round-robin?</b> There is one in-order DMA. Emitting group 0&rsquo;s whole list and then group 1&rsquo;s would serialize them; alternating line by line keeps both channel buses busy.</li>
+        <li><b>Why does this need P1?</b> Dedup is only possible because P1&rsquo;s 26-vector tile stays resident across an entire projection; stock&rsquo;s one-vector GB is overwritten 51 times per row-group and nothing survives to the next op.</li>
       </ul>
+
+      <h3>Two software fixes, measured</h3>
       <div class="scroll">
       <table>
         <thead><tr><th>Config</th><th class="num">WR_GB ms/layer</th><th class="num">step @16 ch</th><th class="num">step @32 ch</th></tr></thead>
