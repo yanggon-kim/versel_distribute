@@ -382,7 +382,7 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
         <li><b>Clock convention:</b> we convert cycles at tCK&nbsp;=&nbsp;0.625&nbsp;ns &mdash; calibrated so one channel&rsquo;s external burst rate equals real LPDDR5-6400 x16 (12.8&nbsp;GB/s). Documented assumption; all ratios are tCK-independent.</li>
         <li><b>Validation:</b> the shipped micro-benchmarks and an all-ISR smoke trace run bit-identically before/after our study; a probe trace confirms the PREA&rarr;ACT16 row-management path fires as specified.</li>
       </ul>
-      <h3>Does the retiming create the problem? (measured on the fabbed GDDR6 model)</h3>
+      <h3>Does the retiming create the problem? (measured on the simulator&rsquo;s GDDR6-AiM model)</h3>
       <p>AiM is fabricated in <b>GDDR6</b>; no LPDDR5-AiM part exists. We run the AiM ISA on the simulator&rsquo;s LPDDR5 device model so the machine sits at Jetson-Orin bandwidth parity, and the AiM-specific timings in that preset (<code class="k">nRCDRDMAC</code>, <code class="k">nRCDEWMUL</code>, <code class="k">nRCDRDAF</code>, <code class="k">nRCDRDCP</code>, <code class="k">nRCDWRCP</code>, <code class="k">nMODCH</code>) are <b>copied from the GDDR6-AiM preset</b>, which the simulator&rsquo;s authors calibrated from ISSCC, the SK hynix SDK and Xavier profiling. So the fair question is whether we created the pathology by retiming. We checked by running the <i>same two traces</i> on both device models of the same binary, changing nothing else.</p>
       <div class="scroll">
       <table>
@@ -395,11 +395,13 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
           <tr><td class="rowlabel"><b>stock layer time</b></td><td class="num"><b>1.582 ms</b></td><td class="num"><b>1.427 ms</b></td></tr>
           <tr><td class="rowlabel"><b>our design (Part IV, V = 26)</b></td><td class="num"><b>0.400 ms</b></td><td class="num"><b>0.396 ms</b></td></tr>
           <tr><td class="rowlabel"><b>what the ISA fix is worth</b></td><td class="num"><b>3.95&times;</b></td><td class="num"><b>3.60&times;</b></td></tr>
+          <tr><td class="rowlabel">column period, nCCD &times; tCK (&sect;7 <a href="#where60">&ldquo;Where the 60 % comes from&rdquo;</a>)</td><td class="num">2 &times; 1.0 = 2.0 ns</td><td class="num">4 &times; 0.625 = 2.5 ns</td></tr>
+          <tr><td class="rowlabel">PU time per column, 16 lanes @ 1 GHz</td><td class="num">1 ns</td><td class="num">1 ns</td></tr>
           <tr><td class="rowlabel">stock PU utilisation (16 MACs per column slot)</td><td class="num">50 % (2.0 ns slot)</td><td class="num">40 % (2.5 ns slot)</td></tr>
         </tbody>
       </table>
       </div>
-      <div class="callout win"><b>The command counts are identical</b>, because they are properties of the ISA and the mapping, not of the timing: one <code class="k">MAC_ABK</code> per (token, weight column), one GB refill per token, one blocking <code class="k">RD_MAC</code> per (token, row-group). Only their cost moves. <b>The problem is not an artifact of the retiming &mdash; on the part that was actually built it is slightly worse</b> (3.95&times; of headroom rather than 3.60&times;), and the &ldquo;AiM over-provisioned its PU&rdquo; finding holds on both (50 % busy on GDDR6, 40 % here). What the retiming <i>is</i> responsible for: the 12.8 GB/s-per-channel premise that makes 16 channels equal Orin, the exact share of each overhead slice, and all absolute times. Full runs: <code class="k">05_reports/gddr6_robustness.md</code>.</div>
+      <div class="callout win"><b>The command counts are identical</b>, because they are properties of the ISA and the mapping, not of the timing: one <code class="k">MAC_ABK</code> per (token, weight column), one GB refill per token, one blocking <code class="k">RD_MAC</code> per (token, row-group). Only their cost moves. <b>The problem is not an artifact of the retiming &mdash; on the simulator&rsquo;s SDK-calibrated GDDR6-AiM model it is slightly worse</b> (3.95&times; of headroom rather than 3.60&times;), and the PU-faster-than-column mismatch holds on both (50 % busy on that model, 40 % here). One honest limit: that preset spaces columns at 2.0 ns, i.e. 8 Gb/s/pin, half of GDDR6-AiM&rsquo;s rated 16 Gb/s. At the rated speed the column period is 1.0 ns, the 1 GHz PU is exactly matched (&sect;7 <a href="#where60">derives this</a>), and only the bookkeeping terms (the D = 1 floor, &asymp; 1.8&times;) would remain &mdash; which is why the PU/array mismatch, and hence P1, matters most on <i>LPDDR</i>. What the retiming <i>is</i> responsible for: the 12.8 GB/s-per-channel premise that makes 16 channels equal Orin, the exact share of each overhead slice, and all absolute times. Full runs: <code class="k">05_reports/gddr6_robustness.md</code>.</div>
 
     </section>
 
@@ -945,6 +947,137 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
       <div class="callout warn"><b>Read frame 4 again.</b> One sweep &mdash; one <code class="k">MAC_ABK</code> line, 64 column commands &times; tCCD 4 = <b>256 cycles</b> &mdash; makes each channel fetch 64 columns &times; 16 banks = 1,024 columns, 32 KB of weights, the full 16&times; internal bandwidth, and produce <b>16 finished outputs</b> for token <i>t</i>. That is one row-group. To finish token <i>t</i>, the channel repeats the sweep for all 8 row-groups: 256 KB fetched, 128 outputs, and all 2,048 outputs of q_proj across the 16 channels. Only then does token <i>t</i>+1 &mdash; the next of the 51 suffix tokens &mdash; get its own <code class="k">WR_GB</code>, and it needs the <i>same</i> 256 KB again. There is nowhere to keep a second token&rsquo;s vector (one GB) and nowhere to keep a second result (one accumulator), so the machine has no choice but to fetch everything again. <b>Every projection weight is fetched 51 times per layer</b> (once per token; 4,224 unique columns per channel &times; 51 = 215,424 fetches). Add attention re-reading the resident prefix K/V once per (token, head) and the channel&rsquo;s in-bank traffic is 135 MB for 2.16 MB of unique weights: <b>63&times;</b>.</div>
 
       <p>The activation-stationary alternative (Strategy B: the 51 tokens resident in banks, weight columns streamed through the GB via <code class="k">COPY_BKGB</code>) swaps which operand is re-fetched &mdash; activations get read 133&times; instead &mdash; and measures <b>34.6 ms</b>, 21% slower than Strategy A. We report Strategy A as the strawman throughout: it is the better of the two mappings the stock ISA allows. <b>Both are bound by the same per-command amortization, not by data movement.</b></p>
+
+      <h3 id="where60">Where the 60 % comes from &mdash; every number derived, and why it is nobody&rsquo;s mistake</h3>
+      <p class="lead">Fig. 6b said the PU is busy 1 ns of every 2.5 ns slot: 40 % busy, 60 % idle. Those two numbers carry the whole argument of this page and of Part IV, so a reader is entitled to ask where each one comes from and whether we invented it. This subsection derives both from published constants, then shows that the 60 % is not a design error &mdash; it is the state <i>any</i> processing unit faster than the LPDDR5 column rate is in, under the stock instruction set, and the situation every LPDDR-PIM vendor faces on day one.</p>
+
+      <h4 style="margin:22px 0 6px;font-size:1rem;">The vocabulary, defined once</h4>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>term</th><th>meaning</th><th>value used here, and where it comes from</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">pin</td><td>one data wire between the SoC and the DRAM. <b>Gb/s per pin</b> is how many bits one wire carries per second (giga<i>bits</i>; a byte is 8 bits, so 8 Gb/s = 1 GB/s).</td><td>LPDDR5-6400: <b>6.4 Gb/s per pin</b> (the &ldquo;6400&rdquo; is the speed grade). GDDR6-AiM: <b>16 Gb/s per pin</b>, rated (ISSCC&rsquo;22 title; HC34 slide: &ldquo;IO Data rate 16 Gb/s/pin&rdquo;)</td></tr>
+          <tr><td class="rowlabel">x16 channel</td><td>a channel with 16 data pins working together</td><td>both parts; 16 pins &times; 6.4 Gb/s = 102.4 Gb/s = <b>12.8 GB/s</b> per LPDDR5 channel (&sect;1)</td></tr>
+          <tr><td class="rowlabel">column</td><td>the amount of data one read command returns from the row buffer</td><td><b>32 B</b> = 256 bits (&sect;1)</td></tr>
+          <tr><td class="rowlabel">burst, beat</td><td>the 32 B leave through the 16 pins as a <i>burst</i> of 16 <i>beats</i>; each beat puts one bit on each of the 16 pins = 2 B</td><td>16 beats &times; 2 B = 32 B (&sect;1, Fig. 0b)</td></tr>
+          <tr><td class="rowlabel">burst time</td><td>how long the burst occupies the pins = column bits &divide; channel rate</td><td>LPDDR5: 256 bits &divide; 102.4 Gb/s = <b>2.5 ns</b></td></tr>
+          <tr><td class="rowlabel">tCK, cycle</td><td>the period of the clock the simulator counts in</td><td><b>0.625 ns</b>, chosen so that 4 cycles = one 2.5 ns burst [assumption A1, &sect;4]. Every ratio on this page is independent of it.</td></tr>
+          <tr><td class="rowlabel">nBL</td><td>burst length counted in cycles: burst time &divide; tCK</td><td>2.5 &divide; 0.625 = <b>4 cycles</b></td></tr>
+          <tr><td class="rowlabel">tCCD, nCCD</td><td><i>column-to-column delay</i>: the minimum time (tCCD) or cycles (nCCD) between two column commands on one channel</td><td><b>nCCD = 4 cycles = 2.5 ns</b>; equal to nBL &mdash; why, below</td></tr>
+          <tr><td class="rowlabel"><b>column period</b>, t<sub>col</sub></td><td><i>our name</i> for nCCD &times; tCK: how often the array can hand out one 32 B column</td><td>LPDDR5-6400: 4 &times; 0.625 = <b>2.5 ns</b></td></tr>
+          <tr><td class="rowlabel">PU, lane, MAC</td><td>the <i>processing unit</i> next to each bank; a <i>lane</i> is one multiply-accumulate (MAC) circuit: one multiply and one add per PU cycle</td><td><b>16 lanes per bank</b> (HC34; SK arch doc: &ldquo;32 GFLOPS per PU&rdquo;)</td></tr>
+          <tr><td class="rowlabel">PU clock, PU cycle</td><td>the clock the PU runs at; one PU cycle is its period</td><td><b>1 GHz &rarr; 1 PU cycle = 1 ns</b> (HC34: &ldquo;Operating Speed 1 GHz&rdquo;)</td></tr>
+          <tr><td class="rowlabel">bf16</td><td>the number format: 2 bytes per number</td><td>32 B column &divide; 2 B = <b>16 numbers per column</b> = one per lane. This is why a PU consumes exactly one column per cycle.</td></tr>
+          <tr><td class="rowlabel"><b>t<sub>PU</sub></b></td><td><i>our name</i> for the time the PU needs to consume one column</td><td>16 numbers &divide; 16 lanes &divide; 1 GHz = <b>1 ns</b></td></tr>
+          <tr><td class="rowlabel">one-use-per-fetch</td><td>the stock <code class="k">MAC_ABK</code> rule (&sect;3): a fetched column meets one GB vector and lands in one accumulator, then is discarded</td><td>so the PU gets exactly t<sub>PU</sub> of work per column period</td></tr>
+          <tr><td class="rowlabel"><b>utilisation U</b>, idle</td><td>the fraction of time the PU has work: U = t<sub>PU</sub> &divide; t<sub>col</sub>; idle = 1 &minus; U</td><td><b>1 &divide; 2.5 = 40 %; idle 60 %</b></td></tr>
+          <tr><td class="rowlabel"><b>D</b></td><td>t<sub>col</sub> &divide; t<sub>PU</sub>: how many columns&rsquo; worth of work the PU <i>could</i> do per column period; D = 1 means exactly matched</td><td><b>2.5</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h4 style="margin:22px 0 6px;font-size:1rem;">The derivation, in one place</h4>
+      <pre class="cmd"><span class="c">the array side — LPDDR5-6400, one x16 channel (JEDEC speed grade)</span>
+pin rate           = 6.4 Gb/s per pin
+channel rate       = 16 pins x 6.4 Gb/s   = 102.4 Gb/s = 12.8 GB/s
+one column         = 32 B                 = 256 bits
+burst time         = 256 bits / 102.4 Gb/s = 2.5 ns          <span class="c">← t_col: one column every 2.5 ns</span>
+in cycles          = 2.5 ns / 0.625 ns    = 4  = nBL = nCCD
+
+<span class="c">the PU side — SK hynix AiM (HC34 / ISSCC'22 / SK architecture doc)</span>
+lanes              = 16 bf16 MACs per bank
+clock              = 1 GHz               → 1 PU cycle = 1 ns
+numbers per column = 32 B / 2 B          = 16
+t_PU               = 16 numbers / 16 lanes / 1 GHz = 1 ns    <span class="c">← the PU swallows a column in one cycle</span>
+
+<span class="c">the ISA side — stock MAC_ABK</span>
+work per column    = one use             → 1 ns of PU time per 2.5 ns column period
+U                  = 1 ns / 2.5 ns       = 40 %              <span class="c">← busy</span>
+idle               = 1 - 0.40            = 60 %
+D                  = 2.5 ns / 1 ns       = 2.5               <span class="c">← the PU could do 2.5 columns' work per slot</span></pre>
+      <p>Three inputs, each fixed by something other than a choice made for this workload: <b>t<sub>col</sub></b> by the JEDEC speed grade of the memory, <b>t<sub>PU</sub></b> by the PU SK hynix built, <b>one-use-per-fetch</b> by the stock ISA. Multiply them and 60 % falls out. Nobody chose 60 %; it is what those three facts produce. That is what &ldquo;by construction&rdquo; means on this page.</p>
+
+      <h4 style="margin:22px 0 6px;font-size:1rem;">Why nCCD = nBL: the array cannot feed the PU faster than it could feed the pins</h4>
+      <p>A natural objection: <code class="k">MAC_ABK</code> never uses the pins, so why is the internal fetch paced by the <i>external</i> burst time? Because the column path inside the die &mdash; row buffer &rarr; column decoder &rarr; I/O gating &rarr; the 32 B prefetch latch (&sect;1, &ldquo;bank groups&rdquo;) &mdash; is one datapath with one cycle time, and tCCD <i>is</i> that cycle time. A normal <code class="k">RD</code> sends the latch to the pins; <code class="k">MAC_ABK</code> sends it to the PU instead. The diversion happens <i>after</i> the column path, so the path&rsquo;s rate is unchanged. The simulator encodes exactly this: one <code class="k">MAC16</code> per nCCD, &ldquo;the same spacing as one external 32 B burst&rdquo; (Phase 2 notes, both device models). It is also where AiM&rsquo;s advertised <b>16&times; internal bandwidth</b> comes from: 16 banks each delivering one column per burst time is 16&times; what the single set of pins can drain in that time. Note what that number says &mdash; the internal column rate <i>per bank</i> equals the external burst rate. It does not exceed it. So t<sub>col</sub> is a property of the memory standard, not of the PU.</p>
+
+      <h4 style="margin:22px 0 6px;font-size:1rem;">Where the 1 ns comes from: the PU was sized for GDDR6, not for LPDDR5</h4>
+      <pre class="cmd"><span class="c">GDDR6-AiM at its rated interface speed</span>
+pin rate           = 16 Gb/s per pin
+channel rate       = 16 pins x 16 Gb/s    = 256 Gb/s = 32 GB/s
+burst time         = 256 bits / 256 Gb/s  = 1.0 ns           <span class="c">← t_col on GDDR6 at spec</span>
+t_PU               = 1.0 ns (same PU)
+U                  = 1.0 / 1.0            = 100 %,  D = 1.0   <span class="c">← exactly matched</span>
+
+<span class="c">cross-check against the vendor's own peak number</span>
+per channel        = 16 banks x 16 lanes x 2 FLOP/MAC x 1 GHz = 512 GFLOP/s
+SK arch doc        : "0.5 TFLOPS per AiM channel"  ✓   (1 TFLOPS per 2-channel chip, the ISSCC'22 title)
+<span class="c">→ the advertised peak IS one column per bank per ns: the 1 GHz PU is sized to GDDR6's 1 ns column</span></pre>
+      <p><b>So SK hynix did not over-provision anything.</b> On its own memory, at its own rated speed, the PU is matched to the array to the nanosecond, and the 1 TFLOPS on the ISSCC title is precisely that match. The idle time appears only when the same PU sits on an array whose column period is longer than 1 ns &mdash; and LPDDR5&rsquo;s is 2.5&times; longer, because mobile pins run at 6.4 Gb/s, not 16.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>substrate</th><th class="num">pin rate</th><th class="num">t<sub>col</sub> = 32 B &divide; channel rate</th><th class="num">t<sub>PU</sub></th><th class="num">U = t<sub>PU</sub>/t<sub>col</sub></th><th class="num">idle</th><th class="num">D</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">GDDR6-AiM, rated</td><td class="num">16 Gb/s</td><td class="num">1.0 ns</td><td class="num">1 ns</td><td class="num">100 %</td><td class="num">0 %</td><td class="num">1.0</td></tr>
+          <tr><td class="rowlabel">GDDR6-AiM, simulator preset (tCK 1 ns, nCCD 2; CENT&rsquo;s SDK-calibrated timing)</td><td class="num">8 Gb/s</td><td class="num">2.0 ns</td><td class="num">1 ns</td><td class="num">50 %</td><td class="num">50 %</td><td class="num">2.0</td></tr>
+          <tr style="background:#eef5ff;"><td class="rowlabel"><b>LPDDR5-6400 (this study; Orin)</b></td><td class="num"><b>6.4 Gb/s</b></td><td class="num"><b>2.5 ns</b></td><td class="num">1 ns</td><td class="num"><b>40 %</b></td><td class="num"><b>60 %</b></td><td class="num"><b>2.5</b></td></tr>
+          <tr><td class="rowlabel">LPDDR5X-8533 (Thor&rsquo;s grade)</td><td class="num">8.5 Gb/s</td><td class="num">1.875 ns</td><td class="num">1 ns</td><td class="num">53 %</td><td class="num">47 %</td><td class="num">1.9</td></tr>
+          <tr><td class="rowlabel">LPDDR5X-9600 (fastest mobile grade)</td><td class="num">9.6 Gb/s</td><td class="num">1.67 ns</td><td class="num">1 ns</td><td class="num">60 %</td><td class="num">40 %</td><td class="num">1.7</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="cap">t<sub>col</sub> = 256 bits &divide; (16 pins &times; pin rate). The simulator&rsquo;s GDDR6 preset spaces columns at nCCD 2 &times; tCK 1 ns = 2 ns, i.e. half the rated pin speed; its authors calibrated it against the SK hynix SDK, whose evaluation board runs the interface at 2 Gb/s/pin (HC34). Even the fastest LPDDR5X grade leaves a 1 GHz PU idle 40 % of the time.</p>
+      <div class="fig">
+        <svg viewBox="0 0 900 230" role="img" aria-label="Three horizontal timelines showing one column period each, with the PU's 1 ns of work drawn inside. GDDR6 at 16 gigabits per pin: the column period is 1 nanosecond and the PU work fills it completely. The simulator's GDDR6 preset: 2 nanosecond period, PU busy half. LPDDR5-6400: 2.5 nanosecond period, PU busy 1 nanosecond and idle 1.5 nanoseconds, 60 percent. The same 1 nanosecond bar appears in all three; only the slot length changes.">
+          <text x="14" y="20" font-size="11" font-weight="bold" fill="#172033">one column period, to scale (100 px = 1 ns); the PU&rsquo;s work is the same 1 ns bar in every row</text>
+          <!-- GDDR6 rated -->
+          <text x="14" y="52" font-size="9.5" font-weight="bold" fill="#172033">GDDR6 @ 16 Gb/s/pin</text>
+          <rect x="230" y="38" width="100" height="22" fill="#fff" stroke="#d8dee8"/>
+          <rect x="230" y="38" width="100" height="22" fill="#1f6feb"/><text x="280" y="53" text-anchor="middle" font-size="8" fill="#fff">PU: 1 ns</text>
+          <text x="340" y="53" font-size="9" fill="#1a7f37" font-weight="bold">t_col = 1.0 ns &rarr; U = 100 %, D = 1.0 &mdash; matched: what the 1 TFLOPS title assumes</text>
+          <!-- GDDR6 preset -->
+          <text x="14" y="102" font-size="9.5" font-weight="bold" fill="#172033">GDDR6 simulator preset</text>
+          <rect x="230" y="88" width="200" height="22" fill="#fff" stroke="#d8dee8"/>
+          <rect x="230" y="88" width="100" height="22" fill="#1f6feb"/><text x="280" y="103" text-anchor="middle" font-size="8" fill="#fff">PU: 1 ns</text>
+          <rect x="330" y="88" width="100" height="22" fill="#fdf0e6"/><text x="380" y="103" text-anchor="middle" font-size="8" fill="#b54708">idle 1 ns</text>
+          <text x="440" y="103" font-size="9" fill="#172033">t_col = 2.0 ns &rarr; U = 50 %, D = 2.0</text>
+          <!-- LPDDR5 -->
+          <text x="14" y="152" font-size="9.5" font-weight="bold" fill="#172033">LPDDR5-6400 (this page)</text>
+          <rect x="230" y="138" width="250" height="22" fill="#fff" stroke="#d8dee8"/>
+          <rect x="230" y="138" width="100" height="22" fill="#1f6feb"/><text x="280" y="153" text-anchor="middle" font-size="8" fill="#fff">PU: 1 ns</text>
+          <rect x="330" y="138" width="150" height="22" fill="#fdf0e6"/><text x="405" y="153" text-anchor="middle" font-size="8" fill="#b54708">idle 1.5 ns</text>
+          <text x="490" y="153" font-size="9" fill="#b54708" font-weight="bold">t_col = 2.5 ns &rarr; U = 40 %, D = 2.5 &mdash; idle 60 %</text>
+          <!-- ruler -->
+          <line x1="230" y1="176" x2="480" y2="176" stroke="#647083" stroke-width="1"/>
+          <g font-size="7.5" fill="#647083" text-anchor="middle">
+            <line x1="230" y1="172" x2="230" y2="180" stroke="#647083"/><text x="230" y="192">0</text>
+            <line x1="330" y1="172" x2="330" y2="180" stroke="#647083"/><text x="330" y="192">1 ns</text>
+            <line x1="430" y1="172" x2="430" y2="180" stroke="#647083"/><text x="430" y="192">2 ns</text>
+            <line x1="480" y1="172" x2="480" y2="180" stroke="#647083"/><text x="480" y="192">2.5 ns</text>
+          </g>
+          <text x="14" y="218" font-size="8.5" fill="#647083">The PU bar never changes. Moving the same PU from a 16 Gb/s array to a 6.4 Gb/s array is the entire origin of the 60 %.</text>
+        </svg>
+        <div class="cap">Fig. 6c &mdash; The 60 % is a mismatch between a GDDR6-rate PU and an LPDDR5-rate array. Nothing about the PU is wrong; nothing about LPDDR5 is wrong; they were simply not designed for each other.</div>
+      </div>
+
+      <h4 style="margin:22px 0 6px;font-size:1rem;">Why this is a natural design, not a false one: the choice every LPDDR-PIM vendor faces</h4>
+      <p>Put yourself in the position of anyone &mdash; SK hynix, Samsung, or a third party &mdash; adding a PU beside an LPDDR5 bank. Two things are handed to you and one is yours to choose:</p>
+      <ul class="notes">
+        <li><b>Handed to you: the column period.</b> JEDEC fixes it at 2.5 ns for LPDDR5-6400 (1.67&ndash;1.9 ns for LPDDR5X). You cannot make the array hand out columns faster without changing the memory standard.</li>
+        <li><b>Handed to you (if you keep the stock ISA): one use per fetch.</b> Each column meets one vector. So the MAC rate of a bank is <i>pinned to the column rate</i> &mdash; one column&rsquo;s worth of multiplies per 2.5 ns &mdash; whatever the PU is capable of.</li>
+        <li><b>Yours to choose: the PU clock.</b> And here is the point: <b>under the stock ISA, the clock does not change performance at all.</b> A 400 MHz PU (t<sub>PU</sub> = 2.5 ns, D = 1) and a 1 GHz PU (t<sub>PU</sub> = 1 ns, D = 2.5) both finish one column per 2.5 ns, because the column, not the PU, sets the pace. The faster one simply waits.</li>
+      </ul>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>option</th><th>PU clock</th><th class="num">U under stock ISA</th><th>what it costs</th><th>what it forecloses</th><th>who did it</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">(a) match the column</td><td>400 MHz on LPDDR5-6400 (300 MHz on HBM2&rsquo;s 3.33 ns tCCD_L)</td><td class="num">100 %</td><td>nothing extra; a slower clock trims a little power &mdash; the multiplier array, not the clock, sets the area</td><td><b>the MAC rate can never exceed one column per 2.5 ns per bank</b>; no future ISA can use cycles that do not exist</td><td><b>Samsung HBM-PIM</b> (Aquabolt-XL): 300 MHz, tCCD_L 3.33 ns &rarr; D = 1.0</td></tr>
+          <tr style="background:#eef5ff;"><td class="rowlabel"><b>(b) keep the GDDR6 PU</b></td><td>1 GHz</td><td class="num"><b>40 %</b></td><td>nothing extra either: same lanes, same array; 1 GHz is a natural on-die logic clock and also serves AF / EWMUL / copy</td><td>nothing &mdash; the idle 60 % is unused headroom, not a penalty: stock performance is <i>identical</i> to (a)</td><td><b>SK hynix AiM</b>, carried onto LPDDR5 (this page)</td></tr>
+          <tr style="background:#e7f5ec;"><td class="rowlabel"><b>(c) keep 1 GHz and change the ISA</b></td><td>1 GHz</td><td class="num">100 % from V &ge; 3</td><td>storage only: a V-slot accumulator file and a V-vector GB (Part IV &sect;2)</td><td>&mdash;</td><td><b>Part IV</b>: one fetch feeds V vectors, so the PU gets V ns of work per 2.5 ns slot</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout win"><b>Why (b) is the natural default, and why its 60 % is not a mistake.</b> Under the stock ISA, (a) and (b) cannot be told apart by any benchmark: both are column-bound at one column per 2.5 ns. A vendor therefore has no reason to slow the clock, and every reason not to &mdash; the same PU already exists, verified, in the GDDR6 part; a faster logic clock costs no area; and AF, EWMUL and copy operations get faster for free. So the 1 GHz PU on LPDDR5 is not an over-design; it is the obvious thing to build. <b>Its 60 % idle only becomes &ldquo;waste&rdquo; in hindsight &mdash; once an instruction exists that could have used those cycles.</b> Under one-use-per-fetch, that instruction cannot exist: the PU is fed exactly one column per column period, and a PU can only be as busy as its command stream lets it. This is why the fix is an ISA change and not a clock change (Part IV &sect;2), and why we measured its value starting from <i>both</i> vendor choices: from (b) it is worth 3.60&times; on this page&rsquo;s layer; from (a), where no PU headroom exists at all, the same ISA still buys 1.80&times; by removing the per-fetch bookkeeping (<code class="k">05_reports/quantization_robustness.md</code>, the D-sweep).</div>
+      <p><b>&ldquo;Precisely the situation any LPDDR-PIM vendor faces&rdquo;</b> now has a concrete meaning: the column period is JEDEC&rsquo;s, the one-use rule is the stock ISA&rsquo;s, and the only free variable &mdash; the PU clock &mdash; makes no difference until the ISA changes. Samsung chose (a) on HBM2; AiM on LPDDR5 is (b); every LPDDR5X grade in the table above leaves a 1 GHz PU at least 40 % idle, so the choice does not go away with faster mobile memory. What changes the picture is reuse per fetch, and that is what the rest of this series is about.</p>
     </section>
 
 
@@ -1130,7 +1263,7 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
       <ul class="notes">
         <li><b>You cannot reorder the loops.</b> The natural fix &mdash; put the token loop <i>inside</i> the fetch &mdash; needs a place to hold the other tokens&rsquo; vectors (the GB holds one) and a place to hold their partial results (the bank holds one accumulator). Strategy B tries the other order and hits the same two walls from the other side (&sect;5).</li>
         <li><b>You cannot batch the drains.</b> <code class="k">RD_MAC</code> is the only way results leave a bank, it reads exactly one accumulator per bank, and it blocks the in-order DMA. 4,590 stalls per channel per layer is a structural count, not a scheduling accident.</li>
-        <li><b>The MAC unit is mostly idle.</b> In frame 4 the PU needs 1 ns for its 16 multiplies but a column slot lasts 2.5 ns, so it is busy 40 % of the time (Fig. 6b), and even that 40 % is spent on redundant fetches. The PU that AiM already fabbed has 2.5&times; headroom before any wider datapath is needed.</li>
+        <li><b>The MAC unit is mostly idle.</b> In frame 4 the PU needs 1 ns for its 16 multiplies but a column slot lasts 2.5 ns, so it is busy 40 % of the time (Fig. 6b), and even that 40 % is spent on redundant fetches. The PU that AiM already fabbed has 2.5&times; headroom before any wider datapath is needed &mdash; and &sect;7&rsquo;s <a href="#where60">&ldquo;Where the 60 % comes from&rdquo;</a> derives that 2.5 from published constants and shows it is the natural state of any 1 GHz PU on LPDDR5, not a design fault.</li>
         <li><b>Scale does not help.</b> Doubling channels halves the per-channel work but leaves the ratio: 32 channels still measure 17.3 ms (&sect;9). Only changing <i>how many tokens one fetch serves</i> changes the ratio.</li>
       </ul>
       <div class="callout"><b>Problem statement, in one sentence.</b> Stock AiM amortizes one in-bank fetch over <b>one vector, one accumulator and one register mode</b>; a 51-token workload therefore pays 51&times; the fetches, 51&times; the drains and 51&times; the mode switches of the ideal, and no mapping can fix it because the missing resource is <i>storage next to the MAC</i>, not bandwidth or arithmetic.</div>
