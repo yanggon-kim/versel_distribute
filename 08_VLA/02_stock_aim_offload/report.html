@@ -82,7 +82,7 @@
   <main>
     <header class="page">
       <h1>LPDDR5, Stock AiM, and Why the Offload Loses 4.5&times;: the Problem, Quantified</h1>
-      <p class="sub"><a href="../00_vla_algorithm/report.html">Part I</a> showed the &pi;<sub>0</sub> Action Expert is memory-bound: 623&nbsp;MB of weights re-streamed for 38.7&nbsp;GFLOPs, every step. Processing-in-memory should fix exactly this. We map the AE onto a cycle-level SK&nbsp;hynix AiM-style <b>LPDDR5-PIM simulator</b> at Jetson-Orin memory parity (16 &times; x16 LPDDR5-6400 channels = 204.8&nbsp;GB/s) &mdash; and the stock offload <b>loses</b>: <b>28.5&nbsp;ms per denoising step vs. 6.3&nbsp;ms</b> for a realistic XPU baseline. This page explains the machine, the mapping, the measured breakdown, and the crossover law that makes a &ldquo;memory-bound&rdquo; workload lose on PIM.</p>
+      <p class="sub"><a href="../00_vla_algorithm/report.html">Part I</a> showed the &pi;<sub>0</sub> Action Expert is memory-bound: 623&nbsp;MB of weights re-streamed for 38.7&nbsp;GFLOPs, every step. Processing-in-memory should fix exactly this. We map the AE onto a cycle-level SK&nbsp;hynix AiM-style <b>LPDDR5-PIM simulator</b> at Jetson-Orin memory parity (16 &times; x16 LPDDR5-6400 channels = 204.8&nbsp;GB/s) &mdash; and the stock offload <b>loses</b>: <b>28.5&nbsp;ms per denoising step vs. 6.3&nbsp;ms</b> for an optimistic XPU baseline. This page explains the machine, the mapping, the measured breakdown, and the crossover law that makes a &ldquo;memory-bound&rdquo; workload lose on PIM.</p>
       <div class="tags">
         <span class="tag">aim_simulator @ 0f28a07 (Ramulator 2.0)</span>
         <span class="tag">LPDDR5-6400, 16 banks/ch, 32-ch device</span>
@@ -96,7 +96,7 @@
       <p class="lead">Part III of the series. The punchline is a negative result with a precise cause: the stock AiM ISA amortizes each in-bank memory fetch over <i>one vector, one accumulator, and one register mode</i> &mdash; and &pi;<sub>0</sub>'s 51-token suffix needs the opposite. <a href="../03_extended_isa/report.html">Part IV</a> fixes it. <a href="../02b_samsung_pim/report.html"><b>Part III-2</b></a> runs the identical workload on Samsung&rsquo;s PIM and finds the same disease with a smaller magnitude &mdash; for a reason that says more about the two microarchitectures than about the two ISAs.</p>
       <div class="headline">
         <div class="kpi"><div class="v">28.5 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
-        <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / realistic 2&times;</div></div>
+        <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / optimistic 2&times;</div></div>
         <div class="kpi"><div class="v">16&times;</div><div class="l">internal:external bandwidth ratio of AiM (real, and yet&hellip;)</div></div>
         <div class="kpi"><div class="v">S &le; 16</div><div class="l">the token-count regime where stock AiM actually wins</div></div>
       </div>
@@ -1528,8 +1528,8 @@ SK arch doc        : "0.5 TFLOPS per AiM channel"  ✓   (1 TFLOPS per 2-channel
       <h3>Stock AiM loses on energy too</h3>
       <p>Slowness is itself an energy cost: during the 28.5&nbsp;ms step the whole 16-channel memory system burns standby power (102&nbsp;mJ), and the per-command overheads (TMOD churn, blocking drains, row thrash) add array traffic on top. Modeled with the CENT per-command energy constants shipped with the simulator (DQ 5.5&nbsp;pJ/bit; 20&nbsp;W AE-phase GPU assumption, swept 15&ndash;30&nbsp;W &mdash; full model and assumptions in <a href="../03_extended_isa/report.html#energy">Part IV &sect;8</a>):</p>
       <figure>
-        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU realistic 2x 194 mJ, stock AiM 434 mJ dominated by DRAM array and standby energy, extended AiM 166 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
-        <figcaption class="cap">Fig. 3 &mdash; Energy per denoising step. Stock AiM costs <b>434&nbsp;mJ vs. the realistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.2&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part IV&rsquo;s extensions flip the energy verdict: extended AiM reaches 143&nbsp;mJ (1.36&times; better than the realistic XPU) and closes most of the latency gap.</figcaption>
+        <img src="assets/energy.png" alt="Stacked bar chart of energy per AE denoising step at 16 channels with a 20 W GPU assumption: XPU at theoretical floor 118 mJ, XPU optimistic 2x 194 mJ, stock AiM 434 mJ dominated by DRAM array and standby energy, extended AiM 166 mJ. Components are DRAM array plus DQ plus controller, DRAM standby, and GPU or host compute.">
+        <figcaption class="cap">Fig. 3 &mdash; Energy per denoising step. Stock AiM costs <b>434&nbsp;mJ vs. the optimistic XPU&rsquo;s 194&nbsp;mJ &mdash; 2.2&times; worse</b> &mdash; so the stock offload loses on latency <i>and</i> energy. Part IV&rsquo;s extensions flip the energy verdict: extended AiM reaches 143&nbsp;mJ (1.36&times; better than the optimistic XPU) and closes most of the latency gap.</figcaption>
       </figure>
 
       <h3>Why it loses: the S &asymp; 16 crossover</h3>
