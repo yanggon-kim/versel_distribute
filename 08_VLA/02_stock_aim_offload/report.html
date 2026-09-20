@@ -181,6 +181,234 @@
       </table>
       </div>
 
+      <h3 id="clocks">Inside the die: four timing domains, not one clock</h3>
+      <p>Fig. 0a shows <i>where</i> things are. This subsection shows <i>how fast each part runs</i>, because an LPDDR5 die is not one synchronous machine. A <b>timing domain</b> (or clock domain) is a group of circuits that all step to the same beat. LPDDR5-6400 has four of them: two are driven by clocks that arrive on pins from the SoC, and two are paths inside the memory core that have <b>no free-running clock at all</b> &mdash; they fire once per command and time themselves. Fig. 0a-2 draws the die with one colour per domain; Fig. 0a-3 lays all of them on the same 2.5 ns ruler.</p>
+
+      <div class="fig" id="fig-clocks">
+        <svg viewBox="0 0 900 480" role="img" aria-label="Block diagram of one LPDDR5 die coloured by timing domain. Left, top: the CK domain at 800 megahertz holds the command-address receivers, the command decoder with address latches, and the mode registers and latency counters. Left, middle: the WCK domain at 3.2 gigahertz holds the DQ drivers and receivers, the 16-to-1 serializer and deserializer, and the burst FIFO. Left, bottom: the Global Buffer that AiM adds in the periphery. Right: one of 16 banks, with a self-timed row path on top (row decoder, cell array, bit-line sense amplifiers, tRCD 9.4 nanoseconds), an event-paced column path in the middle (column decoder, local and global I/O wires, I/O sense amplifiers and a 256-bit latch, one column per 2.5 nanoseconds), and the processing unit that AiM adds at the bottom, fed by the 256-bit latch and by the Global Buffer broadcast bus.">
+          <defs>
+            <marker id="arrCk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker>
+            <marker id="arrCkP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6f42c1"/></marker>
+          </defs>
+
+          <!-- CK domain -->
+          <rect x="120" y="34" width="400" height="136" rx="9" fill="#eaf2ff" stroke="#1f6feb"/>
+          <text x="132" y="51" font-size="10.5" font-weight="bold" fill="#172033">CK domain &mdash; 800 MHz, period 1.25 ns, free-running</text>
+          <rect x="132" y="60" width="120" height="98" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="192" y="77" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">CA receivers</text>
+          <text x="192" y="94" text-anchor="middle" font-size="8.5" fill="#647083">7 pins, sampled on</text>
+          <text x="192" y="107" text-anchor="middle" font-size="8.5" fill="#647083">both CK edges:</text>
+          <text x="192" y="120" text-anchor="middle" font-size="8.5" fill="#647083">one sample / 0.625 ns</text>
+          <text x="192" y="133" text-anchor="middle" font-size="8.5" fill="#647083">(= one simulator cycle)</text>
+          <rect x="264" y="60" width="120" height="98" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="324" y="77" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">command decoder</text>
+          <text x="324" y="94" text-anchor="middle" font-size="8.5" fill="#647083">+ address latches</text>
+          <text x="324" y="107" text-anchor="middle" font-size="8.5" fill="#647083">decodes ACT, RD, WR,</text>
+          <text x="324" y="120" text-anchor="middle" font-size="8.5" fill="#647083">PRE, MAC_ABK, WR_GB</text>
+          <text x="324" y="133" text-anchor="middle" font-size="8.5" fill="#647083">and launches the core</text>
+          <rect x="396" y="60" width="112" height="98" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="452" y="77" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">mode registers</text>
+          <text x="452" y="94" text-anchor="middle" font-size="8.5" fill="#647083">read / write latency</text>
+          <text x="452" y="107" text-anchor="middle" font-size="8.5" fill="#647083">counters (count CK)</text>
+          <text x="452" y="120" text-anchor="middle" font-size="8.5" fill="#647083">refresh counter</text>
+          <line x1="252" y1="146" x2="263" y2="146" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <line x1="384" y1="146" x2="395" y2="146" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
+
+          <!-- CK <-> WCK relation -->
+          <line x1="140" y1="172" x2="140" y2="204" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
+          <text x="150" y="186" font-size="8.5" fill="#647083">WCK = 4 &times; CK exactly; the SoC aligns their phase at training (&ldquo;WCK2CK leveling&rdquo;),</text>
+          <text x="150" y="198" font-size="8.5" fill="#647083">so the two pin clocks are synchronous to each other</text>
+
+          <!-- WCK domain -->
+          <rect x="120" y="206" width="400" height="136" rx="9" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="132" y="223" font-size="10.5" font-weight="bold" fill="#172033">WCK domain &mdash; 3.2 GHz, both edges = 6,400 MT/s, burst-only</text>
+          <rect x="132" y="232" width="120" height="98" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="192" y="249" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">DQ I/O &times;16</text>
+          <text x="192" y="266" text-anchor="middle" font-size="8.5" fill="#647083">drivers, receivers,</text>
+          <text x="192" y="279" text-anchor="middle" font-size="8.5" fill="#647083">RDQS strobe out</text>
+          <text x="192" y="292" text-anchor="middle" font-size="8.5" fill="#647083">one bit per pin</text>
+          <text x="192" y="305" text-anchor="middle" font-size="8.5" fill="#647083">per 0.156 ns (a beat)</text>
+          <rect x="264" y="232" width="120" height="98" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="324" y="249" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">serializer /</text>
+          <text x="324" y="262" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">deserializer</text>
+          <text x="324" y="279" text-anchor="middle" font-size="8.5" fill="#647083">16 beats &times; 16 bit</text>
+          <text x="324" y="292" text-anchor="middle" font-size="8.5" fill="#647083">&harr; one 256-bit word</text>
+          <text x="324" y="305" text-anchor="middle" font-size="8.5" fill="#647083">(= 32 B = one column)</text>
+          <rect x="396" y="232" width="112" height="98" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="452" y="249" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">burst FIFO</text>
+          <text x="452" y="266" text-anchor="middle" font-size="8.5" fill="#647083">hand-off between</text>
+          <text x="452" y="279" text-anchor="middle" font-size="8.5" fill="#647083">WCK and the core;</text>
+          <text x="452" y="292" text-anchor="middle" font-size="8.5" fill="#647083">holds data for the</text>
+          <text x="452" y="305" text-anchor="middle" font-size="8.5" fill="#647083">read / write latency</text>
+          <line x1="253" y1="318" x2="263" y2="318" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
+          <line x1="385" y1="318" x2="395" y2="318" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
+
+          <!-- Global Buffer (AiM) -->
+          <rect x="120" y="356" width="400" height="110" rx="9" fill="#f3effb" stroke="#6f42c1" stroke-dasharray="5 3"/>
+          <text x="132" y="374" font-size="10" font-weight="bold" fill="#172033">AiM adds: Global Buffer (GB) &mdash; periphery, shared by all 16 banks</text>
+          <text x="132" y="392" font-size="9" fill="#647083">stock: 2 KB of registers = one vector of 64 columns</text>
+          <text x="132" y="407" font-size="9" fill="#647083">with Part IV&rsquo;s P1: 52 KB of SRAM = 26 vectors</text>
+          <text x="132" y="422" font-size="9" fill="#647083">written by WR_GB through the DQ path above</text>
+          <text x="132" y="437" font-size="9" fill="#647083">read out 32 B at a time to all 16 PUs at once; how often it can do</text>
+          <text x="132" y="452" font-size="9" fill="#647083">that is the &ldquo;third clock&rdquo; of &sect;7 (2.5 ns is enough for stock; P1 wants 1 ns)</text>
+          <line x1="452" y1="342" x2="452" y2="355" stroke="#6f42c1" stroke-width="1.2" marker-end="url(#arrCkP)"/>
+
+          <!-- one bank -->
+          <rect x="610" y="34" width="280" height="432" rx="9" fill="#fcfdff" stroke="#d8dee8"/>
+          <text x="750" y="51" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">one bank (16 per channel, identical)</text>
+
+          <!-- row path -->
+          <rect x="620" y="60" width="260" height="126" rx="8" fill="#f1f4f9" stroke="#647083"/>
+          <text x="630" y="76" font-size="10" font-weight="bold" fill="#172033">row path &mdash; no clock; self-timed analog</text>
+          <rect x="630" y="84" width="114" height="34" rx="5" fill="#fff" stroke="#d8dee8"/>
+          <text x="687" y="98" text-anchor="middle" font-size="8.5" fill="#172033">row decoder +</text>
+          <text x="687" y="110" text-anchor="middle" font-size="8.5" fill="#172033">wordline drivers</text>
+          <rect x="752" y="84" width="118" height="34" rx="5" fill="#fff" stroke="#d8dee8"/>
+          <text x="811" y="98" text-anchor="middle" font-size="8.5" fill="#172033">cell array</text>
+          <text x="811" y="110" text-anchor="middle" font-size="8.5" fill="#647083">(capacitors)</text>
+          <rect x="630" y="126" width="240" height="28" rx="5" fill="#fff" stroke="#d8dee8"/>
+          <text x="750" y="144" text-anchor="middle" font-size="8.5" fill="#172033">bit-line sense amplifiers = the row buffer</text>
+          <line x1="744" y1="101" x2="751" y2="101" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <line x1="811" y1="118" x2="811" y2="125" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <text x="630" y="168" font-size="8.5" fill="#647083">ACT &rarr; columns usable after tRCD = 9.4 ns</text>
+          <text x="630" y="180" font-size="8.5" fill="#647083">PRE &rarr; bank re-openable after tRP = 10.6 ns</text>
+
+          <!-- column path -->
+          <rect x="620" y="196" width="260" height="150" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="630" y="212" font-size="10" font-weight="bold" fill="#172033">column path &mdash; paced by commands</text>
+          <text x="630" y="225" font-size="8.5" fill="#647083">one 32 B column per &ge; 2.5 ns (400 MHz-equivalent)</text>
+          <rect x="630" y="234" width="240" height="26" rx="5" fill="#fff" stroke="#d8dee8"/>
+          <text x="750" y="251" text-anchor="middle" font-size="8.5" fill="#172033">column decoder &rarr; column-select pulse</text>
+          <rect x="630" y="266" width="240" height="26" rx="5" fill="#fff" stroke="#d8dee8"/>
+          <text x="750" y="283" text-anchor="middle" font-size="8.5" fill="#172033">local I/O &rarr; global I/O wires (span the bank)</text>
+          <rect x="630" y="298" width="240" height="26" rx="5" fill="#fff" stroke="#d8dee8"/>
+          <text x="750" y="315" text-anchor="middle" font-size="8.5" fill="#172033">I/O sense amps / write drivers &harr; 256-bit latch</text>
+          <line x1="866" y1="154" x2="866" y2="233" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <text x="630" y="339" font-size="8.5" fill="#647083">long, heavily loaded wires: the slow part</text>
+
+          <!-- PU (AiM) -->
+          <rect x="620" y="356" width="260" height="100" rx="8" fill="#f3effb" stroke="#6f42c1" stroke-dasharray="5 3"/>
+          <text x="630" y="374" font-size="10" font-weight="bold" fill="#172033">AiM adds: one processing unit (PU) per bank</text>
+          <text x="630" y="391" font-size="9" fill="#647083">16 bf16 multipliers + adder tree + accumulator</text>
+          <text x="630" y="406" font-size="9" fill="#647083">A input: the 256-bit latch above (16 weights)</text>
+          <text x="630" y="421" font-size="9" fill="#647083">B input: a 32 B slice of the Global Buffer</text>
+          <text x="630" y="436" font-size="9" fill="#647083">its clock is the designer&rsquo;s choice (Fig. 0a-3)</text>
+          <line x1="850" y1="324" x2="850" y2="355" stroke="#6f42c1" stroke-width="1.2" marker-end="url(#arrCkP)"/>
+
+          <!-- cross-domain arrows -->
+          <line x1="520" y1="101" x2="629" y2="101" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <text x="566" y="94" text-anchor="middle" font-size="8.5" fill="#647083">ACT &middot; PRE</text>
+          <path d="M520,140 L565,140 L565,247 L629,247" fill="none" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <text transform="translate(558,240) rotate(-90)" font-size="8.5" fill="#647083">column-command launch</text>
+          <text x="597" y="240" text-anchor="middle" font-size="8" fill="#647083">1 / 2.5 ns</text>
+          <line x1="521" y1="311" x2="629" y2="311" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
+          <text x="572" y="304" text-anchor="middle" font-size="8.5" fill="#647083">256 bit / 2.5 ns</text>
+          <line x1="520" y1="411" x2="619" y2="411" stroke="#6f42c1" stroke-width="1.2" marker-end="url(#arrCkP)"/>
+          <text x="568" y="404" text-anchor="middle" font-size="8.5" fill="#647083">256-bit broadcast</text>
+          <text x="568" y="425" text-anchor="middle" font-size="8.5" fill="#647083">to all 16 PUs</text>
+
+          <!-- pins -->
+          <text x="58" y="50" text-anchor="middle" font-size="9" fill="#647083">pins, from the SoC</text>
+          <rect x="8" y="66" width="100" height="24" rx="5" fill="#fff" stroke="#1f6feb"/>
+          <text x="58" y="82" text-anchor="middle" font-size="9" fill="#172033">CK_t / CK_c</text>
+          <rect x="8" y="112" width="100" height="24" rx="5" fill="#fff" stroke="#1f6feb"/>
+          <text x="58" y="128" text-anchor="middle" font-size="9" fill="#172033">CA[6:0] &middot; CS</text>
+          <line x1="108" y1="78" x2="131" y2="78" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <line x1="108" y1="124" x2="131" y2="124" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+
+          <rect x="8" y="238" width="100" height="22" rx="5" fill="#fff" stroke="#b54708"/>
+          <text x="58" y="253" text-anchor="middle" font-size="9" fill="#172033">WCK_t / WCK_c</text>
+          <rect x="8" y="272" width="100" height="22" rx="5" fill="#fff" stroke="#b54708"/>
+          <text x="58" y="287" text-anchor="middle" font-size="9" fill="#172033">DQ[15:0]</text>
+          <rect x="8" y="306" width="100" height="22" rx="5" fill="#fff" stroke="#b54708"/>
+          <text x="58" y="321" text-anchor="middle" font-size="9" fill="#172033">RDQS (read strobe)</text>
+          <line x1="108" y1="249" x2="131" y2="249" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+          <line x1="109" y1="283" x2="131" y2="283" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
+          <line x1="131" y1="317" x2="109" y2="317" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
+        </svg>
+        <p class="cap">Fig. 0a-2 &mdash; One LPDDR5-6400 die, coloured by timing domain. <b>Blue</b>: logic clocked by CK (800 MHz). <b>Orange</b>: logic clocked by WCK (3.2 GHz, used on both edges). <b>Green</b>: the column path, which fires once per column command and at most once per 2.5 ns. <b>Grey</b>: the row path, which is analog and takes ~10 ns. <b>Dashed purple</b>: what AiM adds. The PU sits <i>behind</i> the 256-bit latch, so it never sees WCK; its data arrives at the column rate. Block-level and illustrative: vendors do not publish floorplans [assumption, see the note below].</p>
+      </div>
+
+      <p><b>The four domains, fastest pin first.</b></p>
+      <ul class="notes">
+        <li><b>CK &mdash; the command clock, 800 MHz (period 1.25 ns).</b> It runs all the time. The seven command/address pins CA[6:0] are sampled on <i>both</i> edges of CK, so a new CA sample arrives every 1.25 / 2 = <b>0.625 ns</b> &mdash; numerically the same 0.625 ns the simulator counts as one cycle (&sect;4). Everything that interprets commands lives here: the CA receivers, the command decoder, the address latches, the mode registers, and the counters that implement read latency and write latency by counting CK edges.</li>
+        <li><b>WCK &mdash; the data clock, 3.2 GHz, both edges = 6,400 transfers/s per pin.</b> One transfer (one <i>beat</i>) lasts 1 / 6.4 GHz = <b>0.156 ns</b> and moves one bit on each of the 16 DQ pins, i.e. 2 B. WCK is exactly 4 &times; CK. The SoC only toggles it around a burst, because a 3.2 GHz clock tree is the most power-hungry thing on a low-power part; at boot the SoC trains the WCK-to-CK phase (&ldquo;WCK2CK leveling&rdquo;) so the two clocks stay aligned. Only the pin circuits and the <b>serializer/deserializer</b> run at this speed. On reads the die sends a strobe, RDQS, back alongside the data.</li>
+        <li><b>The column path &mdash; one event per column command, at most one per 2.5 ns.</b> A column command makes the <i>column decoder</i> fire a <i>column-select pulse</i>; that connects 256 sense amplifiers of the row buffer to the <i>local I/O</i> lines, which drive the long <i>global I/O</i> wires that run the length of the bank; at the far end, <i>I/O sense amplifiers</i> (on a read) or <i>write drivers</i> (on a write) connect them to a <b>256-bit latch</b>. 256 bits = 32 B = one column (the &ldquo;16n prefetch&rdquo; mentioned above: 16 bits for each of the 16 pins). There is no clock ticking here between commands: each stage is triggered by the previous one. The spacing rule tCCD = 4 cycles = <b>2.5 ns</b> means at most 1 / 2.5 ns = <b>400 million columns per second</b>, which is why we describe this path as &ldquo;400 MHz-equivalent&rdquo;.</li>
+        <li><b>The row path &mdash; no clock, analog, ~10 ns.</b> ACT raises a wordline, the capacitors of the row share their charge onto the bit lines, and the bit-line sense amplifiers resolve and latch it. That takes tRCD = 15 cycles = 9.4 ns before the first column may be touched, and closing the row again takes tRP = 17 cycles = 10.6 ns (both are this page&rsquo;s preset, Fig. 0b). Nothing digital can speed this up; it is set by capacitance and sensing margins.</li>
+      </ul>
+
+      <p><b>Wide and slow inside, narrow and fast outside &mdash; the same bandwidth.</b> The serializer is a 16 : 1 gearbox between two of these domains. Inside, a column is 256 wires updated every 2.5 ns: 256 bit &times; 400 MHz = <b>102.4 Gb/s</b>. Outside, it is 16 pins at 6,400 MT/s: 16 &times; 6.4 Gb/s = <b>102.4 Gb/s</b> (= 12.8 GB/s, the channel bandwidth in the table above). The two numbers are equal on purpose: tCCD is chosen so that the core hands over one 256-bit word exactly as fast as the pins can drain it. The burst FIFO between them absorbs the phase difference, and the command decoder is what launches each core event, so CK paces the core and WCK only ever sees finished 256-bit words. As far as the public documentation goes, LPDDR parts carry no PLL or DLL (that is one way they save standby power), so every clock on the die is either a pin clock or a simple division of one [assumption: vendor implementations are not published].</p>
+
+      <div class="fig" id="fig-clock-ruler">
+        <svg viewBox="0 0 900 300" role="img" aria-label="One 2.5 nanosecond column slot drawn on a common ruler for every timing domain. WCK fits 16 beats of 0.156 nanoseconds. The command-address sampling and the simulator fit 4 cycles of 0.625 nanoseconds. CK fits 2 periods of 1.25 nanoseconds. The column path fits exactly one event. Below, three possible processing-unit clocks: 1 gigahertz fits 2.5 periods, 800 megahertz fits 2 periods whose edges coincide with CK, and 400 megahertz fits one period.">
+          <!-- axis -->
+          <g font-size="8.5" fill="#647083" text-anchor="middle">
+            <text x="150" y="22">0</text><text x="325" y="22">0.625 ns</text><text x="500" y="22">1.25 ns</text><text x="675" y="22">1.875 ns</text><text x="850" y="22">2.5 ns</text>
+          </g>
+          <g stroke="#d8dee8" stroke-width="1">
+            <line x1="150" y1="28" x2="150" y2="286"/><line x1="325" y1="28" x2="325" y2="286"/><line x1="500" y1="28" x2="500" y2="286"/><line x1="675" y1="28" x2="675" y2="286"/><line x1="850" y1="28" x2="850" y2="286"/>
+          </g>
+
+          <!-- row 1: WCK beats -->
+          <text x="142" y="52" text-anchor="end" font-size="9" fill="#172033">WCK beats, 0.156 ns each</text>
+          <g fill="#fdf0e6" stroke="#b54708">
+            <rect x="151" y="36" width="41.75" height="24" rx="3"/><rect x="194.75" y="36" width="41.75" height="24" rx="3"/><rect x="238.5" y="36" width="41.75" height="24" rx="3"/><rect x="282.25" y="36" width="41.75" height="24" rx="3"/>
+            <rect x="326" y="36" width="41.75" height="24" rx="3"/><rect x="369.75" y="36" width="41.75" height="24" rx="3"/><rect x="413.5" y="36" width="41.75" height="24" rx="3"/><rect x="457.25" y="36" width="41.75" height="24" rx="3"/>
+            <rect x="501" y="36" width="41.75" height="24" rx="3"/><rect x="544.75" y="36" width="41.75" height="24" rx="3"/><rect x="588.5" y="36" width="41.75" height="24" rx="3"/><rect x="632.25" y="36" width="41.75" height="24" rx="3"/>
+            <rect x="676" y="36" width="41.75" height="24" rx="3"/><rect x="719.75" y="36" width="41.75" height="24" rx="3"/><rect x="763.5" y="36" width="41.75" height="24" rx="3"/><rect x="807.25" y="36" width="41.75" height="24" rx="3"/>
+          </g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="171.9" y="52">2 B</text><text x="215.7" y="52">2 B</text><text x="259.4" y="52">2 B</text><text x="303.1" y="52">2 B</text><text x="346.9" y="52">2 B</text><text x="390.6" y="52">2 B</text><text x="434.4" y="52">2 B</text><text x="478.1" y="52">2 B</text><text x="521.9" y="52">2 B</text><text x="565.6" y="52">2 B</text><text x="609.4" y="52">2 B</text><text x="653.1" y="52">2 B</text><text x="696.9" y="52">2 B</text><text x="740.6" y="52">2 B</text><text x="784.4" y="52">2 B</text><text x="828.1" y="52">2 B</text></g>
+
+          <!-- row 2: CA sample / simulator cycle -->
+          <text x="142" y="84" text-anchor="end" font-size="9" fill="#172033">CA sample = sim. cycle</text>
+          <g fill="#f4f8ff" stroke="#1f6feb">
+            <rect x="151" y="68" width="173" height="24" rx="3"/><rect x="326" y="68" width="173" height="24" rx="3"/><rect x="501" y="68" width="173" height="24" rx="3"/><rect x="676" y="68" width="173" height="24" rx="3"/>
+          </g>
+          <g font-size="8.5" fill="#172033" text-anchor="middle"><text x="237" y="84">0.625 ns</text><text x="412" y="84">0.625 ns</text><text x="587" y="84">0.625 ns</text><text x="762" y="84">0.625 ns</text></g>
+
+          <!-- row 3: CK -->
+          <text x="142" y="116" text-anchor="end" font-size="9" fill="#172033">CK (800 MHz)</text>
+          <g fill="#eaf2ff" stroke="#1f6feb">
+            <rect x="151" y="100" width="348" height="24" rx="3"/><rect x="501" y="100" width="348" height="24" rx="3"/>
+          </g>
+          <g font-size="8.5" fill="#172033" text-anchor="middle"><text x="325" y="116">1.25 ns</text><text x="675" y="116">1.25 ns</text></g>
+
+          <!-- row 4: column -->
+          <text x="142" y="148" text-anchor="end" font-size="9" fill="#172033">column path</text>
+          <rect x="151" y="132" width="698" height="24" rx="3" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="500" y="148" text-anchor="middle" font-size="8.5" fill="#172033">one column event: 32 B from the row buffer to the 256-bit latch (tCCD = 2.5 ns)</text>
+
+          <!-- separator -->
+          <line x1="8" y1="172" x2="892" y2="172" stroke="#d8dee8" stroke-dasharray="4 3"/>
+          <text x="8" y="186" font-size="9" font-weight="bold" fill="#172033">Not fixed by the memory standard: the PU clock</text>
+
+          <!-- row 5: PU 1 GHz -->
+          <text x="142" y="212" text-anchor="end" font-size="9" fill="#172033">PU @ 1 GHz (D = 2.5)</text>
+          <g fill="#f3effb" stroke="#6f42c1">
+            <rect x="151" y="196" width="278" height="24" rx="3"/><rect x="431" y="196" width="278" height="24" rx="3"/>
+            <path d="M849,196 H714 a3,3 0 0 0 -3,3 V217 a3,3 0 0 0 3,3 H849" stroke-dasharray="4 3"/>
+          </g>
+          <g font-size="8.5" fill="#172033" text-anchor="middle"><text x="290" y="212">1 ns</text><text x="570" y="212">1 ns</text><text x="780" y="212">&frac12; period</text></g>
+
+          <!-- row 6: PU 800 MHz -->
+          <text x="142" y="244" text-anchor="end" font-size="9" fill="#172033">PU @ 800 MHz (D = 2)</text>
+          <g fill="#f3effb" stroke="#6f42c1">
+            <rect x="151" y="228" width="348" height="24" rx="3"/><rect x="501" y="228" width="348" height="24" rx="3"/>
+          </g>
+          <g font-size="8.5" fill="#172033" text-anchor="middle"><text x="325" y="244">1.25 ns &mdash; same edges as CK</text><text x="675" y="244">1.25 ns</text></g>
+
+          <!-- row 7: PU 400 MHz -->
+          <text x="142" y="276" text-anchor="end" font-size="9" fill="#172033">PU @ 400 MHz (D = 1)</text>
+          <rect x="151" y="260" width="698" height="24" rx="3" fill="#f3effb" stroke="#6f42c1"/>
+          <text x="500" y="276" text-anchor="middle" font-size="8.5" fill="#172033">2.5 ns &mdash; one PU period per column</text>
+        </svg>
+        <p class="cap">Fig. 0a-3 &mdash; One 2.5 ns column slot, as each domain sees it. Top four rows are fixed by LPDDR5-6400: 16 WCK beats = 4 CA samples (simulator cycles) = 2 CK periods = 1 column. Bottom three rows are <i>choices</i> a PIM designer can make for the PU clock. <b>D</b> = column period / PU period is how many PU periods fit in one column slot; &sect;7 shows that under the stock instruction set only one of them does useful work, whichever row is chosen.</p>
+      </div>
+
+      <p><b>Where AiM plugs in, and why this picture matters for the rest of the page.</b> AiM places one PU at the end of each bank&rsquo;s column path, reading the 256-bit latch directly (Fig. 0a-2, bottom right). Two consequences follow. First, the PU is <i>upstream</i> of the serializer: it never touches the WCK domain, which is how 16 banks can each consume 32 B per column slot &mdash; 16 &times; the bandwidth of the pins &mdash; without any faster I/O. Second, the PU&rsquo;s own clock is <b>not</b> set by JEDEC, because no pin depends on it. The vendor picks it. Fig. 0a-3 shows the three natural picks: keep the <b>1 GHz</b> PU of the fabricated GDDR6-AiM part (on GDDR6 the column period is itself 1 ns, so there PU and column are matched; on LPDDR5 the same PU gets 2.5 periods per column); clock the PU from <b>CK itself at 800 MHz</b> (two periods per column, and since it is the very clock the command decoder already uses, no clock-domain crossing is needed between &ldquo;command decoded&rdquo; and &ldquo;PU fires&rdquo;); or slow it to the <b>400 MHz</b> column rate. Under the stock instruction set all three finish exactly one column of multiplies per 2.5 ns, because the green path, not the purple one, sets the pace &mdash; for the 1 GHz PU that is the 60 % idle time derived in <a href="#where60">&sect;7</a>. The Global Buffer adds one more rate to this list: how often its periphery SRAM can put a fresh 32 B slice on the broadcast bus, the &ldquo;third clock&rdquo; of <a href="#gbrate">&sect;7</a>.</p>
+
+      <div class="callout"><b>How far to trust this picture [assumption].</b> The pin-side numbers (CK 800 MHz, WCK 3.2 GHz, CA on both CK edges, WCK = 4 &times; CK, 16 beats per burst) are properties of the LPDDR5-6400 interface. The 2.5 ns column period and the row timings are this page&rsquo;s simulator preset (Fig. 0b; &sect;4). The block placement is the textbook DRAM organisation, not a vendor floorplan, and several LPDDR5-PIM papers assume a slower, 5 ns period when <i>all</i> banks fire a column at once; with that period every D in Fig. 0a-3 doubles. No number elsewhere on this page is computed from this drawing.</div>
+
       <h3>Why bank groups, and not just more banks?</h3>
       <p>Banks alone give <i>row-level</i> parallelism: while bank 0 is paying tRCD or tRP, bank 1 can be transferring columns, so the pins stay busy across row switches. They do not give <i>column-level</i> parallelism if every bank feeds the same column datapath. At 6,400 MT/s the DRAM core &mdash; column decoder, internal prefetch latch and the wiring from the array to the I/O &mdash; cannot complete one 32 B column access per 2.5 ns from the <i>same</i> group of banks; its cycle time is longer than the burst on the pins. The fix is to give each bank group its own column datapath and let the controller alternate bursts between groups: back-to-back accesses to different groups may be spaced by the short tCCD, accesses to the same group need the longer core time (tCCD_L). Interleaving four groups hides the slow core behind the fast pins. This is why LPDDR5 requires bank-group (or 8-bank) mode at its top data rates, and why DDR4/5 and GDDR6 have the same structure. Write-to-read turnarounds are also cheaper across groups (the preset&rsquo;s nWTRS = 5 vs nWTRL = 10).</p>
       <p>For this page the distinction barely matters, and it is worth knowing why. The simulator&rsquo;s LPDDR5-AiM preset uses one tCCD = 4 for both cases, and AiM&rsquo;s <code class="k">MAC_ABK</code> is an all-bank command: all 16 banks read their column <i>internally and simultaneously</i>, none of the data crosses the shared I/O, so the per-group column datapath is never the bottleneck. The pins-side limit that bank groups exist to work around is exactly the limit AiM sidesteps by computing inside the bank.</p>
