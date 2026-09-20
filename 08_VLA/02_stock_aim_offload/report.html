@@ -67,15 +67,18 @@
   <nav class="toc" id="toc">
     <div class="crumb"><a href="../../index.html">&larr; Report Archive</a></div>
     <a href="#overview">Overview</a>
-    <a href="#lpddr">1 &middot; LPDDR5 in five minutes</a>
-    <a href="#aim">2 &middot; LPDDR5-AiM: the machine</a>
-    <a href="#isa">3 &middot; The ISR instruction set</a>
-    <a href="#sim">4 &middot; The simulator</a>
-    <a href="#what">5 &middot; What to offload, and why</a>
-    <a href="#mapping">6 &middot; Instruction-level mapping</a>
-    <a href="#exec">7 &middot; Stock AiM GEMV, cycle by cycle</a>
-    <a href="#problem">8 &middot; The problem, quantified</a>
-    <a href="#results">9 &middot; Results, and the root cause</a>
+    <a href="#lpddr">1 &middot; LPDDR5 from the outside</a>
+    <a href="#die">2 &middot; Inside the die</a>
+    <a href="#ops">3 &middot; Operating LPDDR5</a>
+    <a href="#topim">4 &middot; From DRAM to PIM</a>
+    <a href="#aim">5 &middot; LPDDR5-AiM: the machine</a>
+    <a href="#isa">6 &middot; The ISR instruction set</a>
+    <a href="#sim">7 &middot; The simulator</a>
+    <a href="#what">8 &middot; What to offload, and why</a>
+    <a href="#mapping">9 &middot; Instruction-level mapping</a>
+    <a href="#exec">10 &middot; Stock AiM GEMV, cycle by cycle</a>
+    <a href="#problem">11 &middot; The problem, quantified</a>
+    <a href="#results">12 &middot; Results, and the root cause</a>
     <a href="#series">Series &amp; sources</a>
   </nav>
 
@@ -97,18 +100,160 @@
       <div class="headline">
         <div class="kpi"><div class="v">28.5 ms</div><div class="l">stock AiM AE step @ 16 channels (hybrid mapping)</div></div>
         <div class="kpi"><div class="v">3.15 / 6.30 ms</div><div class="l">XPU-only step: bandwidth floor / optimistic 2&times;</div></div>
-        <div class="kpi"><div class="v">16&times;</div><div class="l">internal:external bandwidth ratio of AiM (real, and yet&hellip;)</div></div>
+        <div class="kpi"><div class="v">16&times;</div><div class="l">internal:external bandwidth ratio assumed for AiM (GDDR6-AiM&rsquo;s ratio; published LPDDR5-PIM: 8&times;) &mdash; and yet&hellip;</div></div>
         <div class="kpi"><div class="v">S &le; 16</div><div class="l">the token-count regime where stock AiM actually wins</div></div>
       </div>
+          <p><b>How this page is organised.</b> &sect;1&ndash;4 are an LPDDR5 primer for architects: the interface (&sect;1), the inside of the die (&sect;2), commands and timing (&sect;3), and what the DRAM substrate allows a PIM designer to build (&sect;4). &sect;5&ndash;7 describe the AiM machine, its instruction set and the simulator. &sect;8&ndash;10 map the &pi;<sub>0</sub> action expert onto it and walk one GEMV cycle by cycle. &sect;11&ndash;12 quantify the problem and state its root cause. Readers who know DRAM can start at <a href="#aim">&sect;5</a>; readers who only want the result can jump to <a href="#problem">&sect;11</a>.</p>
     </section>
 
 
     <section class="card" id="lpddr">
-      <h2><span class="num">1</span>LPDDR5 in five minutes (read this first)</h2>
-      <p class="lead">Before the PIM machine, the plain memory it lives in. If you already know what a row buffer and tCCD are, skip to &sect;1. If not, the three ideas below are all you need for the rest of the page.</p>
+      <h2><span class="num">1</span>LPDDR5 from the outside: package, channel, pins, power</h2>
+      <p class="lead">&sect;1&ndash;&sect;4 are a self-contained LPDDR5 primer written for a computer architect: &sect;1 is what the SoC sees, &sect;2 is what is inside the die, &sect;3 is how it is operated (commands, timing, refresh, power), and &sect;4 is what all of that implies for putting compute inside it. If you already know what a row buffer, a bank group and WCK are, skip to <a href="#aim">&sect;5</a>. Sources are listed by topic at the end of the page; values that are <i>this page&rsquo;s modelling choice</i> rather than a property of real parts are marked <b>[preset]</b> or <b>[assumption]</b>.</p>
 
-      <h3>Structure: channel &rarr; bank &rarr; row &rarr; column</h3>
-      <p>A phone- or robot-class SoC talks to LPDDR5 over several independent <b>channels</b>. Each channel is 16 data pins (x16) running at 6,400 MT/s, so it can move <b>12.8 GB/s</b> &mdash; Jetson AGX Orin has 16 such channels, 204.8 GB/s in total. Inside a channel are <b>16 banks</b> (4 bank groups &times; 4). A bank is a huge grid of capacitors, the <b>cell array</b>, organised in rows and columns. You cannot read a capacitor directly; you first <b>activate</b> a row, which copies the entire row (32 KB here) into a strip of sense amplifiers called the <b>row buffer</b>. Only then can you read or write <b>columns</b> of that row, 32 bytes at a time. When you need a different row, you <b>precharge</b> (close) the bank and activate again.</p>      <p><b>Two words that trip people up.</b> <i>Activate moves the whole row.</i> A cell is a capacitor with no drive strength, so ACT raises one wordline and every capacitor on that row is sensed and latched at once; you cannot open part of a row, which is why tRCD is paid in full even if you will read one column. The simulator&rsquo;s organisation makes a row 32 KB; a real LPDDR5 die opens about 2 KB per bank on a x16 channel &mdash; our traces never use more than 64 columns (2 KB) of any row, so nothing on this page depends on the difference. <i>A burst is the data phase of one column command.</i> The DQ bus is 16 bits wide, so one RD cannot deliver 32 B in a single beat: the array reads 32 B from the row buffer in parallel (the 16n prefetch) and the I/O shifts it out as 16 beats of 2 B, 2.5 ns at 6,400 MT/s &mdash; the 4-cycle BL in Fig. 0b. Bursts exist because 16 fast pins are cheaper than 256 slow ones and one command per 32 B is a rate the command bus can sustain; tCCD equals the burst time so commands arrive exactly as fast as the pins drain them. &ldquo;One column = 32 B&rdquo; and &ldquo;one burst = 32 B&rdquo; are the same fact seen from the array and from the pins. AiM keeps the column but skips the pins: <code class="k">MAC_ABK</code> reads the same 32 B column in every bank and feeds it to the 16-lane MAC directly, and 16 lanes &times; fp16 = 32 B is exactly why the lane width equals the burst size.</p>
+      <h3>What &ldquo;LP&rdquo; buys, and what it costs</h3>
+      <p>LPDDR (&ldquo;low-power double data rate&rdquo;) is the DRAM family built for phones, tablets, cars and now robots. It is the same 1-transistor-1-capacitor cell array as desktop DDR, wrapped in an interface designed around one goal: <b>burn almost nothing when idle, and as little as possible per bit when busy</b>. Four design decisions follow from that goal, and each one shows up later on this page:</p>
+      <ul class="notes">
+        <li><b>Short, point-to-point wires.</b> LPDDR does not go on a DIMM: the packages are soldered millimetres from the SoC or on top of it (recently also on a short-trace LPCAMM2 module), so the signalling can use a very small swing: LPDDR5 I/O runs from a <b>0.5 V</b> rail (0.3 V in a low-speed mode), terminated to ground, with a high level of only VDDQ/2 = 250 mV. A line driven low burns no static current.</li>
+        <li><b>No delay-locked loop on the DRAM.</b> Desktop DDR keeps a DLL running so that read data leaves the chip aligned to the clock. LPDDR drops it to save standby power. The price is that the delay from clock to data is wide and drifts with temperature and voltage (LPDDR5: 0.65&ndash;1.6 ns, several bit-times at 6,400 MT/s), so the <i>SoC</i> must measure it at boot and keep tracking it &mdash; that is what &ldquo;training&rdquo; is (&sect;3). It also means the die has <b>no clock multiplier</b>: every clock on the die is one the SoC sent, or a division of it (&sect;2).</li>
+        <li><b>The fast clock is only on when data moves.</b> LPDDR5 splits the clock in two: a slow command clock (CK) that runs whenever the memory is in operation and a fast data clock (WCK) that the SoC may stop between transfers.</li>
+        <li><b>Many ways to go to sleep.</b> Power-down, self-refresh, deep-sleep, partial-array refresh, and up to three pre-trained frequency set points the SoC can hop between in a fraction of a microsecond.</li>
+      </ul>
+
+      <h3>Vocabulary: package, channel, rank, die</h3>
+      <p>Four words are used loosely in papers; here is what they mean for LPDDR5.</p>
+      <ul class="notes">
+        <li>A <b>die</b> is one piece of DRAM silicon: 8, 12 or 16 Gb are the common LPDDR5 densities (the standard defines 2&ndash;32 Gb).</li>
+        <li>A <b>channel</b> is one complete, independent interface: its own clock, its own command/address pins, and <b>16 data pins (x16)</b>. A channel can be driven without regard to any other channel. At 6,400 MT/s a channel moves 16 pins &times; 6,400 Mb/s = 102.4 Gb/s = <b>12.8 GB/s</b>. Classic LPDDR5 dies expose one x16 channel per die; some newer LPDDR5X dies expose two.</li>
+        <li>A <b>rank</b> is a set of dies that share one channel&rsquo;s wires and are picked by separate chip-select (CS) pins. Ranks add capacity, not bandwidth: only one rank drives the data pins at a time.</li>
+        <li>A <b>package</b> is the soldered part. It stacks several dies and brings out 2 or 4 channels (a &ldquo;x32&rdquo; or &ldquo;x64&rdquo; package), each with 1 or 2 ranks.</li>
+      </ul>
+
+      <div class="fig" id="fig-system">
+        <svg viewBox="0 0 900 330" role="img" aria-label="System view of an LPDDR5 memory subsystem. Left: the SoC with a memory controller and a PHY that contains the PLL. Middle: sixteen independent x16 channels leave the SoC, grouped four to a package, four packages in total for Jetson AGX Orin. Right: one channel zoomed, showing its signals: differential clock CK, chip select CS, seven command-address pins, two differential WCK data clocks, sixteen DQ data pins, two DMI pins and two RDQS read strobes, connecting to one or two ranks of DRAM dies.">
+          <defs><marker id="arrSys" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
+          <!-- SoC -->
+          <rect x="10" y="40" width="170" height="250" rx="9" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="95" y="60" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">SoC (e.g. Orin)</text>
+          <rect x="24" y="74" width="142" height="62" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="95" y="92" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">memory controller</text>
+          <text x="95" y="107" text-anchor="middle" font-size="8.5" fill="#647083">schedules commands,</text>
+          <text x="95" y="120" text-anchor="middle" font-size="8.5" fill="#647083">enforces every timing rule</text>
+          <rect x="24" y="148" width="142" height="128" rx="6" fill="#fff" stroke="#d8dee8"/>
+          <text x="95" y="166" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">PHY</text>
+          <text x="95" y="182" text-anchor="middle" font-size="8.5" fill="#647083">the only PLL of the memory</text>
+          <text x="95" y="195" text-anchor="middle" font-size="8.5" fill="#647083">subsystem is here: it makes CK</text>
+          <text x="95" y="208" text-anchor="middle" font-size="8.5" fill="#647083">and WCK = 4 &times; CK</text>
+          <text x="95" y="226" text-anchor="middle" font-size="8.5" fill="#647083">per-bit delay lines, Vref,</text>
+          <text x="95" y="239" text-anchor="middle" font-size="8.5" fill="#647083">trained at boot because</text>
+          <text x="95" y="252" text-anchor="middle" font-size="8.5" fill="#647083">the DRAM has no DLL</text>
+
+          <!-- packages -->
+          <text x="330" y="30" text-anchor="middle" font-size="10" font-weight="bold" fill="#172033">4 packages &times; 4 channels = 16 channels (256 data pins)</text>
+          <g>
+            <rect x="240" y="40" width="180" height="56" rx="7" fill="#fcfdff" stroke="#d8dee8"/>
+            <rect x="240" y="104" width="180" height="56" rx="7" fill="#fcfdff" stroke="#d8dee8"/>
+            <rect x="240" y="168" width="180" height="56" rx="7" fill="#fcfdff" stroke="#d8dee8"/>
+            <rect x="240" y="232" width="180" height="56" rx="7" fill="#fcfdff" stroke="#d8dee8"/>
+          </g>
+          <g font-size="9" fill="#172033" text-anchor="middle">
+            <text x="330" y="56">package 0 (x64)</text><text x="330" y="120">package 1 (x64)</text><text x="330" y="184">package 2 (x64)</text><text x="330" y="248">package 3 (x64)</text>
+          </g>
+          <g fill="#eaf2ff" stroke="#1f6feb">
+            <rect x="250" y="64" width="36" height="22" rx="3"/><rect x="292" y="64" width="36" height="22" rx="3"/><rect x="334" y="64" width="36" height="22" rx="3"/><rect x="376" y="64" width="36" height="22" rx="3" stroke-width="2"/>
+            <rect x="250" y="128" width="36" height="22" rx="3"/><rect x="292" y="128" width="36" height="22" rx="3"/><rect x="334" y="128" width="36" height="22" rx="3"/><rect x="376" y="128" width="36" height="22" rx="3"/>
+            <rect x="250" y="192" width="36" height="22" rx="3"/><rect x="292" y="192" width="36" height="22" rx="3"/><rect x="334" y="192" width="36" height="22" rx="3"/><rect x="376" y="192" width="36" height="22" rx="3"/>
+            <rect x="250" y="256" width="36" height="22" rx="3"/><rect x="292" y="256" width="36" height="22" rx="3"/><rect x="334" y="256" width="36" height="22" rx="3"/><rect x="376" y="256" width="36" height="22" rx="3"/>
+          </g>
+          <g font-size="8" fill="#172033" text-anchor="middle">
+            <text x="268" y="79">ch x16</text><text x="310" y="79">ch x16</text><text x="352" y="79">ch x16</text><text x="394" y="79">ch x16</text>
+          </g>
+          <g stroke="#647083" stroke-width="1.2">
+            <line x1="180" y1="68" x2="239" y2="68" marker-end="url(#arrSys)" marker-start="url(#arrSys)"/>
+            <line x1="180" y1="132" x2="239" y2="132" marker-end="url(#arrSys)" marker-start="url(#arrSys)"/>
+            <line x1="180" y1="196" x2="239" y2="196" marker-end="url(#arrSys)" marker-start="url(#arrSys)"/>
+            <line x1="180" y1="260" x2="239" y2="260" marker-end="url(#arrSys)" marker-start="url(#arrSys)"/>
+          </g>
+          <text x="210" y="60" text-anchor="middle" font-size="8" fill="#647083">4 ch</text>
+          <text x="330" y="308" text-anchor="middle" font-size="9" fill="#647083">16 &times; 12.8 GB/s = 204.8 GB/s</text>
+
+          <!-- zoom lines -->
+          <line x1="412" y1="64" x2="470" y2="40" stroke="#1f6feb" stroke-dasharray="3 3"/>
+          <line x1="412" y1="86" x2="470" y2="290" stroke="#1f6feb" stroke-dasharray="3 3"/>
+
+          <!-- one channel -->
+          <rect x="470" y="40" width="420" height="250" rx="9" fill="#fcfdff" stroke="#1f6feb"/>
+          <text x="680" y="58" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">one x16 channel = one independent interface</text>
+          <g font-size="9" fill="#172033">
+            <text x="484" y="84">CK_t / CK_c</text><text x="484" y="108">CS0 (CS1)</text><text x="484" y="132">CA[6:0]</text>
+            <text x="484" y="164">WCK0, WCK1 (diff.)</text><text x="484" y="188">DQ[15:0]</text><text x="484" y="212">DMI[1:0]</text><text x="484" y="236">RDQS0, RDQS1 (diff.)</text><text x="484" y="262">RESET_n, ZQ</text>
+          </g>
+          <g font-size="8.5" fill="#647083">
+            <text x="600" y="84">command clock, 800 MHz, free-running in operation</text>
+            <text x="600" y="108">&ldquo;a command is on CA now&rdquo;; one CS per rank</text>
+            <text x="600" y="132">7 command/address pins, both CK edges</text>
+            <text x="600" y="164">data clock, 3.2 GHz, one per byte</text>
+            <text x="600" y="188">16 data pins, both WCK edges = 6,400 MT/s</text>
+            <text x="600" y="212">data mask / bus inversion / ECC parity</text>
+            <text x="600" y="236">read strobe the DRAM sends back (optional)</text>
+            <text x="600" y="262">reset; 240 &#8486; reference for driver calibration</text>
+          </g>
+          <line x1="484" y1="142" x2="876" y2="142" stroke="#d8dee8"/>
+          <line x1="484" y1="246" x2="876" y2="246" stroke="#d8dee8"/>
+          <text x="680" y="281" text-anchor="middle" font-size="8.5" fill="#647083">command group (top) &middot; data group, split into two bytes (middle) &middot; housekeeping (bottom)</text>
+        </svg>
+        <p class="cap">Fig. L1 &mdash; The memory subsystem this series compares against. NVIDIA specifies Jetson AGX Orin 64GB as &ldquo;256-bit LPDDR5, 204.8 GB/s, 3,200 MHz&rdquo; (3,200 MHz is the WCK frequency, i.e. LPDDR5-6400): 256 data pins = <b>16 independent x16 channels</b>. A teardown reports four 16 GB packages, i.e. x64 each, which is how the figure draws it [the package count is not in NVIDIA&rsquo;s datasheet]. The right half lists every signal of one channel; note there is no clock-enable pin &mdash; LPDDR5 enters and leaves power-down by command.</p>
+      </div>
+
+      <div class="scroll">
+      <table>
+        <thead><tr><th>platform</th><th>memory, as specified by NVIDIA</th><th class="num">data pins</th><th class="num">x16 channels</th><th class="num">peak bandwidth</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">Jetson Orin Nano 8GB</td><td>128-bit LPDDR5, 2,133 MHz</td><td class="num">128</td><td class="num">8</td><td class="num">68 GB/s</td></tr>
+          <tr><td class="rowlabel">Jetson Orin NX</td><td>128-bit LPDDR5, 3,200 MHz</td><td class="num">128</td><td class="num">8</td><td class="num">102.4 GB/s</td></tr>
+          <tr><td class="rowlabel">Jetson AGX Orin 64GB</td><td>256-bit LPDDR5, 3,200 MHz</td><td class="num">256</td><td class="num">16</td><td class="num"><b>204.8 GB/s</b></td></tr>
+          <tr><td class="rowlabel">Jetson Thor T5000</td><td>256-bit LPDDR5X, 4,266 MHz, 128 GB (8 &times; 16 GB)</td><td class="num">256</td><td class="num">16</td><td class="num">273 GB/s</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Peak bandwidth is nothing more than pins &times; rate: 256 &times; 6,400 Mb/s / 8 = 204.8 GB/s. This is why Parts II&ndash;IV count AiM in <i>channels</i>: <b>16 AiM channels have exactly the pins, and therefore exactly the external bandwidth, of an AGX Orin</b>; 8 channels are an Orin NX.</p>
+
+      <h3>Four supply rails</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>rail</th><th class="num">voltage</th><th>what it powers</th><th>why it matters here</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">VDD1</td><td class="num">1.8 V</td><td>the wordline boost pump and other high-voltage core circuits; draws little current</td><td>an access transistor needs a gate voltage well above the cell voltage to pass a full &lsquo;1&rsquo;</td></tr>
+          <tr><td class="rowlabel">VDD2H</td><td class="num">1.05 V</td><td>the main core and periphery logic: decoders, sense amplifiers, datapath</td><td>this is the rail an in-die PU would sit on; GDDR6-AiM&rsquo;s 1 GHz PU was built at 1.25 V</td></tr>
+          <tr><td class="rowlabel">VDD2L</td><td class="num">0.9 V</td><td>optional lower core rail (&ldquo;DVFSC&rdquo;); may be tied to VDD2H</td><td>only usable up to 1,600 Mb/s, so not at the speeds on this page</td></tr>
+          <tr><td class="rowlabel">VDDQ</td><td class="num">0.5 V (0.3 V)</td><td>the I/O drivers</td><td>0.3 V (&ldquo;DVFSQ&rdquo;) requires termination off, i.e. low speed</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>For scale: a Micron LPDDR5X x16 channel reading flat-out at 8,533 MT/s is specified at a maximum of about 382 mA on VDD2H, 121 mA on VDDQ and 16 mA on VDD1, i.e. roughly <b>0.5 W</b> or 3.6 pJ per bit including the core; LPDDR5-6400 parts are specified at 0.35&ndash;0.46 W, <b>3.4&ndash;4.5 pJ per bit</b> [our arithmetic on datasheet maxima; real parts draw less]. Idle it is ~30 mW, in power-down ~5 mW, in self-refresh under 1 mW at 25&nbsp;&deg;C. Keep the ~0.5 W in mind for &sect;4: it is what the die&rsquo;s power grid is sized for with one column path active at a time; an all-bank PIM command turns on sixteen.</p>
+
+      <h3>The generations, for orientation</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th></th><th>LPDDR4X</th><th>LPDDR5 (2019)</th><th>LPDDR5X (2021)</th><th>LPDDR6 (2025)</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">top data rate / pin</td><td>4,266 MT/s</td><td><b>6,400 MT/s</b></td><td>8,533 MT/s in the standard; 9,600 parts ship</td><td>10,667&ndash;14,400 MT/s</td></tr>
+          <tr><td class="rowlabel">core / I/O voltage</td><td>1.1 V / 0.6 V</td><td>1.05 (0.9) V / 0.5 (0.3) V</td><td>same</td><td>lower again</td></tr>
+          <tr><td class="rowlabel">command bus</td><td>6 pins, one edge, 2-cycle commands, clock up to 2,133 MHz</td><td><b>7 pins, both edges, 1-cycle commands, clock &le; 800 MHz</b></td><td>same, clock &le; 1,067 MHz at 8,533 (1,200 MHz at 9,600)</td><td>per-sub-channel</td></tr>
+          <tr><td class="rowlabel">data clocking</td><td>bidirectional strobe (DQS)</td><td><b>WCK from the SoC + optional RDQS back</b></td><td>same, plus equalisation</td><td>24-bit channel = two 12-bit sub-channels</td></tr>
+          <tr><td class="rowlabel">new in this generation</td><td>&mdash;</td><td>bank groups, link ECC, deep-sleep, data-copy, write-X, three frequency set points; RowHammer refresh management from the 2020 revision</td><td>Tx/Rx equalisation, adaptive refresh management</td><td>on-die ECC, per-row activation counting, CA parity</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>The single most important change from LPDDR4 to LPDDR5 for this page is the clocking row: <b>the command clock got <i>slower</i> (2,133 &rarr; 800 MHz) while the data got faster</b>, because a separate data clock carries the speed. &sect;2 shows what that does to the inside of the die.</p>
+    </section>
+
+    <section class="card" id="die">
+      <h2><span class="num">2</span>Inside the die: cell, row buffer, bank, bank group, and four timing domains</h2>
+      <p class="lead">Now open the package. This section goes from the top down once (channel &rarr; bank &rarr; row &rarr; column, Fig. 0a), then from the bottom up (cell &rarr; MAT &rarr; bank, Fig. L2&ndash;L3), and ends with the two facts that shape PIM: the column cycle of a bank group is slower than the pins (Fig. L4), and the die runs on four different time bases (Fig. 0a-2).</p>
+
+      <h3 id="hier">Structure: channel &rarr; bank &rarr; row &rarr; column</h3>
+      <p>A phone- or robot-class SoC talks to LPDDR5 over several independent <b>channels</b>. Each channel is 16 data pins (x16) running at 6,400 MT/s, so it can move <b>12.8 GB/s</b> &mdash; Jetson AGX Orin has 16 such channels, 204.8 GB/s in total. Inside one die (one rank of a channel) are <b>16 banks</b> (4 bank groups &times; 4 at this speed). A bank is a huge grid of capacitors, the <b>cell array</b>, organised in rows and columns. You cannot read a capacitor directly; you first <b>activate</b> a row, which copies the entire row (32 KB here) into a strip of sense amplifiers called the <b>row buffer</b>. Only then can you read or write <b>columns</b> of that row, 32 bytes at a time. When you need a different row, you <b>precharge</b> (close) the bank and activate again.</p>      <p><b>Two words that trip people up.</b> <i>Activate moves the whole row.</i> A cell is a capacitor with no drive strength, so ACT raises one wordline and every capacitor on that row is sensed and latched at once; you cannot open part of a row, which is why tRCD is paid in full even if you will read one column. The simulator&rsquo;s organisation makes a row 32 KB; a real LPDDR5 die opens about 2 KB per bank on a x16 channel &mdash; our traces never use more than 64 columns (2 KB) of any row, so nothing on this page depends on the difference. <i>A burst is the data phase of one column command.</i> The DQ bus is 16 bits wide, so one RD cannot deliver 32 B in a single beat: the array reads 32 B from the row buffer in parallel (the &ldquo;16n prefetch&rdquo;, below) and the I/O shifts it out as 16 beats of 2 B, 2.5 ns at 6,400 MT/s &mdash; the 4-cycle BL in Fig. 0b (&sect;3). Bursts exist because 16 fast pins are cheaper than 256 slow ones and one command per 32 B is a rate the command bus can sustain; the column spacing to a <i>different bank group</i> equals the burst time, so a controller that alternates groups issues commands exactly as fast as the pins drain them (the next subsections explain why the group matters). &ldquo;One column = 32 B&rdquo; and &ldquo;one burst = 32 B&rdquo; are the same fact seen from the array and from the pins. AiM keeps the column but skips the pins: <code class="k">MAC_ABK</code> reads the same 32 B column in every bank and feeds it to the 16-lane MAC directly, and 16 lanes &times; bf16 = 32 B is exactly why the lane width equals the burst size.</p>
 
       <div class="fig" id="fig-lpddr">
         <svg viewBox="0 0 900 340" role="img" aria-label="LPDDR5 channel block diagram. A memory controller drives a command/address bus and a 16-bit data bus into one channel. The channel holds 4 bank groups of 4 banks. One bank is zoomed: a cell array of rows and columns, a row decoder, a row buffer of sense amplifiers holding one open 32 KB row, and a column decoder that moves one 32-byte column between the row buffer and the data bus.">
@@ -151,7 +296,7 @@
           </g>
           <rect x="612" y="140" width="258" height="16" fill="#e7f0fe" stroke="#1f6feb"/>
           <text x="741" y="152" text-anchor="middle" font-size="8" fill="#172033">row g: one 32 KB row = 1,024 columns &times; 32 B</text>
-          <text x="741" y="184" text-anchor="middle" font-size="8.5" fill="#647083">a column = 32 B = 16 fp16 numbers</text>
+          <text x="741" y="184" text-anchor="middle" font-size="8.5" fill="#647083">a column = 32 B = 16 bf16 numbers</text>
           <line x1="741" y1="196" x2="741" y2="212" stroke="#1f6feb" stroke-width="1.6" marker-end="url(#arrF)"/>
           <text x="752" y="208" font-size="8" fill="#1f6feb">ACT: row &rarr; row buffer (slow: tRCD)</text>
           <rect x="606" y="214" width="270" height="24" fill="#e7f0fe" stroke="#1f6feb"/>
@@ -166,7 +311,7 @@
         <p class="cap">Fig. 0a &mdash; What a DRAM channel is made of. Everything below reduces to three verbs: <b>open a row</b> (ACT), <b>move one column</b> (RD/WR), <b>close the row</b> (PRE). Opening is slow, moving columns from an open row is fast, and a channel can only move one column every tCCD.</p>
       </div>
 
-      <p><b>Beats are not cycles.</b> The 16 beats of a burst happen <i>inside</i> the 4-cycle BL, not one per cycle: LPDDR5 clocks its data pins with a strobe several times faster than the command clock and transfers on both edges, so the pins run at four transfers per simulator cycle. tCCD is set equal to BL on purpose &mdash; the next column command is allowed exactly when the previous burst ends, so back-to-back reads keep the pins 100 % busy with no gap and no collision. That is the 12.8 GB/s in Fig. 0b(b); 64 cycles per 32 B would be 0.8 GB/s, sixteen times too slow.</p>
+      <p><b>Beats are not cycles.</b> The 16 beats of a burst happen <i>inside</i> the 4-cycle BL, not one per cycle: LPDDR5 clocks its data pins with a strobe several times faster than the command clock and transfers on both edges, so the pins run at four transfers per simulator cycle. The column spacing (tCCD) to another bank group is set equal to BL on purpose &mdash; the next column command is allowed exactly when the previous burst ends, so back-to-back reads that alternate bank groups keep the pins 100 % busy with no gap and no collision. (The simulator preset uses this 4-cycle spacing for every column command.) That is the 12.8 GB/s in Fig. 0b(b) (&sect;3); 64 cycles per 32 B would be 0.8 GB/s, sixteen times too slow.</p>
       <div class="scroll">
       <table>
         <thead><tr><th>quantity</th><th class="num">value</th><th>note</th></tr></thead>
@@ -174,18 +319,216 @@
           <tr><td class="rowlabel">DQ pin rate</td><td class="num">6,400 MT/s</td><td>LPDDR5-6400, 16 pins</td></tr>
           <tr><td class="rowlabel">one beat</td><td class="num">0.156 ns</td><td>2 B (16 pins &times; 1 bit)</td></tr>
           <tr><td class="rowlabel">one burst = 16 beats</td><td class="num">2.5 ns = 32 B</td><td>the data phase of one RD or WR</td></tr>
-          <tr><td class="rowlabel">one simulator cycle</td><td class="num">0.625 ns</td><td>tCK convention (&sect;4)</td></tr>
+          <tr><td class="rowlabel">one simulator cycle</td><td class="num">0.625 ns</td><td>this page&rsquo;s time unit: half a real clock period (&sect;3, &sect;7)</td></tr>
           <tr><td class="rowlabel">BL = tCCD</td><td class="num">4 cycles</td><td>2.5 ns / 0.625 ns; 4 beats per cycle</td></tr>
           <tr><td class="rowlabel">per-channel bandwidth</td><td class="num">32 B / 2.5 ns = 12.8 GB/s</td><td>&times; 16 channels = 204.8 GB/s (Orin); 623 MB / 204.8 GB/s = 3.04 ms of the 3.15 ms XPU floor</td></tr>
         </tbody>
       </table>
       </div>
 
+      <h3 id="cell">The cell, and why opening a row takes 18 ns</h3>
+      <p>A DRAM bit is a <b>capacitor</b> (a few femtofarads in a modern process) behind one <b>access transistor</b>. The transistor&rsquo;s gate is the <b>wordline</b> (one per row); its other side is the <b>bitline</b> (one per column of cells), which runs past about 512&ndash;1,024 cells to a <b>bit-line sense amplifier</b> (BLSA). The bitline is a long wire with several times the capacitance of the cell, and that ratio is the origin of every row timing parameter:</p>
+      <ul class="notes">
+        <li><b>Charge sharing.</b> Before an access, both inputs of every sense amplifier are held at half the supply voltage. ACT boosts one wordline (from the 1.8 V rail), which connects every cell on that row to its bitline. The tiny cell dumps its charge onto the big bitline and moves it by only about a hundred millivolts or less, up for a stored 1, down for a 0. The cell has now lost its value: <b>a DRAM read is destructive</b>.</li>
+        <li><b>Sensing.</b> The sense amplifier is a cross-coupled latch that regenerates that small difference to full rail. Once the bitline is far enough along, a column may be read: that delay is <b>tRCD</b> (row-to-column delay), 18 ns.</li>
+        <li><b>Restore.</b> The same amplifier, still connected to the cell through the open wordline, pushes the full level back into the capacitor. Only when that is finished may the row be closed: <b>tRAS</b>, 42 ns from ACT. After a write, the new data needs the same treatment: <b>tWR</b>, 34 ns.</li>
+        <li><b>Precharge.</b> PRE drops the wordline (isolating the restored cells) and pulls both sides of every amplifier back to the half-supply level, ready for the next row: <b>tRP</b>, 18 ns for one bank and 21 ns when all banks precharge together (presumably because 16 banks doing it at once pull more current).</li>
+      </ul>
+      <p>These are analog settling times set by capacitance, sensing margin and leakage, which is why they have barely moved in twenty years of DRAM generations while pin speeds rose tenfold. LPDDR5 specifies them in nanoseconds, not clock cycles, for exactly that reason: <b>tRCD 18 ns, tRAS 42 ns, tRP 18 / 21 ns, tWR 34 ns</b>, and one full open-close cycle of a bank, tRC = tRAS + tRP = <b>60 ns</b>.</p>
+
+      <div class="fig" id="fig-sense">
+        <svg viewBox="0 0 900 310" role="img" aria-label="Voltage versus time for one DRAM row access. The bitline and its complement start at half supply. After ACT the wordline rises and charge sharing nudges the bitline up by roughly a hundred millivolts while the cell voltage collapses to the same level. The sense amplifier then drives the bitline to full supply and the complement to zero; the first column can be read at tRCD equals 18 nanoseconds. The cell is pulled back to full level by about 42 nanoseconds, tRAS, when PRE may be issued. Precharge returns both bitlines to half supply within tRP equals 18 nanoseconds, for a total cycle tRC of 60 nanoseconds.">
+          <!-- phase bands -->
+          <rect x="115" y="50" width="50" height="220" fill="#fdf0e6"/>
+          <rect x="165" y="50" width="150" height="220" fill="#eaf2ff"/>
+          <rect x="315" y="50" width="300" height="220" fill="#e7f5ec"/>
+          <rect x="615" y="50" width="225" height="220" fill="#f1f4f9"/>
+          <g font-size="9" fill="#172033" text-anchor="middle" font-weight="bold">
+            <text x="140" y="64">share</text><text x="240" y="64">sense &amp; amplify</text><text x="465" y="64">restore the cells</text><text x="727" y="64">precharge (equalise)</text>
+          </g>
+          <!-- axes -->
+          <line x1="90" y1="270" x2="850" y2="270" stroke="#647083"/>
+          <line x1="90" y1="50" x2="90" y2="270" stroke="#647083"/>
+          <g font-size="9" fill="#647083" text-anchor="end"><text x="84" y="94">VDD</text><text x="84" y="174">VDD / 2</text><text x="84" y="254">0</text></g>
+          <g stroke="#d8dee8" stroke-dasharray="3 3"><line x1="90" y1="90" x2="850" y2="90"/><line x1="90" y1="170" x2="850" y2="170"/><line x1="90" y1="250" x2="850" y2="250"/></g>
+          <g font-size="8.5" fill="#647083" text-anchor="middle">
+            <text x="90" y="284">0</text><text x="315" y="284">18 ns</text><text x="615" y="284">42 ns</text><text x="840" y="284">60 ns</text>
+          </g>
+          <!-- curves -->
+          <path d="M90,170 L115,170 C130,170 140,160 165,160 C205,160 235,96 315,91 L615,90 C650,90 680,170 760,170 L840,170" fill="none" stroke="#1f6feb" stroke-width="2"/>
+          <path d="M90,170 L165,170 C205,172 235,244 315,249 L615,250 C650,250 680,170 760,170 L840,170" fill="none" stroke="#b54708" stroke-width="2"/>
+          <path d="M90,92 L115,92 C128,92 140,158 165,161 C215,161 300,112 480,94 L615,92 L840,93" fill="none" stroke="#1a7f37" stroke-width="2" stroke-dasharray="6 3"/>
+          <!-- legend -->
+          <g font-size="9" fill="#172033">
+            <line x1="350" y1="186" x2="374" y2="186" stroke="#1f6feb" stroke-width="2"/><text x="380" y="189">bitline (cell stored a 1)</text>
+            <line x1="350" y1="204" x2="374" y2="204" stroke="#b54708" stroke-width="2"/><text x="380" y="207">reference bitline</text>
+            <line x1="350" y1="222" x2="374" y2="222" stroke="#1a7f37" stroke-width="2" stroke-dasharray="6 3"/><text x="380" y="225">voltage inside the cell</text>
+          </g>
+          <!-- markers -->
+          <g font-size="9" fill="#172033" text-anchor="middle">
+            <text x="90" y="40">ACT</text><text x="315" y="40">first RD / WR allowed</text><text x="615" y="40">PRE allowed</text><text x="840" y="40">next ACT allowed</text>
+          </g>
+          <g stroke="#172033" stroke-width="1"><line x1="90" y1="44" x2="90" y2="50"/><line x1="315" y1="44" x2="315" y2="50"/><line x1="615" y1="44" x2="615" y2="50"/><line x1="840" y1="44" x2="840" y2="50"/></g>
+          <g font-size="9" fill="#172033" text-anchor="middle">
+            <text x="202" y="300">tRCD = 18 ns</text><text x="352" y="22">tRAS = 42 ns</text><text x="727" y="300">tRP = 18 ns (21 ns all-bank)</text>
+          </g>
+          <g stroke="#647083" stroke-width="1">
+            <line x1="90" y1="292" x2="160" y2="292"/><line x1="245" y1="292" x2="315" y2="292"/>
+            <line x1="90" y1="18" x2="305" y2="18"/><line x1="400" y1="18" x2="615" y2="18"/>
+            <line x1="615" y1="292" x2="640" y2="292"/><line x1="815" y1="292" x2="840" y2="292"/>
+          </g>
+          <text x="140" y="200" text-anchor="middle" font-size="8" fill="#647083">&Delta;V: ~100 mV</text>
+          <text x="140" y="210" text-anchor="middle" font-size="8" fill="#647083">or less</text>
+        </svg>
+        <p class="cap">Fig. L2 &mdash; One row access as the sense amplifier sees it (schematic voltages, real LPDDR5 times). The green dashed curve is the point of the picture: the cell is <i>emptied</i> by the read and only gets its value back during the restore phase, which is why a row must stay open for tRAS even if you wanted one column. An entire row &mdash; 16,384 cells &mdash; goes through this together, because one wordline opens all of them.</p>
+      </div>
+
+      <h3 id="floorplan">From cells to a bank: MATs, stripes, and two kinds of wire</h3>
+      <p>A bank is not one giant grid. Bitlines can only be ~512&ndash;1,024 cells long before the signal becomes too small, so the array is tiled into <b>MATs</b> (memory array tiles) of roughly 512 &times; 512 cells. Between vertically adjacent MATs runs a <b>BLSA stripe</b>, a row of sense amplifiers shared by the MATs above and below it; between horizontally adjacent MATs runs a strip of <b>sub-wordline drivers</b> (SWD), which re-drive the wordline locally. A row address selects one <b>master wordline</b> that spans the whole bank; each MAT it crosses fires its own local wordline. The set of sense amplifiers that ends up holding that row &mdash; scattered over many stripes &mdash; is what architects call the <b>row buffer</b>. It is not a separate memory; it <i>is</i> the sense amplifiers.</p>
+      <p>Getting data out of the row buffer uses a second, orthogonal wiring system. A <b>column-select</b> line picks a small group of sense amplifiers in each stripe and connects them to <b>local I/O</b> lines, which feed <b>global I/O</b> (GIO) lines that run the full height of the bank, over the top of the MATs, down to the bank&rsquo;s edge. There, <b>I/O sense amplifiers</b> (IOSA) read the small swing on the GIO lines, and <b>write drivers</b> overpower the BLSAs on a write. An LPDDR5 x16 bank has <b>256 GIO bits</b>: the standard describes an access as &ldquo;a single 256-bit-wide data transfer at the internal SDRAM core, and sixteen corresponding 16-bit wide &hellip; data transfers at the I/O pins&rdquo; &mdash; the <b>16n prefetch</b>, n being the 16 pins. Those 256 bits are the &ldquo;32 B column&rdquo; of this whole series, and the bank edge where they arrive is where every per-bank PIM design, AiM included, puts its arithmetic (&sect;4).</p>
+
+      <div class="fig" id="fig-floorplan">
+        <svg viewBox="0 0 900 350" role="img" aria-label="Left: a DRAM die drawn as two rows of eight banks with a central periphery spine that holds the pads, command logic, serializer and voltage pumps. Right: one bank zoomed in. A row decoder on the left drives master wordlines across a grid of memory array tiles. Horizontal stripes of bit-line sense amplifiers lie between tile rows and vertical strips of sub-wordline drivers lie between tile columns. One highlighted wordline crosses all tiles of a row; the sense-amplifier stripes above and below it hold the row's 16,384 bits. Vertical global I/O lines run over the tiles down to the column decoder, I/O sense amplifiers and write drivers at the bank edge, which exchange 256 bits per access.">
+          <!-- die -->
+          <text x="150" y="28" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">one die = 16 banks + a periphery spine</text>
+          <rect x="14" y="40" width="272" height="250" rx="8" fill="#fcfdff" stroke="#d8dee8"/>
+          <g fill="#f1f4f9" stroke="#647083">
+            <rect x="24" y="50" width="28" height="92"/><rect x="56" y="50" width="28" height="92"/><rect x="88" y="50" width="28" height="92"/><rect x="120" y="50" width="28" height="92"/><rect x="152" y="50" width="28" height="92"/><rect x="184" y="50" width="28" height="92"/><rect x="216" y="50" width="28" height="92"/><rect x="248" y="50" width="28" height="92" fill="#e7f5ec" stroke="#1a7f37" stroke-width="2"/>
+            <rect x="24" y="188" width="28" height="92"/><rect x="56" y="188" width="28" height="92"/><rect x="88" y="188" width="28" height="92"/><rect x="120" y="188" width="28" height="92"/><rect x="152" y="188" width="28" height="92"/><rect x="184" y="188" width="28" height="92"/><rect x="216" y="188" width="28" height="92"/><rect x="248" y="188" width="28" height="92"/>
+          </g>
+          <rect x="24" y="148" width="252" height="34" rx="4" fill="#eaf2ff" stroke="#1f6feb"/>
+          <text x="150" y="162" text-anchor="middle" font-size="8.5" fill="#172033">periphery: pads, command decoder,</text>
+          <text x="150" y="174" text-anchor="middle" font-size="8.5" fill="#172033">serializer, voltage pumps</text>
+          <text x="150" y="306" text-anchor="middle" font-size="8.5" fill="#647083">schematic; real floorplans differ by vendor.</text>
+          <text x="150" y="319" text-anchor="middle" font-size="8.5" fill="#647083">cells are roughly half to two thirds of a DRAM die</text>
+          <line x1="276" y1="50" x2="340" y2="36" stroke="#1a7f37" stroke-dasharray="3 3"/>
+          <line x1="276" y1="142" x2="340" y2="326" stroke="#1a7f37" stroke-dasharray="3 3"/>
+
+          <!-- bank -->
+          <text x="615" y="28" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#172033">one bank</text>
+          <rect x="340" y="36" width="550" height="290" rx="8" fill="#fcfdff" stroke="#1a7f37"/>
+          <rect x="350" y="46" width="40" height="228" rx="4" fill="#f1f4f9" stroke="#647083"/>
+          <text transform="translate(374,160) rotate(-90)" text-anchor="middle" font-size="8.5" fill="#172033">row decoder + master wordline drivers</text>
+          <!-- BLSA stripes -->
+          <g fill="#f1f4f9" stroke="#d8dee8">
+            <rect x="410" y="46" width="442" height="12"/><rect x="410" y="260" width="442" height="12"/>
+          </g>
+          <g fill="#fdf0e6" stroke="#b54708">
+            <rect x="410" y="116" width="442" height="12"/><rect x="410" y="188" width="442" height="12"/>
+          </g>
+          <!-- MATs -->
+          <g fill="#fff" stroke="#647083">
+            <rect x="410" y="58" width="100" height="58"/><rect x="524" y="58" width="100" height="58"/><rect x="638" y="58" width="100" height="58"/><rect x="752" y="58" width="100" height="58"/>
+            <rect x="410" y="128" width="100" height="60"/><rect x="524" y="128" width="100" height="60"/><rect x="638" y="128" width="100" height="60"/><rect x="752" y="128" width="100" height="60"/>
+            <rect x="410" y="200" width="100" height="60"/><rect x="524" y="200" width="100" height="60"/><rect x="638" y="200" width="100" height="60"/><rect x="752" y="200" width="100" height="60"/>
+          </g>
+          <!-- SWD strips -->
+          <g fill="#eef2f7" stroke="#d8dee8">
+            <rect x="510" y="58" width="14" height="202"/><rect x="624" y="58" width="14" height="202"/><rect x="738" y="58" width="14" height="202"/>
+          </g>
+          <g font-size="8" fill="#647083" text-anchor="middle">
+            <text x="460" y="84">MAT</text><text x="460" y="95">~512 &times; 512 cells</text>
+            <text x="574" y="90">MAT</text><text x="688" y="90">MAT</text><text x="802" y="90">MAT</text>
+          </g>
+          <!-- wordline -->
+          <line x1="390" y1="158" x2="852" y2="158" stroke="#b54708" stroke-width="2.5"/>
+          <text x="631" y="152" text-anchor="middle" font-size="8.5" fill="#172033" stroke="#fff" stroke-width="3" paint-order="stroke">one open row: a master wordline fires the local wordline of every MAT it crosses</text>
+          <!-- GIO lines -->
+          <g stroke="#1a7f37" stroke-width="1.6" stroke-dasharray="5 3">
+            <line x1="498" y1="46" x2="498" y2="284"/><line x1="612" y1="46" x2="612" y2="284"/><line x1="726" y1="46" x2="726" y2="284"/><line x1="840" y1="46" x2="840" y2="284"/>
+          </g>
+          <rect x="410" y="284" width="442" height="32" rx="4" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="631" y="298" text-anchor="middle" font-size="8.5" fill="#172033">column decoder &middot; I/O sense amplifiers &middot; write drivers &middot; 256-bit latch</text>
+          <text x="631" y="310" text-anchor="middle" font-size="8.5" fill="#647083">the bank edge: 256 bits in or out per column access</text>
+          <!-- labels -->
+          <g font-size="8" fill="#172033">
+            <text x="858" y="125">BLSA</text><text x="858" y="197">BLSA</text>
+            <text x="858" y="56" fill="#647083">BLSA</text>
+          </g>
+          <text x="517" y="276" text-anchor="middle" font-size="7.5" fill="#647083">SWD</text>
+          <text x="818" y="240" font-size="7.5" fill="#1a7f37">GIO</text>
+        </svg>
+        <p class="cap">Fig. L3 &mdash; Left: a die is 16 banks plus shared periphery (schematic). Right: inside one bank. <b>Orange</b>: the open row and the two sense-amplifier stripes that now hold it &mdash; the row buffer. <b>Green dashed</b>: the global I/O lines that carry one selected 256-bit column from the stripes to the bank edge. MAT dimensions are the commonly published ~512 &times; 512; vendors do not publish LPDDR5 figures [assumption: illustrative count, not to scale].</p>
+      </div>
+
+      <h3 id="addr">The address arithmetic of a real die</h3>
+      <p>The standard&rsquo;s addressing table makes the hierarchy concrete. For a 16 Gb x16 die in the mode used at 6,400 MT/s:</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>level</th><th class="num">count</th><th>address bits</th><th>what one unit is</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">bank groups &times; banks</td><td class="num">4 &times; 4 = 16</td><td>BG0&ndash;1, BA0&ndash;1</td><td>an independent array with its own row decoder and row buffer</td></tr>
+          <tr><td class="rowlabel">rows per bank</td><td class="num">65,536</td><td>R0&ndash;R15</td><td>what one ACT opens</td></tr>
+          <tr><td class="rowlabel">columns per row</td><td class="num">64</td><td>C0&ndash;C5</td><td>what one RD or WR moves: <b>256 bits = 32 B</b></td></tr>
+          <tr><td class="rowlabel">beats per column</td><td class="num">16</td><td>(burst counter)</td><td>16 pins &times; 1 bit = 2 B on the wire</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Check: 16 banks &times; 2<sup>16</sup> rows &times; 2<sup>6</sup> columns &times; 2<sup>8</sup> bits = 2<sup>34</sup> bits = 16 Gb. One row is 64 &times; 32 B = <b>2,048 B</b>; datasheets call this the &ldquo;page size&rdquo;. So <b>one ACT senses 2 KB, one column command moves 32 B of it, and a column address is only 6 bits wide</b>. SK hynix describes GDDR6-AiM with the same geometry: &ldquo;2 KB rows (pages) with 32 B column access granularity&rdquo;.</p>
+      <p><b>How the simulator differs [preset].</b> The simulator&rsquo;s LPDDR5-AiM organisation gives a row 1,024 column addresses of 32 B each, i.e. a 32 KB row, 16&times; a real one. This does not affect any result in the series: our traces never touch more than 64 columns (2 KB) of any row, which is precisely one real row, so every ACT in our traces corresponds to one real ACT.</p>
+
+      <h3 id="bankgroups">Banks, bank groups, and the column cycle that is slower than the pins</h3>
+      <p><b>Banks give row-level parallelism.</b> Each of the 16 banks has its own row decoder and its own row buffer, so while bank 0 is paying tRCD or tRP, bank 1 can be transferring columns. The limit is electrical, not logical: opening a row is the most current-hungry thing a DRAM does (it swings 16,384 bitlines and draws on the wordline pump), so the standard rations it &mdash; at least <b>tRRD = 5 ns</b> between two ACTs and <b>no more than 4 ACTs in any tFAW = 20 ns window</b>. Opening all 16 banks therefore takes about 80 ns, not 16 &times; 5. The Newton paper (SK hynix&rsquo;s AiM precursor) says why in plain words: many concurrent activations &ldquo;cause severe internal voltage drop&rdquo;, and shortening tFAW would need bigger regulators and pumps, i.e. die area.</p>
+      <p><b>Banks do not, by themselves, give column-level parallelism</b>, because the column path from the bank edge to the serializer is shared. And here is the fact that matters most for PIM: <b>at 6,400 MT/s the pins are faster than the core.</b> One 16-beat burst occupies the pins for 2.5 ns (2 clock periods), but a bank&rsquo;s column cycle &mdash; column-select pulse, GIO lines, I/O sense amplifiers, latch &mdash; takes about <b>5 ns</b> (4 clock periods), and the four banks of a group additionally share the group&rsquo;s I/O bus towards the serializer, so the standard applies the 5 ns spacing to the whole group [our reading; vendors do not publish the circuit reason]. LPDDR5 expresses this as the &ldquo;effective burst length&rdquo; BL/n, its name for the minimum column-to-column time (DDR4, GDDR6 and HBM call the same two numbers tCCD_S and tCCD_L):</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>bank architecture (mode register MR3)</th><th>allowed data rates</th><th>burst</th><th class="num">next column, same bank group</th><th class="num">next column, different bank group</th><th class="num">page per ACT</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel"><b>BG mode</b>: 4 bank groups &times; 4 banks</td><td><b>required above 3,200 Mb/s</b> (unless 8B)</td><td>16 beats</td><td class="num"><b>4 tCK = 5 ns</b></td><td class="num"><b>2 tCK = 2.5 ns</b></td><td class="num">2 KB</td></tr>
+          <tr><td class="rowlabel">16B mode: 16 flat banks</td><td>only up to 3,200 Mb/s</td><td>16 beats</td><td class="num" colspan="2">2 tCK (= 5 ns at 3,200 Mb/s)</td><td class="num">2 KB</td></tr>
+          <tr><td class="rowlabel">8B mode: 8 merged banks</td><td>all rates</td><td>32 beats only (32n prefetch, 512 bit)</td><td class="num" colspan="2">4 tCK = 5 ns for 64 B</td><td class="num">4 KB</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Read the last two rows carefully: they are the same 5 ns in disguise. 16B mode is only legal where a burst already lasts 5 ns; 8B mode fetches twice as many bits (512) per 5 ns cycle. In every mode <b>one column path completes one cycle per 5 ns</b>; the fast modes simply fetch more per cycle or alternate between paths. For the controller, a bank group is <b>four banks that must be treated as one 5 ns column resource</b>. Give the die several such groups, let the controller alternate between them, and the 2.5 ns bursts interleave into a gap-free stream (Fig. L4a). Stay inside one bank group and the pins idle half the time (Fig. L4b): 6.4 GB/s, not 12.8.</p>
+
+      <div class="fig" id="fig-bginterleave">
+        <svg viewBox="0 0 900 330" role="img" aria-label="Two timelines at LPDDR5-6400. Top: read commands alternate between bank group 0 and bank group 1 every 2 clock periods; each bank group's column datapath is busy for 4 clock periods per read, and the two interleave so the DQ pins carry back-to-back 2.5 nanosecond bursts, 12.8 gigabytes per second. Bottom: all reads go to bank group 0, so commands can only be issued every 4 clock periods and the DQ pins are idle half the time, 6.4 gigabytes per second.">
+          <g font-size="8.5" fill="#647083" text-anchor="middle">
+            <text x="200" y="20">0</text><text x="300" y="20">2.5 ns</text><text x="400" y="20">5</text><text x="500" y="20">7.5</text><text x="600" y="20">10</text><text x="700" y="20">12.5</text><text x="800" y="20">15 ns</text>
+          </g>
+          <g stroke="#d8dee8"><line x1="200" y1="26" x2="200" y2="318"/><line x1="300" y1="26" x2="300" y2="318"/><line x1="400" y1="26" x2="400" y2="318"/><line x1="500" y1="26" x2="500" y2="318"/><line x1="600" y1="26" x2="600" y2="318"/><line x1="700" y1="26" x2="700" y2="318"/><line x1="800" y1="26" x2="800" y2="318"/></g>
+
+          <text x="10" y="40" font-size="10" font-weight="bold" fill="#172033">(a) alternate bank groups</text>
+          <g font-size="9" fill="#172033" text-anchor="end"><text x="192" y="64">commands (CA)</text><text x="192" y="92">BG0 column path</text><text x="192" y="120">BG1 column path</text><text x="192" y="148">DQ pins</text></g>
+          <g fill="#eaf2ff" stroke="#1f6feb">
+            <rect x="201" y="50" width="48" height="20" rx="3"/><rect x="301" y="50" width="48" height="20" rx="3"/><rect x="401" y="50" width="48" height="20" rx="3"/><rect x="501" y="50" width="48" height="20" rx="3"/><rect x="601" y="50" width="48" height="20" rx="3"/><rect x="701" y="50" width="48" height="20" rx="3"/>
+          </g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="225" y="64">RD BG0</text><text x="325" y="64">RD BG1</text><text x="425" y="64">RD BG0</text><text x="525" y="64">RD BG1</text><text x="625" y="64">RD BG0</text><text x="725" y="64">RD BG1</text></g>
+          <g fill="#e7f5ec" stroke="#1a7f37">
+            <rect x="201" y="78" width="198" height="20" rx="3"/><rect x="401" y="78" width="198" height="20" rx="3"/><rect x="601" y="78" width="198" height="20" rx="3"/>
+            <rect x="301" y="106" width="198" height="20" rx="3"/><rect x="501" y="106" width="198" height="20" rx="3"/><rect x="701" y="106" width="99" height="20" rx="3"/>
+          </g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="300" y="92">one column cycle, 5 ns</text><text x="500" y="92">5 ns</text><text x="700" y="92">5 ns</text><text x="400" y="120">5 ns</text><text x="600" y="120">5 ns</text></g>
+          <g fill="#fdf0e6" stroke="#b54708">
+            <rect x="201" y="134" width="98" height="20" rx="3"/><rect x="301" y="134" width="98" height="20" rx="3"/><rect x="401" y="134" width="98" height="20" rx="3"/><rect x="501" y="134" width="98" height="20" rx="3"/><rect x="601" y="134" width="98" height="20" rx="3"/><rect x="701" y="134" width="98" height="20" rx="3"/>
+          </g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="250" y="148">32 B</text><text x="350" y="148">32 B</text><text x="450" y="148">32 B</text><text x="550" y="148">32 B</text><text x="650" y="148">32 B</text><text x="750" y="148">32 B</text></g>
+          <text x="812" y="148" font-size="9" font-weight="bold" fill="#172033">12.8 GB/s</text>
+
+          <line x1="8" y1="172" x2="892" y2="172" stroke="#d8dee8" stroke-dasharray="4 3"/>
+          <text x="10" y="194" font-size="10" font-weight="bold" fill="#172033">(b) stay in one bank group</text>
+          <g font-size="9" fill="#172033" text-anchor="end"><text x="192" y="218">commands (CA)</text><text x="192" y="246">BG0 column path</text><text x="192" y="274">DQ pins</text></g>
+          <g fill="#eaf2ff" stroke="#1f6feb"><rect x="201" y="204" width="48" height="20" rx="3"/><rect x="401" y="204" width="48" height="20" rx="3"/><rect x="601" y="204" width="48" height="20" rx="3"/></g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="225" y="218">RD BG0</text><text x="425" y="218">RD BG0</text><text x="625" y="218">RD BG0</text></g>
+          <g fill="#e7f5ec" stroke="#1a7f37"><rect x="201" y="232" width="198" height="20" rx="3"/><rect x="401" y="232" width="198" height="20" rx="3"/><rect x="601" y="232" width="198" height="20" rx="3"/></g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="300" y="246">5 ns</text><text x="500" y="246">5 ns</text><text x="700" y="246">5 ns</text></g>
+          <g fill="#fdf0e6" stroke="#b54708"><rect x="201" y="260" width="98" height="20" rx="3"/><rect x="401" y="260" width="98" height="20" rx="3"/><rect x="601" y="260" width="98" height="20" rx="3"/></g>
+          <g font-size="8" fill="#172033" text-anchor="middle"><text x="250" y="274">32 B</text><text x="450" y="274">32 B</text><text x="650" y="274">32 B</text></g>
+          <g font-size="8" fill="#647083" text-anchor="middle"><text x="350" y="274">idle</text><text x="550" y="274">idle</text><text x="750" y="274">idle</text></g>
+          <text x="812" y="274" font-size="9" font-weight="bold" fill="#172033">6.4 GB/s</text>
+          <text x="500" y="308" text-anchor="middle" font-size="8.5" fill="#647083">data is drawn without the read latency (17 clock periods later in reality); only the spacing matters here</text>
+        </svg>
+        <p class="cap">Fig. L4 &mdash; Why bank groups exist. A bank group can be asked for one 32 B column per 5 ns; a burst needs the pins for 2.5 ns. Two datapaths, used alternately, keep the pins full. The rule generalises: <b>the 12.8 GB/s of a channel is the sum of two half-speed column paths, not the speed of any one bank.</b></p>
+      </div>
+
+      <div class="callout warn"><b>What this means for an all-bank PIM command, and the assumption this series makes [assumption A1].</b> An AiM-style <code class="k">MAC_ABK</code> asks <i>every</i> bank to read a column at the same time, so it cannot play the alternation trick: every bank is busy at once. A PU at the bank edge sits <i>before</i> the shared group bus, so all 16 banks can work in parallel, but on a standard LPDDR5 core each of them would deliver one 32 B column per <b>5 ns</b>, which is what every published LPDDR5-PIM design assumes (Samsung LPDDR5-PIM: 102.4 GB/s of internal bandwidth, = 8&times; the pins of one die by our reading; LP-Spec and CD-PIM: a 200 MHz internal cycle; Samsung&rsquo;s HBM-PIM paper states the rule directly: in all-bank mode &ldquo;each bank can operate at every tCCD_L &hellip; not tCCD_S&rdquo;). <b>This series instead assumes one all-bank column per 2.5 ns</b> &mdash; 16&times; the pins, the ratio SK hynix states for GDDR6-AiM, whose PU sits at its own bank&rsquo;s edge and does not use the shared path to the serializer [our reading of the published floorplan]. Whether an LPDDR5 bank&rsquo;s local column path can cycle in 2.5 ns is not published, so treat 2.5 ns as the optimistic end and 5 ns as the conservative end. We measured both: with a 5 ns all-bank column the stock offload slows from 28.55 to <b>40.24 ms</b> per step (1.41&times;), while the extended design of Part IV is unchanged to within simulator resolution: after each fetched column its PU works for 26 beats (26 ns at 1 GHz), longer than either column period, so the column period is no longer what it waits for. The conclusion of this page gets stronger, not weaker, at 5 ns. (Runs: <code class="k">05_reports/d1/d2_fulldesign_and_column_period.md</code>, branch <code class="k">side/d1-explore</code>.)</div>
+
       <h3 id="clocks">Inside the die: four timing domains, not one clock</h3>
       <p>Fig. 0a shows <i>where</i> things are. This subsection shows <i>how fast each part runs</i>, because an LPDDR5 die is not one synchronous machine. A <b>timing domain</b> (or clock domain) is a group of circuits that all step to the same beat. LPDDR5-6400 has four of them: two are driven by clocks that arrive on pins from the SoC, and two are paths inside the memory core that have <b>no free-running clock at all</b> &mdash; they fire once per command and time themselves. Fig. 0a-2 draws the die with one colour per domain; Fig. 0a-3 lays all of them on the same 2.5 ns ruler.</p>
 
       <div class="fig" id="fig-clocks">
-        <svg viewBox="0 0 900 480" role="img" aria-label="Block diagram of one LPDDR5 die coloured by timing domain. Left, top: the CK domain at 800 megahertz holds the command-address receivers, the command decoder with address latches, and the mode registers and latency counters. Left, middle: the WCK domain at 3.2 gigahertz holds the DQ drivers and receivers, the 16-to-1 serializer and deserializer, and the burst FIFO. Left, bottom: the Global Buffer that AiM adds in the periphery. Right: one of 16 banks, with a self-timed row path on top (row decoder, cell array, bit-line sense amplifiers, tRCD 9.4 nanoseconds), an event-paced column path in the middle (column decoder, local and global I/O wires, I/O sense amplifiers and a 256-bit latch, one column per 2.5 nanoseconds), and the processing unit that AiM adds at the bottom, fed by the 256-bit latch and by the Global Buffer broadcast bus.">
+        <svg viewBox="0 0 900 480" role="img" aria-label="Block diagram of one LPDDR5 die coloured by timing domain. Left, top: the CK domain at 800 megahertz holds the command-address receivers, the command decoder with address latches, and the mode registers and latency counters. Left, middle: the WCK domain at 3.2 gigahertz holds the DQ drivers and receivers, the 16-to-1 serializer and deserializer, and the burst FIFO. Left, bottom: the Global Buffer that AiM adds in the periphery. Right: one of 16 banks, with a self-timed row path on top (row decoder, cell array, bit-line sense amplifiers, tRCD 18 nanoseconds on real parts), an event-paced column path in the middle (column decoder, local and global I/O wires, I/O sense amplifiers and a 256-bit latch, one column per 2.5 nanoseconds), and the processing unit that AiM adds at the bottom, fed by the 256-bit latch and by the Global Buffer broadcast bus.">
           <defs>
             <marker id="arrCk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker>
             <marker id="arrCkP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6f42c1"/></marker>
@@ -246,11 +589,11 @@
           <!-- Global Buffer (AiM) -->
           <rect x="120" y="356" width="400" height="110" rx="9" fill="#f3effb" stroke="#6f42c1" stroke-dasharray="5 3"/>
           <text x="132" y="374" font-size="10" font-weight="bold" fill="#172033">AiM adds: Global Buffer (GB) &mdash; periphery, shared by all 16 banks</text>
-          <text x="132" y="392" font-size="9" fill="#647083">stock: 2 KB of registers = one vector of 64 columns</text>
+          <text x="132" y="392" font-size="9" fill="#647083">stock: 2 KB of SRAM = one vector of 64 columns</text>
           <text x="132" y="407" font-size="9" fill="#647083">with Part IV&rsquo;s P1: 52 KB of SRAM = 26 vectors</text>
           <text x="132" y="422" font-size="9" fill="#647083">written by WR_GB through the DQ path above</text>
           <text x="132" y="437" font-size="9" fill="#647083">read out 32 B at a time to all 16 PUs at once; how often it can do</text>
-          <text x="132" y="452" font-size="9" fill="#647083">that is the &ldquo;third clock&rdquo; of &sect;7 (2.5 ns is enough for stock; P1 wants 1 ns)</text>
+          <text x="132" y="452" font-size="9" fill="#647083">that is the &ldquo;third clock&rdquo; of &sect;10 (2.5 ns is enough for stock; P1 wants 1 ns)</text>
           <line x1="452" y1="342" x2="452" y2="355" stroke="#6f42c1" stroke-width="1.2" marker-end="url(#arrCkP)"/>
 
           <!-- one bank -->
@@ -270,13 +613,13 @@
           <text x="750" y="144" text-anchor="middle" font-size="8.5" fill="#172033">bit-line sense amplifiers = the row buffer</text>
           <line x1="744" y1="101" x2="751" y2="101" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
           <line x1="811" y1="118" x2="811" y2="125" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
-          <text x="630" y="168" font-size="8.5" fill="#647083">ACT &rarr; columns usable after tRCD = 9.4 ns</text>
-          <text x="630" y="180" font-size="8.5" fill="#647083">PRE &rarr; bank re-openable after tRP = 10.6 ns</text>
+          <text x="630" y="168" font-size="8.5" fill="#647083">tRCD = 18 ns on real parts (9.4 ns preset)</text>
+          <text x="630" y="180" font-size="8.5" fill="#647083">tRP = 18 / 21 ns real (9.4 / 10.6 ns preset)</text>
 
           <!-- column path -->
           <rect x="620" y="196" width="260" height="150" rx="8" fill="#e7f5ec" stroke="#1a7f37"/>
           <text x="630" y="212" font-size="10" font-weight="bold" fill="#172033">column path &mdash; paced by commands</text>
-          <text x="630" y="225" font-size="8.5" fill="#647083">one 32 B column per &ge; 2.5 ns (400 MHz-equivalent)</text>
+          <text x="630" y="225" font-size="8.5" fill="#647083">one 32 B column per 2.5 ns [preset]; 5 ns on real parts</text>
           <rect x="630" y="234" width="240" height="26" rx="5" fill="#fff" stroke="#d8dee8"/>
           <text x="750" y="251" text-anchor="middle" font-size="8.5" fill="#172033">column decoder &rarr; column-select pulse</text>
           <rect x="630" y="266" width="240" height="26" rx="5" fill="#fff" stroke="#d8dee8"/>
@@ -326,18 +669,18 @@
           <line x1="109" y1="283" x2="131" y2="283" stroke="#647083" stroke-width="1.2" marker-start="url(#arrCk)" marker-end="url(#arrCk)"/>
           <line x1="131" y1="317" x2="109" y2="317" stroke="#647083" stroke-width="1.2" marker-end="url(#arrCk)"/>
         </svg>
-        <p class="cap">Fig. 0a-2 &mdash; One LPDDR5-6400 die, coloured by timing domain. <b>Blue</b>: logic clocked by CK (800 MHz). <b>Orange</b>: logic clocked by WCK (3.2 GHz, used on both edges). <b>Green</b>: the column path, which fires once per column command and at most once per 2.5 ns. <b>Grey</b>: the row path, which is analog and takes ~10 ns. <b>Dashed purple</b>: what AiM adds. The PU sits <i>behind</i> the 256-bit latch, so it never sees WCK; its data arrives at the column rate. Block-level and illustrative: vendors do not publish floorplans [assumption, see the note below].</p>
+        <p class="cap">Fig. 0a-2 &mdash; One LPDDR5-6400 die, coloured by timing domain. <b>Blue</b>: logic clocked by CK (800 MHz). <b>Orange</b>: logic clocked by WCK (3.2 GHz, used on both edges). <b>Green</b>: the column path, which fires once per column command and at most once per 2.5 ns. <b>Grey</b>: the row path, which is analog and takes ~18 ns on real parts. <b>Dashed purple</b>: what AiM adds. The PU sits <i>behind</i> the 256-bit latch, so it never sees WCK; its data arrives at the column rate. Block-level and illustrative: vendors do not publish floorplans [assumption, see the note below].</p>
       </div>
 
       <p><b>The four domains, fastest pin first.</b></p>
       <ul class="notes">
-        <li><b>CK &mdash; the command clock, 800 MHz (period 1.25 ns).</b> It runs all the time. The seven command/address pins CA[6:0] are sampled on <i>both</i> edges of CK, so a new CA sample arrives every 1.25 / 2 = <b>0.625 ns</b> &mdash; numerically the same 0.625 ns the simulator counts as one cycle (&sect;4). Everything that interprets commands lives here: the CA receivers, the command decoder, the address latches, the mode registers, and the counters that implement read latency and write latency by counting CK edges.</li>
-        <li><b>WCK &mdash; the data clock, 3.2 GHz, both edges = 6,400 transfers/s per pin.</b> One transfer (one <i>beat</i>) lasts 1 / 6.4 GHz = <b>0.156 ns</b> and moves one bit on each of the 16 DQ pins, i.e. 2 B. WCK is exactly 4 &times; CK. The SoC only toggles it around a burst, because a 3.2 GHz clock tree is the most power-hungry thing on a low-power part; at boot the SoC trains the WCK-to-CK phase (&ldquo;WCK2CK leveling&rdquo;) so the two clocks stay aligned. Only the pin circuits and the <b>serializer/deserializer</b> run at this speed. On reads the die sends a strobe, RDQS, back alongside the data.</li>
-        <li><b>The column path &mdash; one event per column command, at most one per 2.5 ns.</b> A column command makes the <i>column decoder</i> fire a <i>column-select pulse</i>; that connects 256 sense amplifiers of the row buffer to the <i>local I/O</i> lines, which drive the long <i>global I/O</i> wires that run the length of the bank; at the far end, <i>I/O sense amplifiers</i> (on a read) or <i>write drivers</i> (on a write) connect them to a <b>256-bit latch</b>. 256 bits = 32 B = one column (the &ldquo;16n prefetch&rdquo; mentioned above: 16 bits for each of the 16 pins). There is no clock ticking here between commands: each stage is triggered by the previous one. The spacing rule tCCD = 4 cycles = <b>2.5 ns</b> means at most 1 / 2.5 ns = <b>400 million columns per second</b>, which is why we describe this path as &ldquo;400 MHz-equivalent&rdquo;.</li>
-        <li><b>The row path &mdash; no clock, analog, ~10 ns.</b> ACT raises a wordline, the capacitors of the row share their charge onto the bit lines, and the bit-line sense amplifiers resolve and latch it. That takes tRCD = 15 cycles = 9.4 ns before the first column may be touched, and closing the row again takes tRP = 17 cycles = 10.6 ns (both are this page&rsquo;s preset, Fig. 0b). Nothing digital can speed this up; it is set by capacitance and sensing margins.</li>
+        <li><b>CK &mdash; the command clock, 800 MHz (period 1.25 ns).</b> It runs whenever the memory is in operation. The seven command/address pins CA[6:0] are sampled on <i>both</i> edges of CK, so a new CA sample arrives every 1.25 / 2 = <b>0.625 ns</b> &mdash; numerically the same 0.625 ns the simulator counts as one cycle (&sect;7). Everything that interprets commands lives here: the CA receivers, the command decoder, the address latches, the mode registers, and the counters that implement read latency and write latency by counting CK edges.</li>
+        <li><b>WCK &mdash; the data clock, 3.2 GHz, both edges = 6,400 transfers/s per pin.</b> One transfer (one <i>beat</i>) lasts 1 / 6.4 GHz = <b>0.156 ns</b> and moves one bit on each of the 16 DQ pins, i.e. 2 B. WCK is exactly 4 &times; CK. By default the SoC runs it only while data is moving, because a 3.2 GHz clock tree is expensive to keep running on a low-power part (an optional &ldquo;always-on&rdquo; mode keeps it running). Inside the die WCK is immediately divided by two into four phases, and because a divider can start in either of two states, the SoC sends a <b>CAS</b> command before the first read or write of a run so the die can synchronise that divider to CK; the synchronisation then stays valid as long as transfers keep coming. Separately, at boot, the SoC trains the WCK-to-CK phase (&ldquo;WCK2CK leveling&rdquo;). Only the pin circuits and the <b>serializer/deserializer</b> run at this speed. On reads the die sends a strobe, RDQS, back alongside the data.</li>
+        <li><b>The column path &mdash; one event per column command, at most one per 2.5 ns.</b> A column command makes the <i>column decoder</i> fire a <i>column-select pulse</i>; that connects 256 sense amplifiers of the row buffer to the <i>local I/O</i> lines, which drive the long <i>global I/O</i> wires that run the length of the bank; at the far end, <i>I/O sense amplifiers</i> (on a read) or <i>write drivers</i> (on a write) connect them to a <b>256-bit latch</b>. 256 bits = 32 B = one column (the &ldquo;16n prefetch&rdquo; mentioned above: 16 bits for each of the 16 pins). This path is paced by commands, not by a free-running clock: the command decoder launches a column cycle and its stages follow as timed pulses. Under this page&rsquo;s preset a bank may start one every 4 cycles = <b>2.5 ns</b>, i.e. at most 1 / 2.5 ns = <b>400 million columns per second</b>, which is why we describe the path as &ldquo;400 MHz-equivalent&rdquo;. On a real LPDDR5 part the datapath shared by a bank group needs <b>5 ns</b> per column (200 MHz-equivalent); &ldquo;Banks, bank groups&rdquo; above explains the difference and what this series assumes [assumption A1].</li>
+        <li><b>The row path &mdash; no clock, analog, ~18 ns.</b> ACT raises a wordline, the capacitors of the row share their charge onto the bit lines, and the bit-line sense amplifiers resolve and latch it. On real parts that takes tRCD = 18 ns before the first column may be touched, and closing the row again takes tRP = 18 ns (Fig. L2); this page&rsquo;s preset replays them at 9.4 and 9.4&ndash;10.6 ns (&sect;3). Nothing digital can speed this up; it is set by capacitance and sensing margins.</li>
       </ul>
 
-      <p><b>Wide and slow inside, narrow and fast outside &mdash; the same bandwidth.</b> The serializer is a 16 : 1 gearbox between two of these domains. Inside, a column is 256 wires updated every 2.5 ns: 256 bit &times; 400 MHz = <b>102.4 Gb/s</b>. Outside, it is 16 pins at 6,400 MT/s: 16 &times; 6.4 Gb/s = <b>102.4 Gb/s</b> (= 12.8 GB/s, the channel bandwidth in the table above). The two numbers are equal on purpose: tCCD is chosen so that the core hands over one 256-bit word exactly as fast as the pins can drain it. The burst FIFO between them absorbs the phase difference, and the command decoder is what launches each core event, so CK paces the core and WCK only ever sees finished 256-bit words. As far as the public documentation goes, LPDDR parts carry no PLL or DLL (that is one way they save standby power), so every clock on the die is either a pin clock or a simple division of one [assumption: vendor implementations are not published].</p>
+      <p><b>Wide and slow inside, narrow and fast outside &mdash; the same bandwidth.</b> The serializer is a 16 : 1 gearbox between two of these domains. Outside, a channel is 16 pins at 6,400 MT/s: 16 &times; 6.4 Gb/s = <b>102.4 Gb/s</b> (= 12.8 GB/s, the channel bandwidth in the table above). Inside, the serializer must be handed one 256-bit word every 2.5 ns to keep up: 256 bit &times; 400 MHz = <b>102.4 Gb/s</b>. On a real part that stream is the interleave of two bank-group datapaths running at 200 MHz each (Fig. L4); the preset models it as one 400 MHz path. Either way the two numbers are equal on purpose: the column spacing is chosen so that the core hands over 256-bit words exactly as fast as the pins can drain them. The burst FIFO between them absorbs the phase difference, and the command decoder is what launches each core event, so CK paces the core and WCK only ever sees finished 256-bit words. LPDDR parts carry no DLL, and the standard&rsquo;s clocking diagram shows a PLL only on the SoC side (&sect;1), so every clock on the die is either a pin clock or a simple division of one [vendor implementations are not published; the standard does not forbid a local loop].</p>
 
       <div class="fig" id="fig-clock-ruler">
         <svg viewBox="0 0 900 300" role="img" aria-label="One 2.5 nanosecond column slot drawn on a common ruler for every timing domain. WCK fits 16 beats of 0.156 nanoseconds. The command-address sampling and the simulator fit 4 cycles of 0.625 nanoseconds. CK fits 2 periods of 1.25 nanoseconds. The column path fits exactly one event. Below, three possible processing-unit clocks: 1 gigahertz fits 2.5 periods, 800 megahertz fits 2 periods whose edges coincide with CK, and 400 megahertz fits one period.">
@@ -376,7 +719,7 @@
           <!-- row 4: column -->
           <text x="142" y="148" text-anchor="end" font-size="9" fill="#172033">column path</text>
           <rect x="151" y="132" width="698" height="24" rx="3" fill="#e7f5ec" stroke="#1a7f37"/>
-          <text x="500" y="148" text-anchor="middle" font-size="8.5" fill="#172033">one column event: 32 B from the row buffer to the 256-bit latch (tCCD = 2.5 ns)</text>
+          <text x="500" y="148" text-anchor="middle" font-size="8.5" fill="#172033">one column event: 32 B from the row buffer to the 256-bit latch (2.5 ns [preset]; 5 ns per bank group on real parts)</text>
 
           <!-- separator -->
           <line x1="8" y1="172" x2="892" y2="172" stroke="#d8dee8" stroke-dasharray="4 3"/>
@@ -402,33 +745,109 @@
           <rect x="151" y="260" width="698" height="24" rx="3" fill="#f3effb" stroke="#6f42c1"/>
           <text x="500" y="276" text-anchor="middle" font-size="8.5" fill="#172033">2.5 ns &mdash; one PU period per column</text>
         </svg>
-        <p class="cap">Fig. 0a-3 &mdash; One 2.5 ns column slot, as each domain sees it. Top four rows are fixed by LPDDR5-6400: 16 WCK beats = 4 CA samples (simulator cycles) = 2 CK periods = 1 column. Bottom three rows are <i>choices</i> a PIM designer can make for the PU clock. <b>D</b> = column period / PU period is how many PU periods fit in one column slot; &sect;7 shows that under the stock instruction set only one of them does useful work, whichever row is chosen.</p>
+        <p class="cap">Fig. 0a-3 &mdash; One 2.5 ns column slot, as each domain sees it. The top three rows are fixed by LPDDR5-6400: 16 WCK beats = 4 CA samples (simulator cycles) = 2 CK periods = one burst. The column row is this page&rsquo;s preset (one all-bank column per burst time, assumption A1). Bottom three rows are <i>choices</i> a PIM designer can make for the PU clock. <b>D</b> = column period / PU period is how many PU periods fit in one column slot; &sect;10 shows that under the stock instruction set only one of them does useful work, whichever row is chosen.</p>
       </div>
 
-      <p><b>Where AiM plugs in, and why this picture matters for the rest of the page.</b> AiM places one PU at the end of each bank&rsquo;s column path, reading the 256-bit latch directly (Fig. 0a-2, bottom right). Two consequences follow. First, the PU is <i>upstream</i> of the serializer: it never touches the WCK domain, which is how 16 banks can each consume 32 B per column slot &mdash; 16 &times; the bandwidth of the pins &mdash; without any faster I/O. Second, the PU&rsquo;s own clock is <b>not</b> set by JEDEC, because no pin depends on it. The vendor picks it. Fig. 0a-3 shows the three natural picks: keep the <b>1 GHz</b> PU of the fabricated GDDR6-AiM part (on GDDR6 the column period is itself 1 ns, so there PU and column are matched; on LPDDR5 the same PU gets 2.5 periods per column); clock the PU from <b>CK itself at 800 MHz</b> (two periods per column, and since it is the very clock the command decoder already uses, no clock-domain crossing is needed between &ldquo;command decoded&rdquo; and &ldquo;PU fires&rdquo;); or slow it to the <b>400 MHz</b> column rate. Under the stock instruction set all three finish exactly one column of multiplies per 2.5 ns, because the green path, not the purple one, sets the pace &mdash; for the 1 GHz PU that is the 60 % idle time derived in <a href="#where60">&sect;7</a>. The Global Buffer adds one more rate to this list: how often its periphery SRAM can put a fresh 32 B slice on the broadcast bus, the &ldquo;third clock&rdquo; of <a href="#gbrate">&sect;7</a>.</p>
+      <p><b>Where AiM plugs in, and why this picture matters for the rest of the page.</b> AiM places one PU at the end of each bank&rsquo;s column path, reading the 256-bit latch directly (Fig. 0a-2, bottom right). Two consequences follow. First, the PU is <i>upstream</i> of the serializer: it never touches the WCK domain, which is how 16 banks can each consume 32 B per column slot &mdash; 16 &times; the bandwidth of the pins &mdash; without any faster I/O. Second, the PU&rsquo;s own clock is <b>not</b> set by JEDEC, because no pin depends on it. The vendor picks it. Fig. 0a-3 shows the three natural picks: keep the <b>1 GHz</b> PU of the fabricated GDDR6-AiM part (on GDDR6 the column period is itself 1 ns, so there PU and column are matched; on LPDDR5 the same PU gets 2.5 periods per column); clock the PU from <b>CK itself at 800 MHz</b> (two periods per column, and since it is the very clock the command decoder already uses, no clock-domain crossing is needed between &ldquo;command decoded&rdquo; and &ldquo;PU fires&rdquo;); or slow it to the <b>400 MHz</b> column rate. Under the stock instruction set all three finish exactly one column of multiplies per 2.5 ns, because the green path, not the purple one, sets the pace &mdash; for the 1 GHz PU that is the 60 % idle time derived in <a href="#where60">&sect;10</a>. The Global Buffer adds one more rate to this list: how often its periphery SRAM can put a fresh 32 B slice on the broadcast bus, the &ldquo;third clock&rdquo; of <a href="#gbrate">&sect;10</a>.</p>
 
-      <div class="callout"><b>How far to trust this picture [assumption].</b> The pin-side numbers (CK 800 MHz, WCK 3.2 GHz, CA on both CK edges, WCK = 4 &times; CK, 16 beats per burst) are properties of the LPDDR5-6400 interface. The 2.5 ns column period and the row timings are this page&rsquo;s simulator preset (Fig. 0b; &sect;4). The block placement is the textbook DRAM organisation, not a vendor floorplan, and several LPDDR5-PIM papers assume a slower, 5 ns period when <i>all</i> banks fire a column at once; with that period every D in Fig. 0a-3 doubles. No number elsewhere on this page is computed from this drawing.</div>
+      <div class="callout"><b>How far to trust this picture [assumption].</b> The pin-side numbers (CK 800 MHz, WCK 3.2 GHz, CA on both CK edges, WCK = 4 &times; CK, 16 beats per burst) are properties of the LPDDR5-6400 interface. The 2.5 ns column period and the row timings are this page&rsquo;s simulator preset (&sect;3 compares them with real parts). The block placement is the textbook DRAM organisation, not a vendor floorplan, and on real LPDDR5 parts the column cycle of a bank group is 5 ns, which is what published LPDDR5-PIM designs assume when <i>all</i> banks fire a column at once (&ldquo;Banks, bank groups&rdquo; above); with that period every D in Fig. 0a-3 doubles. No number elsewhere on this page is computed from this drawing.</div>
 
-      <h3>Why bank groups, and not just more banks?</h3>
-      <p>Banks alone give <i>row-level</i> parallelism: while bank 0 is paying tRCD or tRP, bank 1 can be transferring columns, so the pins stay busy across row switches. They do not give <i>column-level</i> parallelism if every bank feeds the same column datapath. At 6,400 MT/s the DRAM core &mdash; column decoder, internal prefetch latch and the wiring from the array to the I/O &mdash; cannot complete one 32 B column access per 2.5 ns from the <i>same</i> group of banks; its cycle time is longer than the burst on the pins. The fix is to give each bank group its own column datapath and let the controller alternate bursts between groups: back-to-back accesses to different groups may be spaced by the short tCCD, accesses to the same group need the longer core time (tCCD_L). Interleaving four groups hides the slow core behind the fast pins. This is why LPDDR5 requires bank-group (or 8-bank) mode at its top data rates, and why DDR4/5 and GDDR6 have the same structure. Write-to-read turnarounds are also cheaper across groups (the preset&rsquo;s nWTRS = 5 vs nWTRL = 10).</p>
-      <p>For this page the distinction barely matters, and it is worth knowing why. The simulator&rsquo;s LPDDR5-AiM preset uses one tCCD = 4 for both cases, and AiM&rsquo;s <code class="k">MAC_ABK</code> is an all-bank command: all 16 banks read their column <i>internally and simultaneously</i>, none of the data crosses the shared I/O, so the per-group column datapath is never the bottleneck. The pins-side limit that bank groups exist to work around is exactly the limit AiM sidesteps by computing inside the bank.</p>
+    </section>
 
-      <h3>Commands: the memory controller&rsquo;s vocabulary</h3>
+    <section class="card" id="ops">
+      <h2><span class="num">3</span>Operating LPDDR5: commands, timing, refresh, training</h2>
+      <p class="lead">A DRAM has no program counter and no scheduler. The memory controller in the SoC issues one command at a time on the CA pins, and it &mdash; not the DRAM &mdash; is responsible for never violating a timing rule. Everything a PIM design adds has to fit into this command-and-timing discipline, so it is worth seeing precisely.</p>
+
+      <h3>How a command is encoded</h3>
+      <p>Every LPDDR5 command is <b>one CK period long</b>: the 7 CA pins are sampled on the rising <i>and</i> the falling edge of CK, giving 7 &times; 2 = <b>14 bits</b>, qualified by CS (high on the rising edge = &ldquo;this is a command&rdquo;). Fourteen bits is not much, and that has two visible consequences. First, <b>ACT is split into two commands</b>, ACT-1 and ACT-2, because a bank number (4 bits) plus a row address (up to 18 bits) plus opcodes do not fit in 14; ACT-2 must follow within 8 clock periods, and other commands may be slipped in between. Second, spare encodings are scarce in any DRAM command word. (AiM, on GDDR6, uses that standard&rsquo;s reserved encodings for its commands and additionally gates four of them behind a mode register; &sect;6, TMOD.)</p>
+
       <div class="scroll">
       <table>
         <thead><tr><th>Command</th><th>What it does</th><th>Cost that matters</th><th>AiM analogue on this page</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">ACT (activate)</td><td>copy one row of one bank into its row buffer</td><td>must wait tRCD before the first column access; limited to one per tRRD, four per tFAW</td><td><code class="k">ACT16</code>: the same row opened in all 16 banks (two-phase on LPDDR5)</td></tr>
-          <tr><td class="rowlabel">RD / WR</td><td>move one 32 B column between the row buffer and the DQ pins</td><td>one per tCCD = 4 cycles; data arrives CL later</td><td><code class="k">MAC16</code>: every bank reads its column <i>internally</i> and multiplies instead of sending it out</td></tr>
-          <tr><td class="rowlabel">PRE / PREA</td><td>close one bank / all banks</td><td>allowed tRAS after ACT and tRTP after the last read; the next ACT waits tRP</td><td><code class="k">PREA</code> precedes every <code class="k">ACT16</code> row switch</td></tr>
-          <tr><td class="rowlabel">REF</td><td>refresh (capacitors leak)</td><td>steals the bank for tRFC every tREFI (&asymp; every 12,500 cycles here)</td><td>same; modeled, small</td></tr>
-          <tr><td class="rowlabel">&mdash;</td><td colspan="3"><i>AiM adds a second kind of command:</i> register-mode operations (<code class="k">WR_GB</code>, <code class="k">WR_BIAS</code>, <code class="k">RD_MAC</code>) that talk to the PIM&rsquo;s little buffers instead of the array, and a <code class="k">TMOD</code> switch that costs 32 cycles every time the channel changes between array mode and register mode.</td></tr>
+          <tr><td class="rowlabel">ACT-1 + ACT-2 (activate)</td><td>open one row of one bank: sense it into the row buffer (&sect;2)</td><td>tRCD before the first column; at most one ACT per tRRD and four per tFAW</td><td><code class="k">ACT16</code>: the same row opened in all 16 banks, also two-part</td></tr>
+          <tr><td class="rowlabel">CAS</td><td>&ldquo;start the data clock&rdquo;: tells the die that WCK is about to toggle so it can synchronise its WCK divider to CK before a read or write</td><td>one extra command before the <i>first</i> RD/WR of a run; the sync then stays alive as long as transfers keep coming</td><td>the simulator models it (<code class="k">CASRD</code>, <code class="k">CASWR</code>, &hellip;)</td></tr>
+          <tr><td class="rowlabel">RD16 / WR16 (RD32 / WR32)</td><td>move one 32 B column (or two) between the row buffer and the DQ pins</td><td>data appears RL after RD (WL after WR); next column after 2.5 ns or 5 ns (&sect;2)</td><td><code class="k">MAC16</code>: every bank reads its column internally and multiplies instead of sending it out</td></tr>
+          <tr><td class="rowlabel">MWR (masked write)</td><td>write only the bits whose mask is set</td><td>slower repeat rate to the same bank</td><td>&mdash;</td></tr>
+          <tr><td class="rowlabel">PRE (per bank / all banks)</td><td>close the row(s): wordline down, bitlines back to half-supply</td><td>allowed tRAS after ACT and tRBTP after the last read; next ACT waits tRP</td><td><code class="k">PREA</code> precedes every <code class="k">ACT16</code> row switch</td></tr>
+          <tr><td class="rowlabel">REF (per bank / all banks), RFM</td><td>refresh: internally open and close the next rows so their charge is restored; RFM is extra refresh the controller owes after many ACTs to one bank (RowHammer protection)</td><td>an all-bank REF blocks the die for tRFCab = 280 ns (16 Gb die) on average every 3.9 &micro;s</td><td>same; the refresh interval is modelled, and it is a small slice here</td></tr>
+          <tr><td class="rowlabel">MRW-1 + MRW-2 / MRR</td><td>write / read a mode register (latencies, bank mode, ODT, training modes&hellip;)</td><td>a guard time after a write before the next command (tMRD = 14 ns)</td><td>AiM&rsquo;s mode switch <code class="k">TMOD</code> is a mode-register write (&sect;6)</td></tr>
+          <tr><td class="rowlabel">MPC, RDC, WFF / RFF</td><td>training helpers: calibration triggers, a known read pattern, and a small FIFO that lets the SoC test the data pins without touching the array</td><td>boot and periodic retraining only</td><td>&mdash;</td></tr>
+          <tr><td class="rowlabel">SRE / SRX, PDE, deep-sleep</td><td>self-refresh entry/exit, power-down, deep sleep</td><td>exit latencies from nanoseconds (power-down) to 200 &micro;s (deep sleep)</td><td>&mdash;</td></tr>
+          <tr><td colspan="4" style="color:var(--muted)">&mdash; AiM adds a second kind of command: <b>register-mode</b> operations (<code class="k">WR_GB</code>, <code class="k">WR_BIAS</code>, <code class="k">RD_MAC</code>) that talk to the PIM&rsquo;s little buffers instead of the array, and a <b>TMOD</b> switch that costs 32 cycles every time the channel changes between array mode and register mode.</td></tr>
         </tbody>
       </table>
       </div>
 
-      <h3>Timing: the numbers used on this page</h3>
+      <h3 id="anatomy">Anatomy of one cold read</h3>
+      <div class="fig" id="fig-coldread">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Timeline of a cold read on real LPDDR5-6400, in nanoseconds. ACT-1 and ACT-2 are issued at 0 and 1.25 nanoseconds. The bank is opening for tRCD equals 18 nanoseconds. CAS and RD follow at about 19 and 20 nanoseconds. Read latency of 17 clock periods, 21.25 nanoseconds, passes before 16 beats of data appear on the DQ pins from about 43 to 45.5 nanoseconds. After CAS, WCK is enabled and held static, then toggles a few clock periods before the data. PRE is allowed once tRAS of 42 nanoseconds has elapsed, at about 44.5 nanoseconds, and the bank can be activated again after tRP of 18 nanoseconds, at about 63 nanoseconds.">
+          <g font-size="8.5" fill="#647083" text-anchor="middle">
+            <text x="130" y="20">0</text><text x="235" y="20">10</text><text x="340" y="20">20</text><text x="445" y="20">30</text><text x="550" y="20">40</text><text x="655" y="20">50</text><text x="760" y="20">60</text><text x="865" y="20">70 ns</text>
+          </g>
+          <g stroke="#d8dee8"><line x1="130" y1="26" x2="130" y2="270"/><line x1="235" y1="26" x2="235" y2="270"/><line x1="340" y1="26" x2="340" y2="270"/><line x1="445" y1="26" x2="445" y2="270"/><line x1="550" y1="26" x2="550" y2="270"/><line x1="655" y1="26" x2="655" y2="270"/><line x1="760" y1="26" x2="760" y2="270"/><line x1="865" y1="26" x2="865" y2="270"/></g>
+          <g font-size="9" fill="#172033" text-anchor="end"><text x="122" y="74">commands (CA)</text><text x="122" y="124">the bank</text><text x="122" y="174">WCK</text><text x="122" y="224">DQ pins</text></g>
 
+          <!-- CA lane -->
+          <g fill="#eaf2ff" stroke="#1f6feb">
+            <rect x="130" y="60" width="13" height="20" rx="2"/><rect x="143" y="60" width="13" height="20" rx="2"/>
+            <rect x="332" y="60" width="13" height="20" rx="2"/><rect x="345" y="60" width="13" height="20" rx="2"/>
+            <rect x="597" y="60" width="13" height="20" rx="2"/><rect x="786" y="60" width="13" height="20" rx="2"/>
+          </g>
+          <g font-size="8.5" fill="#172033" text-anchor="middle">
+            <text x="143" y="52">ACT-1, ACT-2</text><text x="345" y="52">CAS, RD16</text><text x="603" y="52">PRE</text><text x="792" y="52">next ACT-1</text>
+          </g>
+          <!-- bank lane -->
+          <rect x="156" y="110" width="189" height="20" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="250" y="124" text-anchor="middle" font-size="8.5" fill="#172033">opening: tRCD = 18 ns</text>
+          <rect x="345" y="110" width="252" height="20" rx="3" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="471" y="124" text-anchor="middle" font-size="8.5" fill="#172033">open; still restoring until tRAS = 42 ns</text>
+          <rect x="597" y="110" width="189" height="20" rx="3" fill="#f1f4f9" stroke="#647083"/>
+          <text x="691" y="124" text-anchor="middle" font-size="8.5" fill="#172033">closing: tRP = 18 ns</text>
+          <!-- WCK lane -->
+          <rect x="130" y="160" width="202" height="20" rx="3" fill="#fff" stroke="#d8dee8"/>
+          <text x="231" y="174" text-anchor="middle" font-size="8.5" fill="#647083">off</text>
+          <rect x="332" y="160" width="249" height="20" rx="3" fill="#fff" stroke="#b54708" stroke-dasharray="4 3"/>
+          <text x="463" y="174" text-anchor="middle" font-size="8.5" fill="#172033">enabled, held static, synchronised, then toggling</text>
+          <rect x="581" y="160" width="27" height="20" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+          <rect x="608" y="160" width="257" height="20" rx="3" fill="#fff" stroke="#d8dee8"/>
+          <text x="736" y="174" text-anchor="middle" font-size="8.5" fill="#647083">may stop again if nothing follows</text>
+          <!-- DQ lane -->
+          <rect x="581" y="210" width="27" height="20" rx="3" fill="#fdf0e6" stroke="#b54708"/>
+          <text x="594" y="246" text-anchor="middle" font-size="8.5" fill="#172033">16 beats = 32 B, 2.5 ns</text>
+          <!-- RL bracket -->
+          <line x1="358" y1="200" x2="581" y2="200" stroke="#647083" marker-end="none"/>
+          <line x1="358" y1="195" x2="358" y2="205" stroke="#647083"/><line x1="581" y1="195" x2="581" y2="205" stroke="#647083"/>
+          <text x="470" y="214" text-anchor="middle" font-size="8.5" fill="#172033">read latency RL = 17 clock periods = 21.25 ns</text>
+          <text x="500" y="288" text-anchor="middle" font-size="9" fill="#172033">first 32 B: ~43 ns after the request &middot; every further column of this open row: +5 ns &middot; a column from an open row in another bank group: +2.5 ns</text>
+        </svg>
+        <p class="cap">Fig. L5 &mdash; A cold read on a real LPDDR5-6400 part, to scale in nanoseconds (tCK = 1.25 ns; tRCD and tRAS are counted from ACT-2; RL = 17 is the base latency set, 18 or 20 with read data-bus inversion / data-copy and/or byte mode, 19 or 21 with read link ECC; positions are rounded to ~1 ns). Over 90 % of the 43 ns is fixed latency (18 ns of analog row opening + 21 ns of pipeline); the data itself takes 2.5 ns. This asymmetry &mdash; <b>expensive to open, cheap to stream</b> &mdash; is the single most important property of DRAM for an architect, and the reason both the XPU baseline and AiM want long runs of columns from rows that are already open.</p>
+      </div>
+
+      <h3 id="timing">Timing: real parts vs. the numbers used on this page</h3>
+      <p>The simulator&rsquo;s LPDDR5 preset stores its timings as cycle counts. Most of those counts turn out to be the standard&rsquo;s values <i>counted in real 1.25 ns clock periods</i> (15 &times; 1.25 = 18.75 ns &asymp; tRCD 18 ns, 34 &times; 1.25 = 42.5 &asymp; tRAS 42 ns, nWR 28, nRRD 4, nFAW 16, and nCCD 4 = the same-group column spacing). The exceptions: the read latency 20 is the largest of the three legal sets (the base is 17), the write latency 11 matches neither legal value (9 or 16), and the refresh interval is derived internally on a different time base (one refresh per &asymp; 12,500 cycles). This series, however, converts a cycle at <b>0.625 ns</b> [assumption A0, &sect;7], chosen so that the preset&rsquo;s 4-cycle column spacing equals one 2.5 ns burst and a channel delivers the real 12.8 GB/s. The table shows all three so you can see exactly what the convention does.</p>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Parameter</th><th class="num">real LPDDR5-6400</th><th class="num">preset (cycles)</th><th class="num">as used here (&times; 0.625 ns)</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">clock period</td><td class="num">tCK = 1.25 ns</td><td class="num">1</td><td class="num">0.625</td><td>real CK is 800 MHz; our cycle is half of it, i.e. one CA sample</td></tr>
+          <tr><td class="rowlabel">BL (burst)</td><td class="num">2.5 ns</td><td class="num">4</td><td class="num">2.5</td><td>time one 32 B column occupies the DQ pins &mdash; <b>matches</b></td></tr>
+          <tr><td class="rowlabel">tCCD (column spacing)</td><td class="num">2.5 ns other group / <b>5 ns same group</b></td><td class="num">4</td><td class="num">2.5</td><td>matches the pins; for an all-bank command it is the optimistic end (&sect;2, assumption A1)</td></tr>
+          <tr><td class="rowlabel">tRCD</td><td class="num">18 ns</td><td class="num">15</td><td class="num">9.4</td><td>ACT &rarr; first RD/WR &mdash; <b>2&times; fast</b></td></tr>
+          <tr><td class="rowlabel">CL / CWL (RL / WL)</td><td class="num">17&ndash;20 / 9 or 16 tCK = 21&ndash;25 / 11 or 20 ns</td><td class="num">20 / 11</td><td class="num">12.5 / 6.9</td><td>read / write latency to data &mdash; 1.7&times; fast vs. RL 17; the write value has no exact JEDEC equivalent</td></tr>
+          <tr><td class="rowlabel">tRAS / tRP per-bank / tRP all-bank</td><td class="num">42 / 18 / 21 ns</td><td class="num">34 / 15 / 17</td><td class="num">21.3 / 9.4 / 10.6</td><td>row open minimum / close-to-reopen (AiM row switches use the all-bank value) &mdash; 2&times; fast</td></tr>
+          <tr><td class="rowlabel">tWR</td><td class="num">34 ns</td><td class="num">28</td><td class="num">17.5</td><td>last write data &rarr; PRE &mdash; 2&times; fast</td></tr>
+          <tr><td class="rowlabel">tRRD / tFAW</td><td class="num">5 / 20 ns</td><td class="num">4 / 16</td><td class="num">2.5 / 10</td><td>ACT rate limits (power delivery) &mdash; 2&times; fast</td></tr>
+          <tr><td class="rowlabel">mode-register guard</td><td class="num">tMRD = 14 ns</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td>see nMODCH below</td></tr>
+          <tr><td class="rowlabel">nRCDRDMAC</td><td class="num">&mdash;</td><td class="num">56</td><td class="num">35</td><td>AiM: ACT16 &rarr; first MAC16 (from the GDDR6-AiM preset)</td></tr>
+          <tr><td class="rowlabel">nMODCH (TMOD)</td><td class="num">&mdash;</td><td class="num">32</td><td class="num">20</td><td>AiM: array-mode &harr; register-mode switch; blocks every command (from the GDDR6-AiM preset)</td></tr>
+          <tr><td class="rowlabel">RDMAC16 latency</td><td class="num">&mdash;</td><td class="num">4</td><td class="num">2.5</td><td>AiM: accumulators &rarr; GPR; the DMA waits for it</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout"><b>What the convention costs, stated once.</b> Column-rate quantities at the pins (burst, channel bandwidth) are exact under the 0.625 ns convention (the 16&times; internal ratio is a separate assumption, A1, not a consequence of the clock); row-rate quantities (tRCD, tRAS, tRP, tWR, latencies) come out <b>2&times; faster than a real part</b>. This favours neither side of any comparison on this page &mdash; stock and extended runs use the same preset, and the XPU baseline is computed from bandwidth, not from these timings &mdash; but it does understate row management: the 7 % &ldquo;row management&rdquo; slice of &sect;11 would be roughly twice as large on real timings, and the stock design, which re-opens rows far more often than the extended one, would lose by more. [assumption A0]</div>
+
+      <p>Fig. 0b draws the rules the simulator actually enforces, in its own cycles; it is the reference for the cycle-by-cycle walk in &sect;10.</p>
       <div class="fig" id="fig-timing">
         <svg viewBox="0 0 900 300" role="img" aria-label="Timing diagram of one DRAM read on the simulator's LPDDR5-AiM preset. ACT at cycle 0; RD allowed at cycle 15 (tRCD); data appears on DQ 20 cycles after RD (CL) for 4 cycles (BL); further RDs to the same open row may follow every 4 cycles (tCCD); PRE is allowed 34 cycles after ACT (tRAS); the next ACT to the same bank waits 17 cycles after PRE (tRP). Below: streaming reads from an open row keep the DQ bus busy 4 cycles out of every 4, i.e. 12.8 GB/s.">
           <defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
@@ -453,34 +872,70 @@
           <path d="M440.79999999999995,210 L631.1999999999999,210" stroke="#1f6feb" stroke-width="1.2" marker-end="url(#arrF)" fill="none"/><text x="536.0" y="222" text-anchor="middle" font-size="8" fill="#1f6feb">tRP = 17 cyc: close before re-open</text>
           <text x="14" y="252" font-size="11" font-weight="bold" fill="#172033">(b) the channel&rsquo;s speed limit: one column every tCCD = 32 B / 2.5 ns = 12.8 GB/s</text>
           <rect x="60.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="104.8" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="149.6" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="194.39999999999998" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="239.2" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="284.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="328.79999999999995" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="373.59999999999997" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="418.4" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="463.2" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="508.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="552.8" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="597.5999999999999" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="642.4" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="687.1999999999999" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="732.0" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="776.8" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/><rect x="821.5999999999999" y="262" width="42.8" height="14" fill="#fdf0e6" stroke="#b54708"/>
-          <text x="60.0" y="292" font-size="8" fill="#647083">open row, back-to-back RDs: the DQ bus is 100 % busy &mdash; this is the &ldquo;external bandwidth&rdquo; every roofline uses. Nothing on the outside of the chip can go faster.</text>
+          <text x="60.0" y="292" font-size="8" fill="#647083">open row, back-to-back RDs [preset; real parts alternate bank groups, Fig. L4]: the DQ bus is 100 % busy &mdash; this is the &ldquo;external bandwidth&rdquo; every roofline uses. Nothing on the outside of the chip can go faster.</text>
         </svg>
-        <p class="cap">Fig. 0b &mdash; The timing rules the simulator enforces (values from the <code class="k">LPDDR5_AiM_timing</code> preset). Row timings are ~2&times; optimistic vs. JEDEC parts [documented assumption from Part III &sect;4]; every ratio on this page is unaffected because the same preset is used for stock and extended runs.</p>
+        <p class="cap">Fig. 0b &mdash; The timing rules the simulator enforces (values from the <code class="k">LPDDR5_AiM_timing</code> preset). These are the &ldquo;as used here&rdquo; column of the table above: row timings are 2&times; faster than real parts [assumption A0]; every ratio on this page is unaffected because the same preset is used for stock and extended runs.</p>
       </div>
+
+
+      <h3 id="refresh">Refresh, RowHammer and retention</h3>
+      <p>Cells leak, so every row must be re-sensed (which restores it, Fig. L2) at least once per refresh window: <b>32 ms</b> in LPDDR5 at normal temperature, implemented as 8,192 refresh commands per window, i.e. one all-bank REF on average every <b>3.9 &micro;s</b>, each blocking the die for tRFCab = 210 ns (8 Gb) to 280 ns (12&ndash;16 Gb). That is 5&ndash;7 % of wall-clock time &mdash; a tax every DRAM pays, PIM or not. Three refinements matter to a system designer. <b>Per-bank refresh</b> blocks only the refreshed bank (120&ndash;140 ns) and lets the other banks keep working, but it counts against the four-ACT window. <b>Temperature</b>: the die reports its temperature in a mode register and the refresh rate must scale from 4&times; slower (cold) to 8&times; faster (hot); a PIM design that heats the die pays in refresh. <b>RowHammer</b>: repeatedly opening one row disturbs its neighbours, so LPDDR5 makes the controller count ACTs per bank and issue extra refresh-management (RFM) commands past a threshold the die advertises. A PIM mapping like &sect;10&rsquo;s is not a RowHammer attack pattern (each weight row is opened only on the order of a hundred times per refresh window), but LPDDR5&rsquo;s refresh management counts activations <i>per bank</i>, not per row, so an ACT-heavy mapping owes extra RFM commands in proportion to its ACT count &mdash; one more reason to prefer designs that open a row once and reuse it.</p>
+      <p><b>Refresh and PIM.</b> A refresh in the middle of a multi-command MAC sequence would close the row and corrupt the partial sum, so both Newton and AiM have the controller drain pending refreshes before a sequence starts. The simulator issues all-bank refreshes at the correct interval; its blocking time for our 32 Gb organisation is an upstream artefact (noted in the study&rsquo;s Phase 2 report), and refresh is a small slice on this page either way.</p>
+
+      <h3 id="training">Why the SoC must train the link</h3>
+      <p>Because the DRAM has no DLL (&sect;1), the SoC measures and corrects everything itself, at boot and periodically afterwards: <b>ZQ calibration</b> (set driver strength and termination against a 240 &#8486; reference), <b>command-bus training</b> (centre the CA sampling point and reference voltage &mdash; nothing else can be trusted until commands arrive intact), <b>WCK-to-CK leveling</b> (align the two clocks at the die, so that a command decoded in the CK domain lands on the right WCK edge), <b>duty-cycle adjustment</b> (both WCK edges carry data, so a lopsided clock makes odd and even bits unequal), <b>read training</b> (find where, within a ~1 ns uncertainty, read data actually arrives), and <b>write training</b> (centre WCK in the data eye at the DRAM&rsquo;s receivers, using the training FIFO). None of this appears in an architectural simulator, and it does not need to &mdash; but it explains two things that do: why the command clock is kept slow and simple, and why the die has no internally generated high-speed clock that a PIM unit could borrow.</p>
+
+      <p><b>Three ideas to carry forward.</b> (1) <i>Opening a row is expensive, reading columns from an open row is cheap</i> &mdash; good code stays inside open rows. (2) <i>A channel is a one-column-per-2.5-ns machine</i> at the pins, built from column datapaths that each manage one column per 5 ns: whatever you ask it, per-channel external throughput is capped at 12.8 GB/s. (3) AiM&rsquo;s whole trick is that one column command can make <i>all 16 banks</i> read a column internally at once &mdash; up to 16 columns of work per command slot &mdash; <i>as long as each command does 16 banks&rsquo; worth of useful work</i>. &sect;4 looks at what the DRAM substrate lets you build at the bank edge; the sections after it show a workload where the stock design does not keep its promise.</p>
+    </section>
+
+    <section class="card" id="topim">
+      <h2><span class="num">4</span>From DRAM to PIM: what the substrate offers, and what it charges</h2>
+      <p class="lead">&sect;2 ended at the bank edge: 256 bits arrive there every column cycle, in every bank, and in a normal DRAM seven eighths of that capacity (fifteen sixteenths under this page&rsquo;s 2.5 ns assumption) is never used because only one column at a time can leave through the pins. Processing-in-memory is the idea of spending that unused capacity on arithmetic. This section is the bridge between the memory (&sect;1&ndash;3) and the machine (&sect;5): what the opportunity is worth, where the logic can physically go, and the four constraints that shape every real design.</p>
+
+      <h3>The opportunity, in one line of arithmetic</h3>
       <div class="scroll">
       <table>
-        <thead><tr><th>Parameter</th><th class="num">cycles</th><th class="num">ns @ 0.625</th><th>Meaning</th></tr></thead>
+        <thead><tr><th>one x16 LPDDR5-6400 die, 16 banks</th><th class="num">per bank</th><th class="num">per die</th><th class="num">vs. the pins</th><th>who uses this number</th></tr></thead>
         <tbody>
-          <tr><td class="rowlabel">tCK</td><td class="num">1</td><td class="num">0.625</td><td>clock convention: one channel&rsquo;s burst rate = real LPDDR5-6400 x16</td></tr>
-          <tr><td class="rowlabel">BL (burst)</td><td class="num">4</td><td class="num">2.5</td><td>time one 32 B column occupies the DQ pins</td></tr>
-          <tr><td class="rowlabel">tCCD</td><td class="num">4</td><td class="num">2.5</td><td>spacing between two column commands &mdash; the per-channel command rate</td></tr>
-          <tr><td class="rowlabel">tRCD</td><td class="num">15</td><td class="num">9.4</td><td>ACT &rarr; first RD/WR</td></tr>
-          <tr><td class="rowlabel">CL / CWL</td><td class="num">20 / 11</td><td class="num">12.5 / 6.9</td><td>read / write latency to data</td></tr>
-          <tr><td class="rowlabel">tRAS / tRP</td><td class="num">34 / 17</td><td class="num">21 / 11</td><td>row open minimum / close-to-reopen</td></tr>
-          <tr><td class="rowlabel">tRRD / tFAW</td><td class="num">4 / 16</td><td class="num">2.5 / 10</td><td>ACT rate limits (power)</td></tr>
-          <tr><td class="rowlabel"><b>nRCDRDMAC</b></td><td class="num">56</td><td class="num">35</td><td>AiM: ACT16 &rarr; first <code class="k">MAC16</code> (longer than tRCD: the PU datapath must settle)</td></tr>
-          <tr><td class="rowlabel"><b>nMODCH (TMOD)</b></td><td class="num">32</td><td class="num">20</td><td>AiM: array-mode &harr; register-mode switch; blocks every command</td></tr>
-          <tr><td class="rowlabel">RDMAC16 latency</td><td class="num">4</td><td class="num">2.5</td><td>AiM: accumulators &rarr; GPR; the DMA <b>waits</b> for it</td></tr>
+          <tr><td class="rowlabel">external (what the SoC can get)</td><td class="num">&mdash;</td><td class="num">12.8 GB/s</td><td class="num">1&times;</td><td>every GPU/XPU baseline in this series</td></tr>
+          <tr><td class="rowlabel">internal, one column per bank per <b>5 ns</b></td><td class="num">6.4 GB/s</td><td class="num">102.4 GB/s</td><td class="num"><b>8&times;</b></td><td>published LPDDR5-PIM work: Samsung LPDDR5-PIM, LP-Spec, CD-PIM&rsquo;s baseline</td></tr>
+          <tr><td class="rowlabel">internal, one column per bank per <b>2.5 ns</b></td><td class="num">12.8 GB/s</td><td class="num">204.8 GB/s</td><td class="num"><b>16&times;</b></td><td><b>this series</b> [assumption A1, &sect;2]; equals the ratio SK hynix states for GDDR6-AiM (512 vs 32 GB/s per die, &ldquo;defined as a peak during burst operations&rdquo;)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Either way the ratio is large and it is <i>free of the pins</i>: it costs no extra I/O power and no extra package balls. That is the entire value proposition of bank-level PIM, and it is exactly the resource a memory-bound workload like the &pi;<sub>0</sub> action expert (Part I: 60 FLOP per byte) is starved of.</p>
+
+      <h3>Where the logic can go</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>location</th><th>what it sees</th><th>examples</th><th>trade-off</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlabel">inside the array (sense amplifiers)</td><td>a whole 2 KB row at once</td><td>research proposals (bulk bitwise operations)</td><td>enormous width, but only trivially simple logic fits at cell pitch; no multiply-accumulate</td></tr>
+          <tr><td class="rowlabel"><b>the bank edge, one unit per bank</b></td><td>one 256-bit column per column cycle, in every bank in parallel</td><td><b>SK hynix GDDR6-AiM</b> (16 units per die), Newton, Samsung LPDDR5X-PIM (one block per bank), McDRAM, LP-Spec</td><td>the sweet spot for GEMV: the unit is exactly as wide as a column (16 &times; 16-bit = 256 bits); costs die area in a process that is bad at logic</td></tr>
+          <tr><td class="rowlabel">the bank edge, one unit per two banks</td><td>same, half the parallelism</td><td>Samsung HBM2-PIM (&ldquo;to limit the power and area costs&rdquo;)</td><td>half the area and power, half the internal bandwidth</td></tr>
+          <tr><td class="rowlabel">die periphery, shared</td><td>data broadcast to or collected from all banks</td><td>AiM&rsquo;s Global Buffer (one 2 KB SRAM per die)</td><td>small and shared; becomes a bottleneck if every unit needs fresh data from it every cycle (&sect;10, the &ldquo;third clock&rdquo;)</td></tr>
+          <tr><td class="rowlabel">a logic die stacked on the DRAM die</td><td>the banks, through a dense die-to-die interface</td><td>UPMEM&rsquo;s PIM-AI proposal (simulated; claims 102.4 GB/s to the banks, i.e. the 8&times; figure)</td><td>good logic process and real clocks while keeping most of the internal bandwidth; costs die stacking</td></tr>
+          <tr><td class="rowlabel">the buffer die or the controller</td><td>only what crosses the external interface</td><td>HBM base-die designs, CXL-controller logic such as CENT&rsquo;s host side</td><td>cheap, flexible logic, but only the external bandwidth</td></tr>
         </tbody>
       </table>
       </div>
 
-      <div class="callout"><b>Three ideas to carry forward.</b> (1) <b>Opening a row is expensive, reading columns from an open row is cheap</b> &mdash; good code stays inside open rows. (2) <b>A channel is a one-command-per-4-cycles machine</b>: whatever you ask it, per-channel throughput is capped at one 32 B column per tCCD. That cap is the external bandwidth. (3) <b>AiM&rsquo;s whole trick</b> is that one column command can make all 16 banks read a column <i>internally</i> at once &mdash; 16 columns of work per command slot, 16&times; the external rate &mdash; <i>as long as each command does 16 banks&rsquo; worth of useful work</i>. The next sections show a workload where it does not.</div>
+      <h3>Four things the substrate charges for</h3>
+      <ul class="notes">
+        <li><b>1. The process is built for capacitors, not logic.</b> UPMEM, which shipped general-purpose cores in a DRAM process, put numbers on it: transistors <b>~3&times; slower</b> than a logic process of the same node, logic <b>~10&times; less dense</b>, and <b>three metal layers</b> for routing instead of ten or more. Academic PIM papers (AttAcc, LP-Spec and others) adopt the same 10&times; area penalty when they scale synthesis results. This is why real PIM units are small, fixed-function datapaths &mdash; AiM&rsquo;s has &ldquo;no programmable control paths&rdquo; &mdash; and why a wide multiplier array is expensive.</li>
+        <li><b>2. Area is capped at roughly a quarter of the die.</b> Every bit of logic displaces cells that the vendor could have sold. Reported figures: AiM &ldquo;around 20 %&rdquo; of the die; Samsung HBM2-PIM 27 % with half the sub-arrays removed to make room; Newton&rsquo;s stated target &ldquo;no more than 25 %&rdquo;; LP-Spec 16.9 % of a 16 Gb LPDDR5 die; AttAcc 10.8 %.</li>
+        <li><b>3. Power and heat limit how many banks can work at once.</b> A normal DRAM never reads all banks simultaneously, and its power grid is sized accordingly (that is what tRRD and tFAW are, &sect;2). Newton reports an all-bank compute command at about <b>4&times; the power of a full-rate read</b>; AttAcc finds that under the standard&rsquo;s worst-case current budget only 18 units of an HBM3 channel may run together; Samsung gave HBM2-PIM one unit per two banks &ldquo;to limit the power and area costs&rdquo;, and notes that it had to stay inside the thermal envelope of the unmodified part. For an LPDDR5 die that already draws ~0.4&ndash;0.5 W in a full-rate read (&sect;1), in a wire-bonded multi-die package, this is likely the first-order limit [our inference; no LPDDR source states it].</li>
+        <li><b>4. There is no fast clock to borrow.</b> The die has no PLL (&sect;1): the clocks available at the bank edge are CK (800 MHz) and divisions of WCK that exist only while data is moving. Published PIM unit speeds are modest: Samsung HBM2-PIM 250&ndash;300 MHz; UPMEM designed for 500 MHz, fielded at 350 MHz; LP-Spec 200 MHz; CD-PIM 400 MHz (synthesis only). <b>AiM&rsquo;s 1 GHz is the outlier, and it was achieved on GDDR6 at 1.25 V</b>; the LPDDR5 core rail is 1.05 V.</li>
+      </ul>
+
+      <div class="callout warn"><b>What this series assumes about the substrate [assumptions, collected].</b> No LPDDR5-AiM part exists, so the machine on this page is the published GDDR6-AiM microarchitecture re-timed onto an LPDDR5 channel. Three of its parameters are therefore choices, not facts: <b>(A0)</b> one simulator cycle = 0.625 ns, which makes pin-rate quantities exact and row timings about 2&times; fast (&sect;3); <b>(A1)</b> an all-bank column every 2.5 ns, where published LPDDR5-PIM work uses 5 ns; and <b>(A2)</b> a 16-lane PU that finishes a column&rsquo;s multiplies in 1 ns, as fabricated for GDDR6, where an LPDDR vendor would more plausibly build a PU matched to its column period (&sect;10 discusses this at length). A1 makes the <i>stock</i> machine look as good as it can (a fast column minimises the time it spends per command); A2 does not change stock at all, because its PU idles either way (&sect;10). The result of this page &mdash; stock AiM loses to the XPU by 4.5&times; on this workload &mdash; is therefore a lower bound on the loss (5 ns columns: 40.24 ms instead of 28.55). What A2 does affect is how much of Part IV&rsquo;s gain comes from reusing a fetched column across PU cycles; &sect;10 and Part IV &sect;2 give the numbers for the matched-PU case as well.</div>
+
+      <p><b>Standardisation.</b> Samsung and SK hynix were reported in late 2024 to be working jointly on a JEDEC LPDDR-PIM standard, and JEDEC has said an LPDDR6 PIM standard is nearing completion [press reports; no published standard at the time of writing]. Samsung&rsquo;s 2026 LPDDR5X-PIM disclosures describe one PIM block per bank operating under standard LPDDR5X timings, with a quoted internal bandwidth of 8&times; the external &mdash; consistent with the 5 ns row of the table above.</p>
     </section>
 
     <section class="card" id="aim">
-      <h2><span class="num">2</span>LPDDR5-AiM: the machine</h2>
-      <p class="lead">AiM (Accelerator-in-Memory, SK hynix HC34 / ISSCC&rsquo;22) puts a 16-lane fp16 multiply-accumulate unit <i>next to every DRAM bank</i>, plus a small per-channel Global Buffer (GB) that broadcasts one vector to all banks.</p>
+      <h2><span class="num">5</span>LPDDR5-AiM: the machine</h2>
+      <p class="lead">AiM (Accelerator-in-Memory, SK hynix HC34 / ISSCC&rsquo;22) puts a 16-lane bf16 multiply-accumulate unit <i>next to every DRAM bank</i>, plus a small per-channel Global Buffer (GB) that broadcasts one vector to all banks.</p>
 
       <div class="fig" id="fig-aim">
         <svg viewBox="0 0 900 330" role="img" aria-label="AiM channel architecture: a host DMA issues ISR instructions in order to 16-32 LPDDR5 channels. Inside a channel: 16 banks, each with a 16-lane fp16 MAC unit and one accumulator register; a 2 KB Global Buffer broadcasts a vector to all banks; GPRs and CFRs sit at the DMA. One MAC_ABK command makes all 16 banks each read 32 bytes and dot it with the same GB segment.">
@@ -548,19 +1003,19 @@
           <text x="372" y="170" font-size="8.5" fill="#b54708">broadcast</text>
           <line x1="368" y1="83" x2="418" y2="83" stroke="#647083" stroke-width="1.4" marker-end="url(#arr3)"/>
         </svg>
-        <p class="cap">Fig. 1 &mdash; The AiM machine model. The 16&times; internal:external bandwidth ratio is the whole value proposition &mdash; but note the three scarcity points that will matter: ONE vector in the GB, ONE accumulator per bank, and ONE in-order instruction stream from the DMA.</p>
+        <p class="cap">Fig. 1 &mdash; The AiM machine model. The 16&times; internal:external bandwidth ratio [assumption A1, &sect;4; 8&times; with a standard 5 ns column cycle] is the whole value proposition &mdash; but note the three scarcity points that will matter: ONE vector in the GB, ONE accumulator per bank, and ONE in-order instruction stream from the DMA.</p>
       </div>
 
       <p>Memory geometry (as configured in the simulator's LPDDR5-AiM device): 32-channel device, 4 bank-groups &times; 4 banks per channel, 32&nbsp;KB rows, 32&nbsp;B column granularity (= 16 fp16 values, matching the MAC lane width and the GPR width). We activate 8/16/32 channels by mask; <b>16 channels &times; 12.8&nbsp;GB/s = 204.8&nbsp;GB/s external = exactly the Jetson AGX Orin memory budget</b> (spec-verified: 256-bit LPDDR5-6400).</p>
 
       <h3>One <code class="k">MAC_ABK</code>, exactly</h3>
       <p><b>Why the GB is 2 KB when only 32 B is broadcast at a time.</b> <code class="k">MAC_ABK opsize=64</code> is a <i>sweep</i>: for column <i>c</i> = 0&hellip;63, every bank reads its weight column <i>c</i> and multiplies it by the matching 32 B segment GB[<i>c</i>]. Over the sweep, bank <i>b</i> accumulates the full length-1,024 dot product <i>x</i>[0..1023]&middot;<i>W</i>[<i>j<sub>b</sub></i>][0..1023]. The buffer therefore holds all 64 segments &mdash; 64 &times; 32 B = 2 KB = 1,024 bf16, the largest K one sweep can cover &mdash; while each column command consumes one of them. A 1,024-long input fits one fill; o_proj (K = 2,048) and down (K = 4,096) need 2 and 4 chunks, refilling the GB per chunk.</p>
-      <p><b>Two meanings of &ldquo;one MAC_ABK&rdquo;.</b> The host writes one ISR <i>line</i>, <code class="k">MAC_ABK opsize=64</code>; the DMA unrolls it into 64 <i>column commands</i> (<code class="k">MAC16</code> in the simulator&rsquo;s counters), one per 4-cycle slot. A column command is the 16 banks &times; 16 lanes = <b>256-MAC</b> unit; the line is a sweep of 64 of them (16,384 MACs, 256 cycles), fanned out to every channel in <code class="k">channel_mask</code> in the same cycle. The trace therefore has 5,406 <code class="k">MAC_ABK</code> lines per layer but the simulator counts 4.2 M column commands over 16 channels, and it is the column command &mdash; not the line &mdash; that the 46 % slice in &sect;8 counts and that pays the per-token redundancy.</p>
-      <p><b>What one column command computes.</b> The DMA broadcasts <i>x</i>[16<i>c</i> &hellip; 16<i>c</i>+15], a (1 &times; 16) bf16 vector, to all 16 banks; bank <i>b</i> reads <i>W</i>[<i>j<sub>b</sub></i>][16<i>c</i> &hellip; 16<i>c</i>+15], its own 16 weights of output row <i>j<sub>b</sub></i>; its 16 multipliers form the products, the adder tree sums them, and acc<sub><i>b</i></sub> += that partial sum. Per command the channel computes (1 &times; 16) &middot; <i>M<sub>c</sub></i> with <i>M<sub>c</sub></i> a 16 (k) &times; 16 (banks) slice &mdash; 16 partial sums added into 16 accumulators. Over the 64-column sweep this is (1 &times; 1024) &middot; (1024 &times; 16): <b>16 finished outputs per channel per sweep, one per bank</b>, 256 per device at 16 channels. The &ldquo;16 &times; 16 matrix&rdquo; is a slice of 16 <i>different</i> output rows, not a contiguous block of <i>W</i>: each bank owns whole rows, and the 16 rows of a row-group are the 16 banks&rsquo; rows at the same DRAM address, which is what lets one broadcast command drive all of them. Two checks against numbers used later: 16 banks &times; 16 lanes = 256 MACs per 4-cycle slot per channel = 3.28 TFLOP/s at 16 channels (&sect;10), and 16 outputs per sweep is why q_proj&rsquo;s 2,048 outputs need 2,048 / 256 = 8 row-groups per token (&sect;6).</p>
+      <p><b>Two meanings of &ldquo;one MAC_ABK&rdquo;.</b> The host writes one ISR <i>line</i>, <code class="k">MAC_ABK opsize=64</code>; the DMA unrolls it into 64 <i>column commands</i> (<code class="k">MAC16</code> in the simulator&rsquo;s counters), one per 4-cycle slot. A column command is the 16 banks &times; 16 lanes = <b>256-MAC</b> unit; the line is a sweep of 64 of them (16,384 MACs, 256 cycles), fanned out to every channel in <code class="k">channel_mask</code> in the same cycle. The trace therefore has 5,406 <code class="k">MAC_ABK</code> lines per layer but the simulator counts 4.2 M column commands over 16 channels, and it is the column command &mdash; not the line &mdash; that the 46 % slice in &sect;11 counts and that pays the per-token redundancy.</p>
+      <p><b>What one column command computes.</b> The DMA broadcasts <i>x</i>[16<i>c</i> &hellip; 16<i>c</i>+15], a (1 &times; 16) bf16 vector, to all 16 banks; bank <i>b</i> reads <i>W</i>[<i>j<sub>b</sub></i>][16<i>c</i> &hellip; 16<i>c</i>+15], its own 16 weights of output row <i>j<sub>b</sub></i>; its 16 multipliers form the products, the adder tree sums them, and acc<sub><i>b</i></sub> += that partial sum. Per command the channel computes (1 &times; 16) &middot; <i>M<sub>c</sub></i> with <i>M<sub>c</sub></i> a 16 (k) &times; 16 (banks) slice &mdash; 16 partial sums added into 16 accumulators. Over the 64-column sweep this is (1 &times; 1024) &middot; (1024 &times; 16): <b>16 finished outputs per channel per sweep, one per bank</b>, 256 per device at 16 channels. The &ldquo;16 &times; 16 matrix&rdquo; is a slice of 16 <i>different</i> output rows, not a contiguous block of <i>W</i>: each bank owns whole rows, and the 16 rows of a row-group are the 16 banks&rsquo; rows at the same DRAM address, which is what lets one broadcast command drive all of them. Two checks against numbers used later: 16 banks &times; 16 lanes = 256 MACs per 4-cycle slot per channel = 3.28 TFLOP/s at 16 channels (&sect;8), and 16 outputs per sweep is why q_proj&rsquo;s 2,048 outputs need 2,048 / 256 = 8 row-groups per token (&sect;9).</p>
     </section>
 
     <section class="card" id="isa">
-      <h2><span class="num">3</span>The ISR instruction set</h2>
+      <h2><span class="num">6</span>The ISR instruction set</h2>
       <p class="lead">The host drives AiM with ISR (Instruction Set Register) commands. Each carries only the fields it needs, drawn from: <code class="k">opsize, GPR, channel_mask, bank, row</code>. <code class="k">opsize</code> unrolls an instruction over consecutive 32&nbsp;B columns; <code class="k">channel_mask</code> fans it out across channels in the same cycle.</p>
       <div class="scroll">
       <table>
@@ -590,13 +1045,13 @@
       </ul>
 
       <h3>TMOD, explained</h3>
-      <p><b>Two modes, one set of opcodes.</b> GDDR6 has no spare command opcodes, so AiM did not add pin-level commands for its buffers. It reuses the ordinary RD and WR column commands and lets a <b>mode register</b> decide what they mean. In <i>array mode</i> (normal DRAM) RD/WR/MAC address rows and columns: data moves between the row buffer and the pins, or the row buffer and the PU. In <i>register-access mode</i> the same RD/WR are decoded by the AiM die as accesses to the PU&rsquo;s registers: WR becomes <code class="k">WR_GB</code> (fill the Global Buffer) or <code class="k">WR_BIAS</code> (write the MAC result registers), RD becomes <code class="k">RD_MAC</code> / <code class="k">RD_AF</code>. SK hynix&rsquo;s Hot Chips poster states it directly: &ldquo;Commands marked as CMD* (WRGB, RDMAC, RDAF, WRMAC) require a special Mode Register set to be recognized.&rdquo;</p>
-      <p><b>What the switch is and why it costs 32 cycles.</b> Changing mode is a Mode Register Set command, and every JEDEC DRAM requires a guard time after a mode register write &mdash; tMOD &mdash; before the next command may be issued. The simulator models it as a channel-level <code class="k">TMOD</code> command that blocks every following command for nMODCH = 32 cycles, inserted automatically by the controller whenever the next ISR needs the other mode. It is expensive because it is a control-plane operation: the new setting must propagate from the register through the die&rsquo;s command decoder and the muxes that steer the column datapath toward the array or toward the PU registers, and settle everywhere before any command is decoded under the new rules. Nothing can pipeline past it, since the meaning of the next command depends on it. 32 cycles is 20 ns at our clock convention; DDR4&rsquo;s tMOD is 15&ndash;24 ns, so the value is in the normal range [the constant comes from the simulator&rsquo;s GDDR6-AiM preset and is reused for LPDDR5 &mdash; assumption, &sect;4].</p>
-      <p><b>Why it is 15 % of a layer.</b> Each (token, row-group) needs two switches: into array mode before the <code class="k">MAC_ABK</code>, back to register mode for the <code class="k">RD_MAC</code> &mdash; 64 idle cycles against 256 MAC cycles, 10,945 switches per channel per layer at 16 channels (&sect;8). The extended ISA of Part IV &sect;2 does not shorten a switch; it makes one happen per 16 tokens instead of per token.</p>
+      <p><b>Two modes, one set of opcodes.</b> SK hynix says the AiM commands use GDDR6&rsquo;s reserved command encodings, and that four of them &mdash; WRGB, RDMAC, RDAF, WRMAC, the ones that touch the PU&rsquo;s buffers &mdash; additionally need a mode register to be set before the die recognises them. The natural reading, and what the simulator implements, is that in that mode the ordinary RD and WR column encodings are steered to the PU&rsquo;s registers, so a <b>mode register</b> decides what they mean [our inference from the public material]. In <i>array mode</i> (normal DRAM) RD/WR/MAC address rows and columns: data moves between the row buffer and the pins, or the row buffer and the PU. In <i>register-access mode</i> the same RD/WR are decoded by the AiM die as accesses to the PU&rsquo;s registers: WR becomes <code class="k">WR_GB</code> (fill the Global Buffer) or <code class="k">WR_BIAS</code> (write the MAC result registers), RD becomes <code class="k">RD_MAC</code> / <code class="k">RD_AF</code>. SK hynix&rsquo;s Hot Chips poster states it directly: &ldquo;Commands marked as CMD* require a special Mode Register set to be recognized&rdquo; (CMD* = WRGB, RDMAC, RDAF, WRMAC).</p>
+      <p><b>What the switch is and why it costs 32 cycles.</b> Changing mode is a Mode Register Set command, and every JEDEC DRAM requires a guard time after a mode register write &mdash; tMOD &mdash; before the next command may be issued. The simulator models it as a channel-level <code class="k">TMOD</code> command that blocks every following command for nMODCH = 32 cycles, inserted automatically by the controller whenever the next ISR needs the other mode. It is expensive because it is a control-plane operation: the new setting must propagate from the register through the die&rsquo;s command decoder and the muxes that steer the column datapath toward the array or toward the PU registers, and settle everywhere before any command is decoded under the new rules. Nothing can pipeline past it, since the meaning of the next command depends on it. 32 cycles is 20 ns at our clock convention; DDR4&rsquo;s tMOD is max(24 clock periods, 15 ns) = 15&ndash;30 ns across its speed bins and LPDDR5&rsquo;s own mode-register guard time tMRD is 14 ns, so the value is in the normal range [the constant comes from the simulator&rsquo;s GDDR6-AiM preset and is reused for LPDDR5 &mdash; assumption, &sect;7].</p>
+      <p><b>Why it is 15 % of a layer.</b> Each (token, row-group) needs two switches: into array mode before the <code class="k">MAC_ABK</code>, back to register mode for the <code class="k">RD_MAC</code> &mdash; 64 idle cycles against 256 MAC cycles, 10,945 switches per channel per layer at 16 channels (&sect;11). The extended ISA of Part IV &sect;2 does not shorten a switch; it makes one happen per 16 tokens instead of per token.</p>
     </section>
 
     <section class="card" id="sim">
-      <h2><span class="num">4</span>The simulator</h2>
+      <h2><span class="num">7</span>The simulator</h2>
       <p class="lead">We use the open-source <code class="k">aim_simulator</code> (CENT, ASPLOS&rsquo;25): Ramulator&nbsp;2.0 with the AiM ISA, an AiM DMA front-end, an AiM-aware channel controller, and full GDDR6-AiM / LPDDR5-AiM timing models.</p>
       <pre class="cmd"><span class="c"># trace-driven flow: a text trace of ISR instructions in, cycles out</span>
 AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line...</span>
@@ -607,7 +1062,7 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
       <ul class="notes">
         <li><b>LPDDR-PIM premise (no AF in memory):</b> we carry SK&nbsp;hynix&rsquo;s ISR-style ISA onto LPDDR5 timing, but exclude the one AiM feature no mobile part has: every disclosed LPDDR-PIM &mdash; including Samsung&rsquo;s own LP5X-PIM simulator (arXiv:2606.00636) &mdash; is <b>GEMV-only, with nonlinearities on the host</b>. Accordingly neither the strawman below nor Part IV&rsquo;s extensions ever issue <code class="k">AF</code>/<code class="k">RD_AF</code>; GeLU and softmax run on the host XPU.</li>
         <li><b>Timing that matters:</b> one column command per <code class="k">nCCD</code>&nbsp;=&nbsp;4 cycles; MAC/AF/copy commands are 1-cycle issue events whose real cost is the column spacing plus row-activation preconditions; <code class="k">TMOD</code>&nbsp;=&nbsp;32 cycles.</li>
-        <li><b>Clock convention:</b> we convert cycles at tCK&nbsp;=&nbsp;0.625&nbsp;ns &mdash; calibrated so one channel&rsquo;s external burst rate equals real LPDDR5-6400 x16 (12.8&nbsp;GB/s). Documented assumption; all ratios are tCK-independent.</li>
+        <li><b>Clock convention:</b> we convert one simulator cycle to 0.625&nbsp;ns &mdash; calibrated so one channel&rsquo;s external burst rate equals real LPDDR5-6400 x16 (12.8&nbsp;GB/s). Most of the preset&rsquo;s cycle counts are the standard&rsquo;s values counted in real 1.25 ns clock periods, so this convention makes pin-rate quantities exact and row-rate quantities about 2&times; fast; &sect;3 tabulates both and lists the exceptions. Documented assumption [A0]; all ratios are tCK-independent.</li>
         <li><b>Validation:</b> the shipped micro-benchmarks and an all-ISR smoke trace run bit-identically before/after our study; a probe trace confirms the PREA&rarr;ACT16 row-management path fires as specified.</li>
       </ul>
       <h3>Does the retiming create the problem? (measured on the simulator&rsquo;s GDDR6-AiM model)</h3>
@@ -623,18 +1078,18 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
           <tr><td class="rowlabel"><b>stock layer time</b></td><td class="num"><b>1.582 ms</b></td><td class="num"><b>1.427 ms</b></td></tr>
           <tr><td class="rowlabel"><b>our design (Part IV, V = 26)</b></td><td class="num"><b>0.400 ms</b></td><td class="num"><b>0.396 ms</b></td></tr>
           <tr><td class="rowlabel"><b>what the ISA fix is worth</b></td><td class="num"><b>3.95&times;</b></td><td class="num"><b>3.60&times;</b></td></tr>
-          <tr><td class="rowlabel">column period, nCCD &times; tCK (&sect;7 <a href="#where60">&ldquo;Where the 60 % comes from&rdquo;</a>)</td><td class="num">2 &times; 1.0 = 2.0 ns</td><td class="num">4 &times; 0.625 = 2.5 ns</td></tr>
+          <tr><td class="rowlabel">column period, nCCD &times; tCK (&sect;10 <a href="#where60">&ldquo;Where the 60 % comes from&rdquo;</a>)</td><td class="num">2 &times; 1.0 = 2.0 ns</td><td class="num">4 &times; 0.625 = 2.5 ns</td></tr>
           <tr><td class="rowlabel">PU time per column, 16 lanes @ 1 GHz</td><td class="num">1 ns</td><td class="num">1 ns</td></tr>
           <tr><td class="rowlabel">stock PU utilisation (16 MACs per column slot)</td><td class="num">50 % (2.0 ns slot)</td><td class="num">40 % (2.5 ns slot)</td></tr>
         </tbody>
       </table>
       </div>
-      <div class="callout win"><b>The command counts are identical</b>, because they are properties of the ISA and the mapping, not of the timing: one <code class="k">MAC_ABK</code> per (token, weight column), one GB refill per token, one blocking <code class="k">RD_MAC</code> per (token, row-group). Only their cost moves. <b>The problem is not an artifact of the retiming &mdash; on the simulator&rsquo;s SDK-calibrated GDDR6-AiM model it is slightly worse</b> (3.95&times; of headroom rather than 3.60&times;), and the PU-faster-than-column mismatch holds on both (50 % busy on that model, 40 % here). One honest limit: that preset spaces columns at 2.0 ns, i.e. 8 Gb/s/pin, half of GDDR6-AiM&rsquo;s rated 16 Gb/s. At the rated speed the column period is 1.0 ns, the 1 GHz PU is exactly matched (&sect;7 <a href="#where60">derives this</a>), and only the bookkeeping terms (the D = 1 floor, &asymp; 1.8&times;) would remain &mdash; which is why the PU/array mismatch, and hence P1, matters most on <i>LPDDR</i>. What the retiming <i>is</i> responsible for: the 12.8 GB/s-per-channel premise that makes 16 channels equal Orin, the exact share of each overhead slice, and all absolute times. Full runs: <code class="k">05_reports/gddr6_robustness.md</code>.</div>
+      <div class="callout win"><b>The command counts are identical</b>, because they are properties of the ISA and the mapping, not of the timing: one <code class="k">MAC_ABK</code> per (token, weight column), one GB refill per token, one blocking <code class="k">RD_MAC</code> per (token, row-group). Only their cost moves. <b>The problem is not an artifact of the retiming &mdash; on the simulator&rsquo;s SDK-calibrated GDDR6-AiM model it is slightly worse</b> (3.95&times; of headroom rather than 3.60&times;), and the PU-faster-than-column mismatch holds on both (50 % busy on that model, 40 % here). One honest limit: that preset spaces columns at 2.0 ns, i.e. 8 Gb/s/pin, half of GDDR6-AiM&rsquo;s rated 16 Gb/s. At the rated speed the column period is 1.0 ns, the 1 GHz PU is exactly matched (&sect;10 <a href="#where60">derives this</a>), and only the bookkeeping terms (the D = 1 floor, &asymp; 1.8&times;) would remain &mdash; which is why the PU/array mismatch, and hence P1, matters most on <i>LPDDR</i>. What the retiming <i>is</i> responsible for: the 12.8 GB/s-per-channel premise that makes 16 channels equal Orin, the exact share of each overhead slice, and all absolute times. Full runs: <code class="k">05_reports/gddr6_robustness.md</code>.</div>
 
     </section>
 
     <section class="card" id="what">
-      <h2><span class="num">5</span>What to offload, and why</h2>
+      <h2><span class="num">8</span>What to offload, and why</h2>
       <p class="lead">The roofline from Part I picks the split: everything whose cost is <i>streaming resident data</i> goes to PIM; everything small, nonlinear, or shuffle-shaped stays on the host.</p>
       <div class="scroll">
       <table>
@@ -646,11 +1101,11 @@ AiM WR_GB 64 0 0xffff        <span class="c"># frontend parses one ISR per line.
         </tbody>
       </table>
       </div>
-      <div class="callout"><b>Expected win, on paper.</b> Weights resident in banks + MAC at the internal rate (16 ch &times; 204.8 GB/s = 3.28 TB/s) should crush the XPU's 204.8 GB/s external stream: 623 MB / 3.28 TB/s &asymp; 0.19 ms vs 3.15 ms. The rest of this page is about why that arithmetic silently assumes S = 1 token.</div>
+      <div class="callout"><b>Expected win, on paper.</b> Weights resident in banks + MAC at the internal rate (16 ch &times; 204.8 GB/s = 3.28 TB/s under assumption A1; half that with a 5 ns column) should crush the XPU's 204.8 GB/s external stream: 623 MB / 3.28 TB/s &asymp; 0.19 ms vs 3.15 ms. The rest of this page is about why that arithmetic silently assumes S = 1 token.</div>
     </section>
 
     <section class="card" id="mapping">
-      <h2><span class="num">6</span>Instruction-level mapping</h2>
+      <h2><span class="num">9</span>Instruction-level mapping</h2>
       <p class="lead">A GEMM has two mappings onto AiM, differing in <i>what stays in banks</i> and <i>what streams through the GB</i>. We generate real traces for both (plus the attention path) and simulate them.</p>
 
       <div class="fig" id="fig-strategies">
@@ -727,7 +1182,7 @@ AiM RD_MAC 0 0xffff
 
 
     <section class="card" id="exec">
-      <h2><span class="num">7</span>Stock AiM GEMV, cycle by cycle</h2>
+      <h2><span class="num">10</span>Stock AiM GEMV, cycle by cycle</h2>
       <p class="lead">This section answers one question a newcomer should ask: <i>when the host says &ldquo;multiply&rdquo;, what actually moves, where, and how long does it take?</i> We follow the real trace for the first projection of the layer (<code class="k">q_proj</code>: 1,024 inputs &rarr; 2,048 outputs, per token), on one of the 16 channels.</p>
 
       <h3>Setup: where the numbers live</h3>
@@ -1037,7 +1492,7 @@ for t in 0..50:                                <span class="c"># HOST loop: 51 s
       </div>
 
       <h3>Running the clock: one (token, row-group)</h3>
-      <p>Put the frames on a timeline using the simulator&rsquo;s constraint table (&sect;1). <i>T</i> = the cycle the previous <code class="k">RD_MAC</code> was issued. &ldquo;&asymp;&rdquo; marks places where two commands can partially overlap; the simulator resolves the exact value, and the totals below are within a few percent of what it reports.</p>
+      <p>Put the frames on a timeline using the simulator&rsquo;s constraint table (&sect;3, Fig. 0b). <i>T</i> = the cycle the previous <code class="k">RD_MAC</code> was issued. &ldquo;&asymp;&rdquo; marks places where two commands can partially overlap; the simulator resolves the exact value, and the totals below are within a few percent of what it reports.</p>
       <pre class="cmd"><span class="c">cycle   command        what happens                                          useful?</span>
 T+5     WR_BIAS        16 accumulators := 0 (register mode)                   no
 T+6     TMOD           array-mode switch; every command waits 32 cycles       no  (32 idle)
@@ -1063,7 +1518,7 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
           <tr><td class="rowlabel">WR_BIAS, TMOD, PREA, ACT16, nRCDRDMAC wait, TMOD, RD_MAC</td><td class="num">&asymp; 144</td><td class="num">&asymp; 1,152 (33 %)</td><td>bookkeeping</td></tr>
           <tr><td class="rowlabel">WR_GB (64 columns &times; 4), once per token</td><td class="num"></td><td class="num">256 (7 %)</td><td>loading the vector</td></tr>
           <tr><td class="rowlabel"><b>one token</b></td><td class="num"></td><td class="num"><b>&asymp; 3,456</b></td><td></td></tr>
-          <tr><td class="rowlabel"><b>&times; 51 tokens</b></td><td class="num"></td><td class="num"><b>&asymp; 176,000 = 0.11 ms</b></td><td>all six projections + attention sum to the layer&rsquo;s 1.43 ms (&sect;8)</td></tr>
+          <tr><td class="rowlabel"><b>&times; 51 tokens</b></td><td class="num"></td><td class="num"><b>&asymp; 176,000 = 0.11 ms</b></td><td>all six projections + attention sum to the layer&rsquo;s 1.43 ms (&sect;11)</td></tr>
         </tbody>
       </table>
       </div>
@@ -1185,11 +1640,11 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
         <thead><tr><th>term</th><th>meaning</th><th>value used here, and where it comes from</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">pin</td><td>one data wire between the SoC and the DRAM. <b>Gb/s per pin</b> is how many bits one wire carries per second (giga<i>bits</i>; a byte is 8 bits, so 8 Gb/s = 1 GB/s).</td><td>LPDDR5-6400: <b>6.4 Gb/s per pin</b> (the &ldquo;6400&rdquo; is the speed grade). GDDR6-AiM: <b>16 Gb/s per pin</b>, rated (ISSCC&rsquo;22 title; HC34 slide: &ldquo;IO Data rate 16 Gb/s/pin&rdquo;)</td></tr>
-          <tr><td class="rowlabel">x16 channel</td><td>a channel with 16 data pins working together</td><td>both parts; 16 pins &times; 6.4 Gb/s = 102.4 Gb/s = <b>12.8 GB/s</b> per LPDDR5 channel (&sect;1)</td></tr>
-          <tr><td class="rowlabel">column</td><td>the amount of data one read command returns from the row buffer</td><td><b>32 B</b> = 256 bits (&sect;1)</td></tr>
-          <tr><td class="rowlabel">burst, beat</td><td>the 32 B leave through the 16 pins as a <i>burst</i> of 16 <i>beats</i>; each beat puts one bit on each of the 16 pins = 2 B</td><td>16 beats &times; 2 B = 32 B (&sect;1, Fig. 0b)</td></tr>
+          <tr><td class="rowlabel">x16 channel</td><td>a channel with 16 data pins working together</td><td>both parts; 16 pins &times; 6.4 Gb/s = 102.4 Gb/s = <b>12.8 GB/s</b> per LPDDR5 channel (&sect;1&ndash;2)</td></tr>
+          <tr><td class="rowlabel">column</td><td>the amount of data one read command returns from the row buffer</td><td><b>32 B</b> = 256 bits (&sect;2)</td></tr>
+          <tr><td class="rowlabel">burst, beat</td><td>the 32 B leave through the 16 pins as a <i>burst</i> of 16 <i>beats</i>; each beat puts one bit on each of the 16 pins = 2 B</td><td>16 beats &times; 2 B = 32 B (&sect;2)</td></tr>
           <tr><td class="rowlabel">burst time</td><td>how long the burst occupies the pins = column bits &divide; channel rate</td><td>LPDDR5: 256 bits &divide; 102.4 Gb/s = <b>2.5 ns</b></td></tr>
-          <tr><td class="rowlabel">tCK, cycle</td><td>the period of the clock the simulator counts in</td><td><b>0.625 ns</b>, chosen so that 4 cycles = one 2.5 ns burst [assumption A1, &sect;4]. Every ratio on this page is independent of it.</td></tr>
+          <tr><td class="rowlabel">simulator cycle</td><td>the period of the clock the simulator counts in</td><td><b>0.625 ns</b>, chosen so that 4 cycles = one 2.5 ns burst [assumption A0, &sect;7]; it is half of the real 1.25 ns LPDDR5 clock period tCK. Every ratio on this page is independent of it.</td></tr>
           <tr><td class="rowlabel">nBL</td><td>burst length counted in cycles: burst time &divide; tCK</td><td>2.5 &divide; 0.625 = <b>4 cycles</b></td></tr>
           <tr><td class="rowlabel">tCCD, nCCD</td><td><i>column-to-column delay</i>: the minimum time (tCCD) or cycles (nCCD) between two column commands on one channel</td><td><b>nCCD = 4 cycles = 2.5 ns</b>; equal to nBL &mdash; why, below</td></tr>
           <tr><td class="rowlabel"><b>column period</b>, t<sub>col</sub></td><td><i>our name</i> for nCCD &times; tCK: how often the array can hand out one 32 B column</td><td>LPDDR5-6400: 4 &times; 0.625 = <b>2.5 ns</b></td></tr>
@@ -1197,7 +1652,7 @@ T+396   RD_MAC         16 acc → GPR; DMA blocked until data lands (T+400)     
           <tr><td class="rowlabel">PU clock, PU cycle</td><td>the clock the PU runs at; one PU cycle is its period</td><td><b>1 GHz &rarr; 1 PU cycle = 1 ns</b> (HC34: &ldquo;Operating Speed 1 GHz&rdquo;)</td></tr>
           <tr><td class="rowlabel">bf16</td><td>the number format: 2 bytes per number</td><td>32 B column &divide; 2 B = <b>16 numbers per column</b> = one per lane. This is why a PU consumes exactly one column per cycle.</td></tr>
           <tr><td class="rowlabel"><b>t<sub>PU</sub></b></td><td><i>our name</i> for the time the PU needs to consume one column</td><td>16 numbers &divide; 16 lanes &divide; 1 GHz = <b>1 ns</b></td></tr>
-          <tr><td class="rowlabel">one-use-per-fetch</td><td>the stock <code class="k">MAC_ABK</code> rule (&sect;3): a fetched column meets one GB vector and lands in one accumulator, then is discarded</td><td>so the PU gets exactly t<sub>PU</sub> of work per column period</td></tr>
+          <tr><td class="rowlabel">one-use-per-fetch</td><td>the stock <code class="k">MAC_ABK</code> rule (&sect;6): a fetched column meets one GB vector and lands in one accumulator, then is discarded</td><td>so the PU gets exactly t<sub>PU</sub> of work per column period</td></tr>
           <tr><td class="rowlabel"><b>utilisation U</b>, idle</td><td>the fraction of time the PU has work: U = t<sub>PU</sub> &divide; t<sub>col</sub>; idle = 1 &minus; U</td><td><b>1 &divide; 2.5 = 40 %; idle 60 %</b></td></tr>
           <tr><td class="rowlabel"><b>D</b></td><td>t<sub>col</sub> &divide; t<sub>PU</sub>: how many columns&rsquo; worth of work the PU <i>could</i> do per column period; D = 1 means exactly matched</td><td><b>2.5</b></td></tr>
         </tbody>
@@ -1223,10 +1678,10 @@ work per column    = one use             → 1 ns of PU time per 2.5 ns column p
 U                  = 1 ns / 2.5 ns       = 40 %              <span class="c">← busy</span>
 idle               = 1 - 0.40            = 60 %
 D                  = 2.5 ns / 1 ns       = 2.5               <span class="c">← the PU could do 2.5 columns' work per slot</span></pre>
-      <p>Three inputs, each fixed by something other than a choice made for this workload: <b>t<sub>col</sub></b> by the JEDEC speed grade of the memory, <b>t<sub>PU</sub></b> by the PU SK hynix built, <b>one-use-per-fetch</b> by the stock ISA. Multiply them and 60 % falls out. Nobody chose 60 %; it is what those three facts produce. That is what &ldquo;by construction&rdquo; means on this page.</p>
+      <p>Three inputs, each fixed by something other than a choice made for this workload: <b>t<sub>col</sub></b> by the memory&rsquo;s burst time (2.5 ns is the fastest an LPDDR5-6400 bank could be asked to go; a standard core would give 5 ns, &sect;2 &mdash; assumption A1, and with 5 ns the PU idles 80 %, not 60 %), <b>t<sub>PU</sub></b> by the PU SK hynix built, <b>one-use-per-fetch</b> by the stock ISA. Multiply them and 60 % falls out. Nobody tuned 60 % for this workload; it is what those three inputs produce. That is what &ldquo;by construction&rdquo; means on this page.</p>
 
       <h4 style="margin:22px 0 6px;font-size:1rem;">Why nCCD = nBL: the array cannot feed the PU faster than it could feed the pins</h4>
-      <p>A natural objection: <code class="k">MAC_ABK</code> never uses the pins, so why is the internal fetch paced by the <i>external</i> burst time? Because the column path inside the die &mdash; row buffer &rarr; column decoder &rarr; I/O gating &rarr; the 32 B prefetch latch (&sect;1, &ldquo;bank groups&rdquo;) &mdash; is one datapath with one cycle time, and tCCD <i>is</i> that cycle time. A normal <code class="k">RD</code> sends the latch to the pins; <code class="k">MAC_ABK</code> sends it to the PU instead. The diversion happens <i>after</i> the column path, so the path&rsquo;s rate is unchanged. The simulator encodes exactly this: one <code class="k">MAC16</code> per nCCD, &ldquo;the same spacing as one external 32 B burst&rdquo; (Phase 2 notes, both device models). It is also where AiM&rsquo;s advertised <b>16&times; internal bandwidth</b> comes from: 16 banks each delivering one column per burst time is 16&times; what the single set of pins can drain in that time. Note what that number says &mdash; the internal column rate <i>per bank</i> equals the external burst rate. It does not exceed it. So t<sub>col</sub> is a property of the memory standard, not of the PU.</p>
+      <p>A natural objection: <code class="k">MAC_ABK</code> never uses the pins, so why is the internal fetch paced by the <i>external</i> burst time? Because the column path inside the die &mdash; row buffer &rarr; column decoder &rarr; I/O gating &rarr; the 32 B prefetch latch (&sect;2, &ldquo;bank groups&rdquo;) &mdash; is one datapath with one cycle time, and the preset&rsquo;s tCCD <i>is</i> that cycle time [assumption A1: on a real LPDDR5 core this per-bank cycle is 5 ns, twice the burst time, &sect;2; the argument below holds with either value]. A normal <code class="k">RD</code> sends the latch to the pins; <code class="k">MAC_ABK</code> sends it to the PU instead. The diversion happens <i>after</i> the column path, so the path&rsquo;s rate is unchanged. The simulator encodes exactly this: one <code class="k">MAC16</code> per nCCD, &ldquo;the same spacing as one external 32 B burst&rdquo; (Phase 2 notes, both device models). It is also where AiM&rsquo;s advertised <b>16&times; internal bandwidth</b> comes from: 16 banks each delivering one column per burst time is 16&times; what the single set of pins can drain in that time. Note what that number says &mdash; the internal column rate <i>per bank</i> equals the external burst rate. It does not exceed it. So t<sub>col</sub> is set by the memory side (the standard and the core&rsquo;s column cycle), not by the PU.</p>
 
       <h4 style="margin:22px 0 6px;font-size:1rem;">Where the 1 ns comes from: the PU was sized for GDDR6, not for LPDDR5</h4>
       <pre class="cmd"><span class="c">GDDR6-AiM at its rated interface speed</span>
@@ -1314,7 +1769,7 @@ SK arch doc        : "0.5 TFLOPS per AiM channel"  ✓   (1 TFLOPS per 2-channel
 
 
     <section class="card" id="problem">
-      <h2><span class="num">8</span>The problem, quantified</h2>
+      <h2><span class="num">11</span>The problem, quantified</h2>
       <p class="lead">Section 6 showed one token through one row-group. Now count everything the 16-channel layer does, per channel, from the simulator&rsquo;s own command counters &mdash; and compare with what an ideal machine would have to do.</p>
       <div class="fig" id="fig-loop"><svg viewBox="0 0 900 420" role="img" aria-label="Top: a grid of 51 token rows by 8 row-group columns; each cell is one MAC_ABK of 64 columns. A highlighted column shows that row-group 3 of the weights is fetched from the banks 51 times, once per token row. Bottom: a stacked bar of where the 1.43 ms of a 16-channel layer goes: 46 percent MAC column commands, 21 percent Global Buffer writes, 15 percent TMOD mode switches, 7 percent row management, 10 percent blocking reads and other.">
 <defs><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#647083"/></marker></defs>
@@ -1493,16 +1948,16 @@ SK arch doc        : "0.5 TFLOPS per AiM channel"  ✓   (1 TFLOPS per 2-channel
 
       <h3>Why this is a hardware problem, not a software one</h3>
       <ul class="notes">
-        <li><b>You cannot reorder the loops.</b> The natural fix &mdash; put the token loop <i>inside</i> the fetch &mdash; needs a place to hold the other tokens&rsquo; vectors (the GB holds one) and a place to hold their partial results (the bank holds one accumulator). Strategy B tries the other order and hits the same two walls from the other side (&sect;5).</li>
+        <li><b>You cannot reorder the loops.</b> The natural fix &mdash; put the token loop <i>inside</i> the fetch &mdash; needs a place to hold the other tokens&rsquo; vectors (the GB holds one) and a place to hold their partial results (the bank holds one accumulator). Strategy B tries the other order and hits the same two walls from the other side (&sect;9).</li>
         <li><b>You cannot batch the drains.</b> <code class="k">RD_MAC</code> is the only way results leave a bank, it reads exactly one accumulator per bank, and it blocks the in-order DMA. 4,590 stalls per channel per layer is a structural count, not a scheduling accident.</li>
-        <li><b>The MAC unit is mostly idle.</b> In frame 4 the PU needs 1 ns for its 16 multiplies but a column slot lasts 2.5 ns, so it is busy 40 % of the time (Fig. 6b), and even that 40 % is spent on redundant fetches. The PU that AiM already fabbed has 2.5&times; headroom before any wider datapath is needed &mdash; and &sect;7&rsquo;s <a href="#where60">&ldquo;Where the 60 % comes from&rdquo;</a> derives that 2.5 from published constants and shows it is the natural state of any 1 GHz PU on LPDDR5, not a design fault.</li>
-        <li><b>Scale does not help.</b> Doubling channels halves the per-channel work but leaves the ratio: 32 channels still measure 17.3 ms (&sect;9). Only changing <i>how many tokens one fetch serves</i> changes the ratio.</li>
+        <li><b>The MAC unit is mostly idle.</b> In frame 4 the PU needs 1 ns for its 16 multiplies but a column slot lasts 2.5 ns, so it is busy 40 % of the time (Fig. 6b), and even that 40 % is spent on redundant fetches. The PU that AiM already fabbed has 2.5&times; headroom before any wider datapath is needed &mdash; and &sect;10&rsquo;s <a href="#where60">&ldquo;Where the 60 % comes from&rdquo;</a> derives that 2.5 from published constants and shows it is the natural state of any 1 GHz PU on LPDDR5, not a design fault.</li>
+        <li><b>Scale does not help.</b> Doubling channels halves the per-channel work but leaves the ratio: 32 channels still measure 17.3 ms (&sect;12). Only changing <i>how many tokens one fetch serves</i> changes the ratio.</li>
       </ul>
       <div class="callout"><b>Problem statement, in one sentence.</b> Stock AiM amortizes one in-bank fetch over <b>one vector, one accumulator and one register mode</b>; a 51-token workload therefore pays 51&times; the fetches, 51&times; the drains and 51&times; the mode switches of the ideal, and no mapping can fix it because the missing resource is <i>storage next to the MAC</i>, not bandwidth or arithmetic.</div>
     </section>
 
     <section class="card" id="results">
-      <h2><span class="num">9</span>Results, and the root cause</h2>
+      <h2><span class="num">12</span>Results, and the root cause</h2>
       <p class="lead">Cycle-accurate AiM segments + an analytic Orin host model (roofline + 5&ndash;50&nbsp;&micro;s launch overhead, swept). One layer simulated, composed &times;18 layers &times;N steps.</p>
       <figure>
         <img src="assets/phase3_step_latency.png" alt="Horizontal bar chart of Action Expert step latency: XPU floor 3.2 ms, XPU 2x 6.3 ms, XPU 4x 12.6 ms; AiM Strategy-A at 8/16/32 channels: 52.0/28.5/17.3 ms; AiM Strategy-B at 8/16/32 channels: 63.2/34.6/20.8 ms. Stock AiM is far slower than every XPU baseline.">
@@ -1563,6 +2018,17 @@ SK arch doc        : "0.5 TFLOPS per AiM channel"  ✓   (1 TFLOPS per 2-channel
         <li><b>Part III (this page)</b> &mdash; LPDDR5, stock AiM, and why the offload loses 4.5&times;: the problem, quantified.</li>
         <li><a href="../02b_samsung_pim/report.html"><b>Part III-2</b> &mdash; the same offload on Samsung&rsquo;s PIM: a smaller problem, and why</a></li>
         <li><a href="../03_extended_isa/report.html"><b>Part IV</b> &mdash; Our ISA extensions: 28.55 &rarr; 8.15 ms per step, and how they differ from prior designs</a></li>
+      </ul>
+            <h3 id="lpddr-sources">Sources for the LPDDR5 primer (&sect;1&ndash;4)</h3>
+      <ul class="notes">
+        <li><b>Standard and datasheets.</b> JEDEC JESD209-5 (LPDDR5/5X) as reproduced in public vendor datasheets: Micron automotive LPDDR5 <a href="https://www.farnell.com/datasheets/3761270.pdf">MT62F512M32D2 / 1G32D4</a> and <a href="https://www.farnell.com/datasheets/3761269.pdf">x64 (Y31M)</a> (rails, 12.8 GB/s per channel, bank modes, 2 KB page, tRFC, IDD); Micron <a href="https://www.farnell.com/datasheets/3917539.pdf">Y4BM LPDDR5/5X</a> (addressing, refresh management). JEDEC press releases for LPDDR5 (2019), LPDDR5X (2021) and LPDDR6 (2025).</li>
+        <li><b>Timing models that cite the standard&rsquo;s tables.</b> <a href="https://github.com/CMU-SAFARI/ramulator2">Ramulator 2</a> upstream LPDDR5 model (RL 17, WL 9, column spacing 2 / 4 clock periods, ACT-1&rarr;ACT-2 window 8, CAS synchronisation); <a href="https://github.com/gem5/gem5/blob/stable/src/mem/DRAMInterface.py">gem5 LPDDR5 interfaces</a> (tRCD 18, tRP 18, tRAS 42, tWR 34, tRRD 5, four-activate window 20 ns, 2 KiB page); Steiner et al., <a href="https://arxiv.org/abs/2209.14756">&ldquo;Unveiling the Real Performance of LPDDR5 Memories&rdquo;</a>, MEMSYS&rsquo;22 (bank modes vs. data rate, 16n/32n prefetch).</li>
+        <li><b>Interface and clocking.</b> Synopsys, <a href="https://www.synopsys.com/articles/key-features-about-lpddr5.html">&ldquo;Key features designers should know about LPDDR5&rdquo;</a> and <a href="https://www.synopsys.com/designware-ip/technical-bulletin/ddr4-bank-groups.html">&ldquo;DDR4 bank groups&rdquo;</a>; Cadence, <a href="https://semiengineering.com/advantages-of-lpddr5-a-new-clocking-scheme/">&ldquo;Advantages of LPDDR5: a new clocking scheme&rdquo;</a>; Malladi et al., ISCA&rsquo;12 (LPDDR drops the DLL and termination).</li>
+        <li><b>DRAM internals.</b> Kim et al., SALP, ISCA&rsquo;12; Lee et al., Tiered-Latency DRAM, HPCA&rsquo;13; Chang et al., &ldquo;Understanding latency variation in modern DRAM chips&rdquo;, SIGMETRICS&rsquo;16; O&rsquo;Connor et al., Fine-Grained DRAM, MICRO&rsquo;17 (MATs, local/global I/O, bank groups, energy per bit).</li>
+        <li><b>PIM substrate.</b> SK hynix AiM: Hot Chips 34/35 decks and the AiM white papers (2 KB rows, 32 B columns, 16 PUs per die, 1 GHz, 512 GB/s internal &ldquo;as a peak during burst operations&rdquo;); He et al., Newton, MICRO&rsquo;20 (four-activate window &ldquo;for power reasons&rdquo;, all-bank compute &asymp; 4&times; read power); Lee et al., Samsung HBM-PIM, ISCA&rsquo;21 and Kim et al., IEEE Micro 2022 (all-bank mode at tCCD_L, area, thermal limit); Devaux, UPMEM, Hot Chips 31 (3&times; slower transistors, 10&times; less dense logic, 3 metals); AttAcc (ASPLOS&rsquo;24), LP-Spec (ICCAD&rsquo;25), CD-PIM (arXiv 2601.12298), CENT (ASPLOS&rsquo;25).</li>
+        <li><b>LPDDR-PIM disclosures and other designs cited in &sect;4.</b> Samsung LPDDR5-PIM at Hot Chips 35 (2023) and LPDDR5X-PIM at Hot Chips 2026 (via ServeTheHome coverage) and the LP5X-PIM simulator note (arXiv 2606.00636); UPMEM PIM-AI (arXiv 2411.17309); Shin et al., McDRAM, IEEE TCAD 2018; press reports on the joint Samsung / SK hynix LPDDR6-PIM standardisation (Digitimes, Dec 2024) and JEDEC&rsquo;s 2026 statement; TechInsights and EE Times for die sizes and array fraction. The standard&rsquo;s wording quoted in &sect;2 (&ldquo;a single 256-bit-wide data transfer &hellip;&rdquo;) is taken from a vendor package datasheet that reproduces the JESD209-5 text.</li>
+        <li><b>Platforms.</b> NVIDIA Jetson AGX Orin series datasheet DS-10662-001, Orin NX DS-10712-001, Orin Nano, and Thor series DS-11945-001; TechInsights teardown of the AGX Orin developer kit (package count).</li>
+        <li>Full research notes with quotes, confidence tags and every URL: <code class="k">00_doc/02_refs/lpddr5_primer/</code> in the study workspace. Energy and power figures marked &ldquo;our arithmetic&rdquo; are derived from datasheet maximum currents, not measured.</li>
       </ul>
       <p class="cap">Sources: arkhadem/aim_simulator @ <code class="k">0f28a07</code> (CENT, ASPLOS&rsquo;25; MIT); SK hynix AiM: HC34 poster + ISSCC&rsquo;22/JSSC&rsquo;23 papers; NVIDIA Jetson AGX Orin Technical Brief v1.2 (42 TFLOP/s bf16, 204.8 GB/s, spec-verified); trace generator, sweep scripts, and CSVs in the study workspace &mdash; every number regenerates from committed traces.</p>
       <footer class="footer">
