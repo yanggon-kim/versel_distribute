@@ -454,6 +454,7 @@
         </svg>
         <p class="cap">Fig. L2 &mdash; One row access as the sense amplifier sees it (schematic voltages, real LPDDR5 times). The green dashed curve is the point of the picture: the cell is <i>emptied</i> by the read and only gets its value back during the restore phase, which is why a row must stay open for tRAS even if you wanted one column. An entire row &mdash; 16,384 cells &mdash; goes through this together, because one wordline opens all of them.</p>
       </div>
+      <p>How tRAS relates to the column spacing tCCD, and which of the two decides how long a row stays open: see <a href="#faq-tras-tccd">Questions &amp; answers, Q8</a>.</p>
 
       <h3 id="floorplan">From cells to a bank: MATs, stripes, and two kinds of wire</h3>
       <p>A bank is not one giant grid. Bitlines can only be ~512&ndash;1,024 cells long before the signal becomes too small, so the array is tiled into <b>MATs</b> (memory array tiles) of roughly 512 &times; 512 cells. Between vertically adjacent MATs runs a <b>BLSA stripe</b>, a row of sense amplifiers shared by the MATs above and below it; between horizontally adjacent MATs runs a strip of <b>sub-wordline drivers</b> (SWD), which re-drive the wordline locally. A row address selects one <b>master wordline</b> that spans the whole bank; each MAT it crosses fires its own local wordline. The set of sense amplifiers that ends up holding that row &mdash; scattered over many stripes &mdash; is what architects call the <b>row buffer</b>. It is not a separate memory; it <i>is</i> the sense amplifiers.</p>
@@ -2172,6 +2173,67 @@ sub-array k+1     | MAT | MAT | MAT |  &hellip;  | MAT |     closed</pre>
       <p>The figure of roughly 512 rows per sub-array is the commonly published one; it is not an LPDDR5-specific number, and vendors do not publish how the 2 KB row is laid out physically. What the interface guarantees is that all 16,384 bits can be read after one ACT, so all of them are sensed.</p>
       <div class="callout"><b>In one line.</b> One ACT = 2 KB sensed, held in one sub-array&rsquo;s amplifiers, in a bank that then counts as open; a column command then moves 32 B of it.</div>
       <p style="font-size:.9rem;color:var(--muted);">&uarr; Back to the page: <a href="#fig-sense">Fig. L2</a> &middot; <a href="#fig-floorplan">Fig. L3</a> &middot; <a href="#bankgroups">&sect;2, banks and bank groups</a> &middot; <a href="#faq-subarray">Q6</a></p>
+
+      <h4 id="faq-tras-tccd" style="margin:22px 0 6px;font-size:1rem;">Q8. What is the relationship between tRAS and tCCD?</h4>
+      <p><b>They are two independent rules that come from two different parts of the die. After one ACT they run at the same time; they do not add.</b> The row may close when both are satisfied.</p>
+      <ul class="notes">
+        <li><b>tRAS belongs to the row path.</b> It is the minimum time from ACT until PRE is allowed: 42 ns on real parts. It exists because the read emptied the cells, and the sense amplifiers need that long to push the full charge back into them (<a href="#fig-sense">Fig. L2</a>, the green dashed curve). It answers the question &ldquo;how long must the row stay open?&rdquo;</li>
+        <li><b>tCCD belongs to the column path.</b> It is the minimum spacing between two column commands (LPDDR5&rsquo;s own name for it is BL/n): 2.5 ns to a different bank group, 5 ns within the same bank group (<a href="#bankgroups">&sect;2, banks and bank groups</a>). It exists because the column path &mdash; column-select pulse, global I/O wires, I/O sense amplifiers, latch &mdash; needs that long for each 32 B column. It answers the question &ldquo;how fast can data be taken out of a row that is already open?&rdquo;</li>
+      </ul>
+      <p><b>Where they meet.</b> About tRCD = 18 ns after ACT the sense amplifiers have latched, and from then on they hold full-level data. Column reads can start at that moment, while the same amplifiers are still refilling the cells through the open wordline. The reads ride on top of the restore. The 24 ns between tRCD and tRAS is therefore not dead time: <a href="#fig-coldread">Fig. L5</a> labels the bank &ldquo;open; still restoring&rdquo; while its first read is already under way.</p>
+
+      <div class="fig" id="fig-tras-tccd">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Timeline in nanoseconds of one row on a real LPDDR5-6400 part, with two independent clocks. Row path: ACT at 0, the sense amplifiers are sensing until tRCD equals 18 nanoseconds, then the cells are being restored until tRAS equals 42 nanoseconds, after which PRE is allowed. Column path, case a, two reads at 18 and 23 nanoseconds in one bank group: the column path is finished by about 30 nanoseconds, but PRE must wait until 42 nanoseconds, so tRAS sets the open time. Column path, case b, ten reads every 5 nanoseconds from 18 to 63 nanoseconds: five of them start before 42 nanoseconds, on top of the restore; the last read ends after tRAS, PRE follows at about 70 nanoseconds, so the column traffic sets the open time.">
+          <g font-size="8.5" fill="#647083" text-anchor="middle">
+            <text x="150" y="16">0</text><text x="240" y="16">10</text><text x="330" y="16">20</text><text x="420" y="16">30</text><text x="510" y="16">40</text><text x="600" y="16">50</text><text x="690" y="16">60</text><text x="780" y="16">70</text><text x="870" y="16">80 ns</text>
+          </g>
+          <g stroke="#d8dee8"><line x1="150" y1="46" x2="150" y2="80"/><line x1="150" y1="114" x2="150" y2="146"/><line x1="150" y1="192" x2="150" y2="224"/><line x1="240" y1="46" x2="240" y2="80"/><line x1="240" y1="114" x2="240" y2="146"/><line x1="240" y1="192" x2="240" y2="224"/><line x1="330" y1="46" x2="330" y2="80"/><line x1="330" y1="114" x2="330" y2="146"/><line x1="330" y1="192" x2="330" y2="224"/><line x1="420" y1="46" x2="420" y2="80"/><line x1="420" y1="114" x2="420" y2="146"/><line x1="420" y1="192" x2="420" y2="224"/><line x1="510" y1="46" x2="510" y2="80"/><line x1="510" y1="114" x2="510" y2="146"/><line x1="510" y1="192" x2="510" y2="224"/><line x1="600" y1="46" x2="600" y2="80"/><line x1="600" y1="114" x2="600" y2="146"/><line x1="600" y1="192" x2="600" y2="224"/><line x1="690" y1="46" x2="690" y2="80"/><line x1="690" y1="114" x2="690" y2="146"/><line x1="690" y1="192" x2="690" y2="224"/><line x1="780" y1="46" x2="780" y2="80"/><line x1="780" y1="114" x2="780" y2="146"/><line x1="780" y1="192" x2="780" y2="224"/><line x1="870" y1="46" x2="870" y2="80"/><line x1="870" y1="114" x2="870" y2="146"/><line x1="870" y1="192" x2="870" y2="224"/></g>
+          <g stroke="#647083" stroke-dasharray="4 3"><line x1="312" y1="46" x2="312" y2="80"/><line x1="528" y1="46" x2="528" y2="80"/><line x1="312" y1="114" x2="312" y2="146"/><line x1="528" y1="114" x2="528" y2="146"/><line x1="312" y1="192" x2="312" y2="224"/><line x1="528" y1="192" x2="528" y2="224"/></g>
+          <g font-size="9" fill="#172033" text-anchor="middle" font-weight="bold">
+            <text x="150" y="40">ACT</text><text x="312" y="40">tRCD = 18 ns: first RD allowed</text><text x="528" y="40">tRAS = 42 ns: PRE allowed</text>
+          </g>
+          <g font-size="9" fill="#172033" text-anchor="end"><text x="142" y="68">row path</text><text x="142" y="134">column path</text><text x="142" y="212">column path</text></g>
+          <rect x="150" y="54" width="162" height="20" rx="3" fill="#d8dee8" stroke="#647083"/>
+          <rect x="312" y="54" width="216" height="20" rx="3" fill="#f1f4f9" stroke="#647083"/>
+          <rect x="528" y="54" width="342" height="20" rx="3" fill="#fff" stroke="#d8dee8"/>
+          <g font-size="8.5" text-anchor="middle"><text x="231" y="68" fill="#172033">sensing</text><text x="420" y="68" fill="#172033">cells being restored</text><text x="699" y="68" fill="#647083">restored: the row may close, or stay open for more columns</text></g>
+          <text x="10" y="106" font-size="10" font-weight="bold" fill="#172033">(a) n = 2 reads, same bank group: tRAS sets the open time</text>
+          <g fill="#e7f5ec" stroke="#1a7f37"><rect x="312" y="120" width="22.5" height="20" rx="3"/><rect x="357" y="120" width="22.5" height="20" rx="3"/></g>
+          <g font-size="7.5" fill="#172033" text-anchor="middle"><text x="323.2" y="133">RD</text><text x="368.2" y="133">RD</text></g>
+          <rect x="379.5" y="120" width="45" height="20" rx="3" fill="#fff" stroke="#1a7f37" stroke-dasharray="4 3"/><text x="402" y="133" font-size="7.5" fill="#172033" text-anchor="middle">tRBTP</text>
+          <line x1="424.5" y1="130" x2="528" y2="130" stroke="#647083" stroke-dasharray="2 3"/><text x="476.2" y="126" font-size="8" fill="#647083" text-anchor="middle">waiting</text>
+          <rect x="528" y="120" width="26" height="20" rx="3" fill="#eaf2ff" stroke="#1f6feb"/><text x="541" y="133" font-size="7.5" fill="#172033" text-anchor="middle">PRE</text>
+          <text x="562" y="134" font-size="8.5" fill="#172033">row open 42 ns, the same as for one read</text>
+          <text x="312" y="156" font-size="8.5" fill="#647083">the column path is done by about 30 ns; the restore is not</text>
+          <line x1="8" y1="170" x2="892" y2="170" stroke="#d8dee8" stroke-dasharray="4 3"/>
+          <text x="10" y="186" font-size="10" font-weight="bold" fill="#172033">(b) n = 10 reads, same bank group: the column traffic sets the open time</text>
+          <g fill="#e7f5ec" stroke="#1a7f37"><rect x="312" y="198" width="22.5" height="20" rx="3"/><rect x="357" y="198" width="22.5" height="20" rx="3"/><rect x="402" y="198" width="22.5" height="20" rx="3"/><rect x="447" y="198" width="22.5" height="20" rx="3"/><rect x="492" y="198" width="22.5" height="20" rx="3"/><rect x="537" y="198" width="22.5" height="20" rx="3"/><rect x="582" y="198" width="22.5" height="20" rx="3"/><rect x="627" y="198" width="22.5" height="20" rx="3"/><rect x="672" y="198" width="22.5" height="20" rx="3"/><rect x="717" y="198" width="22.5" height="20" rx="3"/></g>
+          <g font-size="7.5" fill="#172033" text-anchor="middle"><text x="323.2" y="211">RD</text><text x="368.2" y="211">RD</text><text x="413.2" y="211">RD</text><text x="458.2" y="211">RD</text><text x="503.2" y="211">RD</text><text x="548.2" y="211">RD</text><text x="593.2" y="211">RD</text><text x="638.2" y="211">RD</text><text x="683.2" y="211">RD</text><text x="728.2" y="211">RD</text></g>
+          <rect x="739.5" y="198" width="45" height="20" rx="3" fill="#fff" stroke="#1a7f37" stroke-dasharray="4 3"/><text x="762" y="211" font-size="7.5" fill="#172033" text-anchor="middle">tRBTP</text>
+          <rect x="784.5" y="198" width="26" height="20" rx="3" fill="#eaf2ff" stroke="#1f6feb"/><text x="797.5" y="211" font-size="7.5" fill="#172033" text-anchor="middle">PRE</text>
+          <g stroke="#647083"><line x1="312" y1="226" x2="514.5" y2="226"/><line x1="312" y1="222" x2="312" y2="230"/><line x1="514.5" y1="222" x2="514.5" y2="230"/></g>
+          <text x="413" y="240" font-size="8.5" fill="#172033" text-anchor="middle">5 reads start before 42 ns, on top of the restore</text>
+          <text x="700" y="240" font-size="8.5" fill="#172033" text-anchor="middle">last RD at 63 ns, PRE at about 70 ns: tRAS no longer matters</text>
+          <text x="500" y="268" text-anchor="middle" font-size="9.5" fill="#172033">open time &asymp; max( tRAS , tRCD + (n &minus; 1) &times; 5 ns + tRBTP ) &middot; the two are equal near n = 5</text>
+          <text x="500" y="288" text-anchor="middle" font-size="8.5" fill="#647083">one RD box = one 2.5 ns burst slot, one per 5 ns; drawn without ACT-2, CAS and the read latency (Fig. L5 has them); only the spacing matters here</text>
+        </svg>
+        <p class="cap">Fig. L2-2 &mdash; Two independent clocks on one row: the restore runs in the background, the columns on top of it; the row closes when both are satisfied. Real LPDDR5-6400 times from &sect;2 and &sect;3, all reads in one bank group (5 ns spacing). (a) With two reads the column path is finished long before the cells are restored, so the row stays open for tRAS = 42 ns, exactly as it would for a single read. (b) With ten reads the last one ends after 42 ns, so the column traffic decides when PRE may follow and tRAS is already satisfied. Positions are arithmetic on the page&rsquo;s values [computed here], not a measurement.</p>
+      </div>
+
+      <p><b>How long the row stays open.</b> Whichever of the two takes longer. Roughly:</p>
+      <pre class="cmd">open time &asymp; max( tRAS ,  tRCD + (n &minus; 1) &times; tCCD + tRBTP )
+<span class="c"># n     = number of column commands sent to this open row</span>
+<span class="c"># tRBTP = the short read-to-precharge delay that follows the last read, about 5 ns</span></pre>
+      <p>After a <i>write</i> the tail is tWR = 34 ns instead of tRBTP, because the new data must itself be restored into the cells. With writes, tWR usually matters more than tRAS.</p>
+      <p><b>Where the crossover is [computed here, from the values on this page].</b> With the 5 ns same-group spacing, (42 &minus; 18) / 5 &asymp; 5 columns.</p>
+      <ul class="notes">
+        <li><b>Fewer than about five columns from a row:</b> tRAS sets the open time. The 42 ns are paid even for one column, which is the point of Fig. L2&rsquo;s caption.</li>
+        <li><b>More than about five:</b> the column traffic sets the open time, and tRAS no longer matters.</li>
+        <li><b>All 64 columns of a 2 KB row:</b> about 18 + 64 &times; 5 &asymp; 340 ns, eight times tRAS.</li>
+      </ul>
+      <div class="callout"><b>Why tRAS never binds in this series [preset, in simulator cycles].</b> This paragraph is about our traces, not about DRAM in general. The preset&rsquo;s tRAS is 34 cycles (<a href="#timing">&sect;3, timing table</a>). Every <code class="k">ACT16</code> in our traces is followed by a 64-column MAC sweep: 64 &times; tCCD 4 = 256 cycles (<a href="#exec">&sect;10</a>), far more than 34. Part IV&rsquo;s P1 holds each fetched column for 26 beats (<a href="../03_extended_isa/report.html#p1">Part IV &sect;2</a>), so its rows stay open longer still. What a row switch does cost is the wait before the first MAC (<code class="k">nRCDRDMAC</code> = 56 cycles) and tRP when the row is closed (17 cycles, all-bank). That is why the &ldquo;row management&rdquo; slice (<a href="#results">&sect;12</a>, 7%) is about opening and closing rows, not about keeping them open.</div>
+      <div class="callout"><b>In one line.</b> tRAS says how long a row must stay open; tCCD says how fast columns leave it while it is open. Few columns: tRAS decides. Many columns: tCCD decides.</div>
+      <p style="font-size:.9rem;color:var(--muted);">&uarr; Back to the page: <a href="#cell">&sect;2, the cell</a> (<a href="#fig-sense">Fig. L2</a>) &middot; <a href="#bankgroups">&sect;2, banks and bank groups</a> &middot; <a href="#anatomy">&sect;3, anatomy of one cold read</a> (<a href="#fig-coldread">Fig. L5</a>) &middot; <a href="#timing">&sect;3, timing table</a> &middot; <a href="#faq-act">Q7</a></p>
     </section>
 
     <section class="card" id="series">
