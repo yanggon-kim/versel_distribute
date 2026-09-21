@@ -218,6 +218,102 @@
       </div>
       <p>Peak bandwidth is nothing more than pins &times; rate: 256 &times; 6,400 Mb/s / 8 = 204.8 GB/s. This is why Parts II&ndash;IV count AiM in <i>channels</i>: <b>16 AiM channels have exactly the pins, and therefore exactly the external bandwidth, of an AGX Orin</b>; 8 channels are an Orin NX.</p>
 
+      <h3 id="lpddr-faq">Common questions about ranks, clocks and &ldquo;6,400 MT/s&rdquo;</h3>
+      <p>Three questions that come up on a first reading of the vocabulary list and Fig. L1. Nothing here is used by a later calculation; it is background.</p>
+
+      <h4 id="faq-ranks" style="margin:22px 0 6px;font-size:1rem;">Q1. Does a second rank add capacity at the same bandwidth? Is there a maximum number of ranks?</h4>
+      <p><b>Yes: a rank adds capacity and leaves the bandwidth where it was.</b> All dies of all ranks on a channel hang on the same wires: CK, CA, DQ, WCK and RDQS. The only wire a rank has to itself is its chip-select (CS0 for rank 0, CS1 for rank 1). Every rank sees every command on CA, but a command is obeyed only by the rank whose CS is high on that clock edge; the others ignore it (Fig. L1-2). Because the data pins are one set of wires, only one rank can drive them at a time, so the peak stays at 12.8 GB/s per channel however many ranks there are. Capacity is what grows.</p>
+      <p><b>Ranks behave like banks, one level up.</b> While rank 0 waits out an 18 ns row activation, rank 1 can stream data from a row it already has open. A second rank therefore hides latency and keeps the pins busy; it does not raise the peak. Changing the rank that drives the bus costs a short bus turnaround.</p>
+
+      <div class="fig" id="fig-ranks">
+        <svg viewBox="0 0 900 556" role="img" aria-label="One x16 LPDDR5 channel with two ranks. On the left the SoC. Five shared wire groups leave it and reach both ranks: the differential command clock CK, the seven command-address pins CA, the two data clocks WCK0 and WCK1, the sixteen data pins DQ, and the read strobes RDQS. Two more wires are private: chip-select CS0 goes only to rank 0 and CS1 only to rank 1. Each rank is drawn as one x16 die with 16 banks; in byte mode it would be two x8 dies, one per byte. A command is obeyed only by the rank whose CS is high on that clock edge, and only one rank drives DQ at a time. Below, a schematic timeline: while rank 0 waits 18 ns (tRCD) for a row to open, rank 1 streams read bursts; after a short bus turnaround rank 0 streams. The DQ lane carries bursts from one rank at a time. Takeaway: capacity times two, peak bandwidth unchanged at 12.8 GB/s.">
+          <text x="450" y="22" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">one x16 channel, two ranks: every wire is shared except the chip-selects</text>
+          <rect x="10" y="36" width="130" height="204" rx="9" fill="#eef2f7" stroke="#d8dee8"/>
+          <text x="75" y="120" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">SoC</text>
+          <text x="75" y="136" text-anchor="middle" font-size="8.5" fill="#647083">memory controller</text>
+          <text x="75" y="149" text-anchor="middle" font-size="8.5" fill="#647083">+ PHY, the pins of</text>
+          <text x="75" y="162" text-anchor="middle" font-size="8.5" fill="#647083">one x16 channel</text>
+          <rect x="300" y="250" width="240" height="92" rx="8" fill="#fcfdff" stroke="#1f6feb" stroke-width="1.6"/>
+          <text x="420" y="270" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1f6feb">rank 0</text>
+          <text x="420" y="285" text-anchor="middle" font-size="9" fill="#172033">one x16 die &middot; 16 banks</text>
+          <g fill="#eaf2ff" stroke="#1f6feb" stroke-width="0.8"><rect x="316" y="293" width="11" height="16" rx="1.5"/><rect x="329" y="293" width="11" height="16" rx="1.5"/><rect x="342" y="293" width="11" height="16" rx="1.5"/><rect x="355" y="293" width="11" height="16" rx="1.5"/><rect x="368" y="293" width="11" height="16" rx="1.5"/><rect x="381" y="293" width="11" height="16" rx="1.5"/><rect x="394" y="293" width="11" height="16" rx="1.5"/><rect x="407" y="293" width="11" height="16" rx="1.5"/><rect x="420" y="293" width="11" height="16" rx="1.5"/><rect x="433" y="293" width="11" height="16" rx="1.5"/><rect x="446" y="293" width="11" height="16" rx="1.5"/><rect x="459" y="293" width="11" height="16" rx="1.5"/><rect x="472" y="293" width="11" height="16" rx="1.5"/><rect x="485" y="293" width="11" height="16" rx="1.5"/><rect x="498" y="293" width="11" height="16" rx="1.5"/><rect x="511" y="293" width="11" height="16" rx="1.5"/></g>
+          <text x="420" y="330" text-anchor="middle" font-size="8.5" fill="#647083">(byte mode: two x8 dies, one per byte)</text>
+          <rect x="610" y="250" width="240" height="92" rx="8" fill="#fcfdff" stroke="#1a7f37" stroke-width="1.6"/>
+          <text x="730" y="270" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a7f37">rank 1</text>
+          <text x="730" y="285" text-anchor="middle" font-size="9" fill="#172033">one x16 die &middot; 16 banks</text>
+          <g fill="#e7f5ec" stroke="#1a7f37" stroke-width="0.8"><rect x="626" y="293" width="11" height="16" rx="1.5"/><rect x="639" y="293" width="11" height="16" rx="1.5"/><rect x="652" y="293" width="11" height="16" rx="1.5"/><rect x="665" y="293" width="11" height="16" rx="1.5"/><rect x="678" y="293" width="11" height="16" rx="1.5"/><rect x="691" y="293" width="11" height="16" rx="1.5"/><rect x="704" y="293" width="11" height="16" rx="1.5"/><rect x="717" y="293" width="11" height="16" rx="1.5"/><rect x="730" y="293" width="11" height="16" rx="1.5"/><rect x="743" y="293" width="11" height="16" rx="1.5"/><rect x="756" y="293" width="11" height="16" rx="1.5"/><rect x="769" y="293" width="11" height="16" rx="1.5"/><rect x="782" y="293" width="11" height="16" rx="1.5"/><rect x="795" y="293" width="11" height="16" rx="1.5"/><rect x="808" y="293" width="11" height="16" rx="1.5"/><rect x="821" y="293" width="11" height="16" rx="1.5"/></g>
+          <text x="730" y="330" text-anchor="middle" font-size="8.5" fill="#647083">(byte mode: two x8 dies, one per byte)</text>
+          <g stroke="#43506a" stroke-width="1.6" fill="none">
+            <path d="M140,74 H795 V250 M485,74 V250"/>
+            <path d="M140,98 H760 V250 M450,98 V250"/>
+            <path d="M140,122 H725 V250 M415,122 V250"/>
+            <path d="M140,146 H690 V250 M380,146 V250"/>
+            <path d="M140,170 H655 V250 M345,170 V250"/>
+          </g>
+          <g fill="#43506a"><circle cx="485" cy="74" r="3"/><circle cx="450" cy="98" r="3"/><circle cx="415" cy="122" r="3"/><circle cx="380" cy="146" r="3"/><circle cx="345" cy="170" r="3"/></g>
+          <text x="150" y="69" font-size="9" fill="#172033"><tspan font-weight="bold">CK_t / CK_c</tspan><tspan fill="#647083"> &middot; command clock (differential)</tspan></text>
+          <text x="150" y="93" font-size="9" fill="#172033"><tspan font-weight="bold">CA[6:0]</tspan><tspan fill="#647083"> &middot; commands and addresses</tspan></text>
+          <text x="150" y="117" font-size="9" fill="#172033"><tspan font-weight="bold">WCK0, WCK1</tspan><tspan fill="#647083"> &middot; data clock, one per byte</tspan></text>
+          <text x="150" y="141" font-size="9" fill="#172033"><tspan font-weight="bold">DQ[15:0]</tspan><tspan fill="#647083"> &middot; data, two bytes</tspan></text>
+          <text x="150" y="165" font-size="9" fill="#172033"><tspan font-weight="bold">RDQS0, RDQS1</tspan><tspan fill="#647083"> &middot; read strobe, one per byte</tspan></text>
+          <text x="820" y="122" font-size="8.5" fill="#43506a">shared by</text>
+          <text x="820" y="134" font-size="8.5" fill="#43506a">both ranks</text>
+          <g stroke="#b54708" stroke-width="2" fill="none"><path d="M140,52 H870 V296 H850"/><path d="M140,204 H270 V296 H300"/></g>
+          <text x="150" y="47" font-size="9" fill="#b54708"><tspan font-weight="bold">CS1</tspan> &middot; private wire to rank 1</text>
+          <text x="150" y="199" font-size="9" fill="#b54708"><tspan font-weight="bold">CS0</tspan></text>
+          <text x="150" y="220" font-size="8.5" fill="#b54708">private wire to rank 0</text>
+          <text x="264" y="270" font-size="8.5" fill="#b54708" text-anchor="end">CS0</text>
+          <text x="870" y="310" font-size="8.5" fill="#b54708" text-anchor="middle">CS1</text>
+          <text x="450" y="364" text-anchor="middle" font-size="10" fill="#172033">A command on CA is obeyed only by the rank whose CS is high on that CK edge; the other rank ignores it.</text>
+          <text x="450" y="380" text-anchor="middle" font-size="10" fill="#172033">DQ is one set of wires, so only one rank drives it at a time.</text>
+          <line x1="20" y1="394" x2="880" y2="394" stroke="#d8dee8"/>
+          <text x="20" y="412" font-size="10" font-weight="bold" fill="#172033">What the second rank buys in time (schematic: not to scale, command-to-data latency not drawn)</text>
+          <g font-size="9.5" font-weight="bold"><text x="20" y="437" fill="#1f6feb">rank 0</text><text x="20" y="467" fill="#1a7f37">rank 1</text><text x="20" y="497" fill="#172033">DQ pins</text></g>
+          <rect x="130" y="422" width="40" height="22" rx="3" fill="#1f6feb"/><text x="150" y="437" text-anchor="middle" font-size="9" fill="#fff">ACT</text>
+          <rect x="170" y="422" width="360" height="22" rx="3" fill="#f1f4f9" stroke="#d8dee8" stroke-dasharray="4 3"/><text x="350" y="437" text-anchor="middle" font-size="9" fill="#647083">row opening: tRCD = 18 ns, rank 0 has nothing to send yet</text>
+          <rect x="530" y="422" width="36" height="22" rx="3" fill="#1f6feb"/><text x="548" y="437" text-anchor="middle" font-size="9" fill="#fff">RD</text>
+          <rect x="570" y="422" width="250" height="22" fill="#eaf2ff" stroke="#1f6feb"/>
+          <text x="695" y="437" text-anchor="middle" font-size="9" fill="#1f6feb">read bursts from rank 0</text>
+          <rect x="140" y="452" width="400" height="22" fill="#e7f5ec" stroke="#1a7f37"/>
+          <text x="340" y="467" text-anchor="middle" font-size="9" fill="#1a7f37">read bursts from rank 1 (its row is already open)</text>
+          <text x="695" y="467" text-anchor="middle" font-size="9" fill="#647083">idle, or opening its next row</text>
+          <g fill="#e7f5ec" stroke="#1a7f37"><rect x="140" y="482" width="50" height="22"/><rect x="190" y="482" width="50" height="22"/><rect x="240" y="482" width="50" height="22"/><rect x="290" y="482" width="50" height="22"/><rect x="340" y="482" width="50" height="22"/><rect x="390" y="482" width="50" height="22"/><rect x="440" y="482" width="50" height="22"/><rect x="490" y="482" width="50" height="22"/></g>
+          <g fill="#eaf2ff" stroke="#1f6feb"><rect x="570" y="482" width="50" height="22"/><rect x="620" y="482" width="50" height="22"/><rect x="670" y="482" width="50" height="22"/><rect x="720" y="482" width="50" height="22"/><rect x="770" y="482" width="50" height="22"/></g>
+          <g font-size="8.5" text-anchor="middle" fill="#1a7f37"><text x="165" y="497">r1</text><text x="215" y="497">r1</text><text x="265" y="497">r1</text><text x="315" y="497">r1</text><text x="365" y="497">r1</text><text x="415" y="497">r1</text><text x="465" y="497">r1</text><text x="515" y="497">r1</text></g>
+          <g font-size="8.5" text-anchor="middle" fill="#1f6feb"><text x="595" y="497">r0</text><text x="645" y="497">r0</text><text x="695" y="497">r0</text><text x="745" y="497">r0</text><text x="795" y="497">r0</text></g>
+          <text x="555" y="518" text-anchor="middle" font-size="8.5" fill="#b54708">bus turnaround</text>
+          <line x1="555" y1="484" x2="555" y2="507" stroke="#b54708" stroke-dasharray="2 2"/>
+          <text x="140" y="518" font-size="8.5" fill="#647083">one driver at a time, never both</text>
+          <text x="450" y="546" text-anchor="middle" font-size="11" font-weight="bold" fill="#172033">capacity &times; 2, peak bandwidth unchanged (12.8 GB/s)</text>
+        </svg>
+        <p class="cap">Fig. L1-2 &mdash; Two ranks on one x16 channel. Grey wires are shared by both ranks; the two orange chip-selects are the only private wires, and they decide which rank a command is for. Bottom: a schematic timeline (not to scale; the delay from a read command to its data is left out). While rank 0 opens a row, rank 1 keeps the data pins busy, then the bus turns around and rank 0 sends. The DQ lane never carries two ranks at once: capacity &times; 2, peak bandwidth unchanged (12.8 GB/s).</p>
+      </div>
+
+      <p><b>The number of ranks is not unlimited.</b> In practice LPDDR5 packages and controllers support <b>1 or 2 ranks per channel</b>; a 12 GB package, for example, is built as 4 channels with 2 chip-selects each. The limit is electrical. Every extra die adds pin and package capacitance to a point-to-point bus whose high level is only about 250 mV at 6,400 MT/s, and there is no buffer chip in between to redrive the signal. More load means slower edges, and slower edges force a lower speed. Servers reach many ranks per channel only by putting buffer chips on the DIMM, which LPDDR does not have.</p>
+      <p>Capacity is grown in other ways instead:</p>
+      <ul class="notes">
+        <li><b>Denser dies</b>: 16 &rarr; 24 &rarr; 32 Gb per die.</li>
+        <li><b>Byte mode</b>: two x8 dies form one x16 rank, one die per byte, so each die loads only 8 of the 16 data wires.</li>
+        <li><b>More channels</b>, which add bandwidth as well. Example: Jetson AGX Orin 64GB = 16 channels &times; 4 GB per channel, which could be built as two ranks of 16 Gb dies [the rank and die split is an example; it is not in NVIDIA&rsquo;s datasheet].</li>
+      </ul>
+      <div class="callout"><b>An observation for PIM, not a result of this series.</b> A second rank adds banks, and therefore processing units, on the same wires. Internal compute would scale with the number of ranks while the external bandwidth does not. This series models <b>one rank of 16 banks per channel</b>.</div>
+
+      <h4 id="faq-clocks" style="margin:22px 0 6px;font-size:1rem;">Q2. Why does one channel have two clock pins, CK_t and CK_c? And why separate clocks for commands and for data?</h4>
+      <p><b>CK_t and CK_c are one clock, not two.</b> They are the two halves of a <b>differential</b> clock: CK_t is the &ldquo;true&rdquo; wire and CK_c its complement, always moving the opposite way. The receiver looks at the instant where the two wires cross. Noise that hits both wires equally cancels, so both edges have clean timing even at a very small swing. WCK_t / WCK_c and RDQS_t / RDQS_c are built the same way. At low speed LPDDR5 can run these clocks single-ended to save power.</p>
+      <p><b>Commands and data get separate clocks because the two jobs need very different things.</b></p>
+      <ul class="notes">
+        <li><b>Commands are slow.</b> One command is 14 bits (7 CA pins &times; both CK edges), i.e. 1,600 Mb/s per CA pin. An 800 MHz clock is enough for that. A clock this slow can run all the time and is easy to train.</li>
+        <li><b>Data is fast.</b> The data pins need a 3.2 GHz clock, and a clock tree that fast is expensive to keep running on a low-power part. So the SoC normally runs WCK only while data moves.</li>
+        <li><b>One WCK per byte.</b> Each WCK pair is routed together with its 8 data wires, so clock and data see the same delay on the way to the die.</li>
+        <li><b>No DLL on the DRAM.</b> In LPDDR4 the read strobe was derived from CK inside the die, and without a DLL its delay was large and drifted. In LPDDR5 the forwarded WCK both captures writes and launches reads.</li>
+        <li><b>The data rate can change without touching the command bus.</b> WCK : CK is 4 : 1 at 6,400 MT/s; 2 : 1 is allowed at 3,200 MT/s and below.</li>
+      </ul>
+      <p>Graphics memory (GDDR5 and GDDR6) uses the same arrangement of a command clock CK plus a forwarded data clock WCK.</p>
+
+      <h4 id="faq-rate" style="margin:22px 0 6px;font-size:1rem;">Q3. Is 6,400 MT/s the sum of the two 3.2 GHz clocks, WCK0 and WCK1?</h4>
+      <p><b>No. 6,400 MT/s is the rate of each single pin.</b> One WCK at 3.2 GHz has a period of 312.5 ps. Data moves on both its rising and its falling edge, which makes 2 transfers per period: 6,400 million transfers per second, or 6.4 Gb/s, on <i>every</i> DQ pin.</p>
+      <p>WCK0 and WCK1 are two copies of the same clock, one per byte: WCK0 travels with DQ[7:0] and WCK1 with DQ[15:8]. The two bytes move side by side, so the channel total is 16 pins &times; 6.4 Gb/s = 102.4 Gb/s = 12.8 GB/s. Inside the die WCK is first divided by two into four phases, so no internal circuit actually runs at 3.2 GHz (<a href="#clocks">&sect;2, four timing domains</a>).</p>
+
       <h3>Four supply rails</h3>
       <div class="scroll">
       <table>
