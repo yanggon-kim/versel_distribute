@@ -96,7 +96,7 @@
         <div class="kpi"><div class="v">52.27 ms</div><div class="l">stock Samsung AE step @ 16 ch (AiM at the same 2.5 ns column: 28.55; 40.24 at its 5 ns primary point)</div></div>
         <div class="kpi"><div class="v">1.32&times;</div><div class="l">arithmetic wasted on output-tile padding (AiM: 1.03&times;)</div></div>
         <div class="kpi"><div class="v">1.62&times;</div><div class="l">how far stock sits above its own compute floor (AiM: 5.4&times;)</div></div>
-        <div class="kpi"><div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM: 2.70&times;)</div></div>
+        <div class="kpi"><div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM P1 alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div></div>
       </div>
       <div class="callout"><b>The one-line answer.</b> The diagnosis transfers exactly, the fix transfers exactly, and <b>the payoff does not</b> &mdash; because the payoff is gated by how much MAC throughput each vendor put behind the bank, not by the ISA. Samsung&rsquo;s problem is smaller because Samsung left less on the table.</div>
     </section>
@@ -271,7 +271,7 @@ GRF_B index = ((row &amp; 1) &lt;&lt; 2) | ((column &gt;&gt; 3) &amp; 0x3)</pre>
           <tr><td class="rowlabel">accumulators</td><td>16-slot per-bank file, 512 B/channel</td><td><b>acc</b>, V &times; 8 bursts per unit = 16 KB/channel</td></tr>
           <tr><td class="rowlabel">added multipliers</td><td><b>none</b></td><td><b>none</b></td></tr>
           <tr><td class="rowlabel">depth V</td><td>26</td><td>8 (= GRF_B depth)</td></tr>
-          <tr><td class="rowlabel">measured, 16 ch</td><td>1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)</td><td>2.745 &rarr; 2.463 ms/layer (<b>1.11&times;</b>)</td></tr>
+          <tr><td class="rowlabel">measured, 16 ch (2.5 ns column)</td><td>P1 alone: 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (P1 + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)</td><td>2.745 &rarr; 2.463 ms/layer (<b>1.11&times;</b>)</td></tr>
         </tbody>
       </table>
       </div>
