@@ -43,18 +43,23 @@ from the published site.
   `language_basics.html`, `hbm_lpddr_best_ratio.html`).
 - `06_agentic_ai/`: agentic-AI workload studies (`000_traclab`, `001_swebench`).
 - `07_3dic/`: Kitsune 3D-IC queue-fabric study (`000_kitsune/report_v1..v3.html`).
-- `08_VLA/`: the VLA x LPDDR-PIM series:
+- `08_VLA/`: the VLA x LPDDR-PIM series (primary design point: 5 ns all-bank
+  column, PU rate D = 4; the 2.5 ns column / 1 GHz PU is a sensitivity):
   - `08_VLA/00_vla_algorithm/report.html`: Part I — anatomy of the flow-matching
     pi0 VLA, module by module (shapes, FLOPs, arithmetic intensity, math).
-  - `08_VLA/01_stock_aim_offload/report.html`: Part II — offloading the Action
-    Expert to stock LPDDR5-AiM (ISA, simulator, mapping, baseline ladder, and
-    why it loses 5.8x).
-  - `08_VLA/02_extended_isa/report.html`: Part III — eight problems, six ISA
-    extensions (28.5 -> 9.77 ms/step, AF-free premise, no added multipliers), energy analysis, and the
-    deployment-baseline matrix.
-  - `08_VLA/03_deployment_platforms/report.html`: Part IV — deployment-platform
-    survey (Orin NX / AGX Orin / Thor / Qualcomm IQ10 / Ascend), the per-platform
-    AE ladder, and the speed+energy baseline matrix.
+  - `08_VLA/01_deployment_platforms/report.html`: Part II — deployment-platform
+    survey (Orin NX / AGX Orin / Thor / Qualcomm IQ10 / Ascend), the XPU baseline
+    ladder, the per-platform AE ladder, and the speed+energy baseline matrix.
+  - `08_VLA/02_stock_aim_offload/report.html`: Part III — an LPDDR5 primer, then
+    offloading the Action Expert to stock LPDDR5-AiM (ISA, simulator, mapping,
+    cycle-by-cycle walk) and why it loses 6.4x (40.24 vs 6.30 ms per step).
+  - `08_VLA/02b_samsung_pim/report.html`: Part III-2 — the same offload on
+    Samsung's PIM: a smaller problem, and why.
+  - `08_VLA/03_extended_isa/report.html`: Part IV — eight problems, three ISA /
+    controller extensions + two software fixes (40.24 -> 9.31 ms/step, 4.32x;
+    5.87 ms at 32 channels; AF-free premise; no added multipliers on the
+    fast-narrow PU), the D = 4 trade-off, energy, end-to-end control rate, and
+    how it differs from prior in-DRAM designs.
 
 ## Editing Rules
 

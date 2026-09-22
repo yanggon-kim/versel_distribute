@@ -436,7 +436,7 @@
         </tbody>
       </table>
       </div>
-      <div class="callout"><b>Why this breakdown motivates Parts III&ndash;III.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../02_stock_aim_offload/report.html">Part III</a>) attacks the physics; making it 3.5&times; faster (<a href="../03_extended_isa/report.html">Part IV</a>) shrinks it to 33&nbsp;ms &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (388 ms cycle, 2.58 Hz).</div>
+      <div class="callout"><b>Why this breakdown motivates Parts III&ndash;IV.</b> Software recovers integer factors but cannot change the physics: after perfect compilation the AE still walks 623&nbsp;MB of weights through the external bus every step (the 3.15&nbsp;ms floor on Orin), and V-AEFusion&rsquo;s own limit is that the AE is too slow to hide. Moving the AE into the memory (<a href="../02_stock_aim_offload/report.html">Part III</a>) attacks the physics; making it 4.32&times; faster (<a href="../03_extended_isa/report.html">Part IV</a>: 40.24 &rarr; 9.31 ms per step at the 5 ns column) shrinks it to 37&nbsp;ms per N = 4 inference &mdash; small enough that all but its final fresh-KV steps hide inside the VLM window, turning V-AEFusion&rsquo;s partial overlap into near-total hiding (387 ms cycle, 2.59 Hz, against the optimistic XPU bound&rsquo;s 402 ms).</div>
     </section>
 
     <section class="card" id="series">
@@ -444,9 +444,9 @@
       <ul class="notes">
         <li><b>Part I (this page)</b> &mdash; Anatomy of a flow-matching VLA: &pi;<sub>0</sub> module by module.</li>
         <li><a href="../01_deployment_platforms/report.html"><b>Part II</b> &mdash; Deployment platforms &amp; baselines: where robots run VLAs, and what counts as fast</a></li>
-        <li><a href="../02_stock_aim_offload/report.html"><b>Part III</b> &mdash; LPDDR5, stock AiM, and why the offload loses 4.5&times;: the problem, quantified</a></li>
+        <li><a href="../02_stock_aim_offload/report.html"><b>Part III</b> &mdash; LPDDR5, stock AiM, and why the offload loses 6.4&times;: the problem, quantified</a></li>
         <li><a href="../02b_samsung_pim/report.html"><b>Part III-2</b> &mdash; the same offload on Samsung&rsquo;s PIM: a smaller problem, and why</a></li>
-        <li><a href="../03_extended_isa/report.html"><b>Part IV</b> &mdash; Our ISA extensions: 28.55 &rarr; 8.15 ms per step, and how they differ from prior designs</a></li>
+        <li><a href="../03_extended_isa/report.html"><b>Part IV</b> &mdash; Our ISA extensions: 40.24 &rarr; 9.31 ms per step, and how they differ from prior designs</a></li>
       </ul>
       <p class="cap">Sources: openpi @ <code class="k">15a9616</code> (model code, all dims verified with file:line references and an abstract-shape trace); &ldquo;Characterizing Vision-Language-Action Models across XPUs&rdquo; (arXiv:2604.24447) for measured Orin latency splits and utilization; our operator trace (38.70&nbsp;GFLOPs/step) matches the paper&rsquo;s implied AE numerator (64.5&nbsp;FLOPs/B &times; 600&nbsp;MB = 38.7&nbsp;G) exactly.</p>
       <footer class="footer">
