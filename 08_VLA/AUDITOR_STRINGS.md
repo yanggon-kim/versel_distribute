@@ -1,5 +1,52 @@
 # Auditor hand-off — the site restated at the primary design point (2026-09-22)
 
+## Second pass (2026-09-22, after the auditor was re-pointed): changed and new strings
+
+Pre-validated against the working tree with the re-pointed `verify_claims.py`: the seven WAITs are gone; the checks below
+now FAIL because the sentence they audit was restated on purpose (Orin NX at the primary point; the regenerated
+`phase3_layer_breakdown.png`). CSV selectors are given for every new number.
+
+| check label (current) | new string on the page (exact) | source |
+|---|---|---|
+| `p2 breakdown alt` (Part III Fig. alt) | `At 16 channels and the 5 ns column (2.55 ms): MAC column commands 63%, weight streaming 9%, activation loads 3%, TMOD mode switches 12%, row management 6%, blocking reads and other 7%` and `4.91 and 3.35 ms at 8 channels, 2.55 and 1.76 ms at 16, 1.42 and 1.00 ms at 32` | the regenerated figure = hybrid Strategy-B layer: `phase3_results_5ns.csv` / `phase3_results.csv` `hybrid_c{8,16,32}_bw16.aim_layer_ms` (2.549 at c16 / 5 ns); shares from `plot_web_figs.py`'s breakdown of that layer |
+| `p2 mapping alt` (still PASS) | now preceded by `AiM Strategy-A at 8/16/32 channels: 75.1/40.2/23.6 ms, AiM hybrid Strategy-B at 8/16/32 channels: 91.2/48.7/28.4 ms` | `phase3_results_5ns.csv` `a_only_c*_bw16` / `hybrid_c*_bw16`, overhead 20 µs, N = 4 `.step_ms` |
+| (new) Part III §12 cap | `(38.6&rarr;43.6 ms at the primary point; 26.9&rarr;31.9 ms at the 2.5 ns column)` | `phase3_results_5ns.csv` / `phase3_results.csv` `a_only_c16_bw16`, overhead 5 → 50 µs, N = 4 `.step_ms` (38.57 / 43.57; 26.88 / 31.88) |
+| `p2 standby`, `p3 standby` | `the host idles (55&nbsp;mJ)`, `an idling host (55 mJ)` | fixed (WAIT → PASS) |
+| `p3 matrix floor (primary)`, `p4 matrix floor` (AGX cell) | `0.34&times; / 0.86&times;` | fixed |
+| `p4 compiled (2.5 ns)`, `p4 matrix compiled (2.5 ns)` | `&asymp;6.7&times;` | fixed |
+| `p3 P1 energy 2.5 ns` | `(261 mJ there: 7 % under LP-Spec, 12 % under DOTS&rsquo;s best case` | fixed; the sentence now also carries `266 mJ at the primary point against DOTS&rsquo;s 469&ndash;519, 13 % under LP-Spec&rsquo;s 307 and 19 % under P3-LLM&rsquo;s 327` (`prior_art_5ns.csv` `ours|lpspec|p3llm.energy_mJ` at 5.0: 265.87 / 307.12 / 327.41) |
+| (new) Part IV §8 trade-off row | `<td class="num">161 (232)</td><td class="num">0.83&times; (1.19&times;)</td>` | `c5_macE_fd_c32.PIMGPT/5ns/FD-32x400-c32.energy_over_gpu_bound` = 1.19 (231.5 / 194.0; the ledger says 1.19, not the 1.20 quoted in the hand-off) |
+| `p3 partition 8ch` | `(16.27 ms per step at the primary point, 14.01 ms at the 2.5 ns / 1 GHz sensitivity point; even the 16-channel D = 1 step of 27.44 ms` | `paper_ablation.csv` tier `p1p4sw_v26_c8d`, channels 8, N 4, t_col_ns 5.0, pu_clk_MHz 800, composition sim `.step_ms` = 16.272 |
+| `p3 NX best (2.5 ns)` → NX primary | `Our 8-channel full design (16.27 ms at the primary point) sits at <b>1.29&times; the NX optimistic bound</b> (0.78&times; on speed; 14.01 ms and 0.90&times; at the 2.5 ns / 1 GHz sensitivity point) and 1.55&times; ahead of an ordinary 4&times;-floor NX stack (25.2 ms)` | derived 16.27 / 12.61, 12.61 / 16.27, 25.2 / 16.27 |
+| `p3 matrix header` | `The AGX Orin and Orin NX columns are the primary point on latency (9.31 ms at 16 ch, 16.27 ms at 8 ch; the AGX energy, 138 mJ at 20 W on the fast-narrow PU, is the primary point too); the NX 15 W and Thor 40 W energy rows exist only at the 2.5 ns / 1 GHz sensitivity point (124 mJ at 8 ch and 15 W; 8.15 ms / 162 mJ at Thor&rsquo;s 40 W)` | as before + the NX step above |
+| `p3 matrix 4x (2.5 ns)` | `<td class="num">1.55&times; / 3.80&times;&dagger;</td><td class="num">1.55&times; / 2.43&times;</td><td class="num">1.16&times; / 2.83&times;</td>` | NX latency 25.2 / 16.27; NX energy unchanged (2.5 ns, `&dagger;` footnote) |
+| `p3 matrix 2x (2.5 ns)` | `<td class="num"><b>0.78&times; / 2.06&times;&dagger;</b></td><td class="num">0.77&times; / 1.36&times;</td><td class="num">0.58&times; / <b>1.55&times;</b></td>` | 12.61 / 16.27 |
+| `p3 matrix floor (2.5 ns)` | `<td class="num">0.39&times; / 1.20&times;&dagger;</td><td class="num">0.39&times; / 0.82&times;</td><td class="num">0.29&times; / 0.90&times;</td>` | 6.30 / 16.27 |
+| (new) Part IV §8 matrix footnote (also Part II) | `&dagger; NX energy ratios at the 2.5 ns / 1 GHz sensitivity point (124 mJ per step at 8 ch, 15 W &mdash; the only 15 W energy row); the NX latency ratios are the primary point (16.27 ms).` | — |
+| (new) Part IV §8 callout | `AGX 0.86&times; at the primary point`, `<b>NX optimistic</b> (0.78&times; on latency at the primary point, 0.90&times; at the sensitivity point / 2.06&times; on energy at the sensitivity point, on the module inside real humanoids, vs hypothetical-best software)` | derived |
+| `p4 headline` (still PASS) | now continues `and 5.87 ms at 32, and at <b>16.27 ms at 8 channels</b> (Orin NX &mdash; 1.29&times; its 12.61 ms optimistic bound)` | NX step above |
+| `p4 fig cap (2.5 ns)`, `p4 fig cap primary` (still PASS) | new lead of the caption: `0.78&times; NX (16.27 vs 12.61 ms), 0.68&times; AGX, 0.51&times; Thor &mdash; but beats every <i>measured</i> stack by 3.9&ndash;14.6&times;` | 36 / 9.31, 136 / 9.31 |
+| `p4 matrix header` | `The AGX Orin and Orin NX columns are the primary point on latency (9.31 ms at 16 ch, 16.27 ms at 8 ch; the AGX energy, 138 mJ per step at 20 W, fast-narrow PU, CENT MAC anchor, is the primary point too); the NX 15 W and Thor 40 W energy rows exist only at the 2.5 ns / 1 GHz sensitivity point (124 mJ at 8 ch and 15 W; 8.15 ms / 162 mJ at Thor&rsquo;s 40 W)` | — |
+| `p4 matrix 4x` | `<td class="num">1.35&times; / 2.52&times; (12.6 ms, 347 mJ)</td><td class="num">1.55&times; / 3.80&times;&dagger; (25.2 ms, 473 mJ)</td><td class="num">1.55&times; / 2.43&times; (12.6 ms, 347 mJ)</td><td class="num">1.16&times; / 2.83&times; (9.45 ms, 459 mJ)</td>` | — |
+| `p4 matrix 2x` | `<td class="num">0.68&times; / 1.41&times; (6.30 ms, 194 mJ)</td><td class="num">0.78&times; / <b>2.06&times;</b>&dagger; (12.6 ms, 257 mJ)</td><td class="num">0.77&times; / 1.36&times; (6.30 ms, 194 mJ)</td><td class="num">0.58&times; / <b>1.55&times;</b> (4.73 ms, 251 mJ)</td>` | — |
+| `p4 matrix floor` | `<td class="num">0.34&times; / 0.86&times; (3.15 ms, 118 mJ)</td><td class="num">0.39&times; / 1.20&times;&dagger; (6.30 ms, 149 mJ)</td><td class="num">0.39&times; / 0.82&times; (3.15 ms, 118 mJ)</td><td class="num">0.29&times; / 0.90&times; (2.36 ms, 146 mJ)</td>` | drop the `wait=` |
+| `p4 anchors NX (2.5 ns)` (still PASS) | now continues `(energy at the 2.5 ns / 1 GHz sensitivity point, the only 15 W energy row; on latency 0.78&times; at the primary point &mdash; 16.27 vs 12.61 ms &mdash; and 0.90&times; at the sensitivity point); 1.55&times;/3.80&times; against an ordinary 4&times;-floor stack` | — |
+| `p4 scale-down (2.5 ns)` | `an NX-class module with AiM (16.27 ms at the primary point) lands within 1.3&times; of an ordinary well-compiled AGX-class stack (4&times; floor, 12.61 ms) and 8.4&times; ahead of the measured AGX stack (136 ms)` … `(14.01 ms at the 2.5 ns / 1 GHz sensitivity point)` | 16.27 / 12.61 = 1.29, 136 / 16.27 = 8.36 |
+| (new) Part IV §6 Fig. 2 cap | `and 16.27 ms at 8 channels (Orin NX), against a 6.30 / 3.15 / 1.57 ms XPU floor` | NX step above |
+| (new) Part IV §6 Fig. 2 alt | `Stock AiM: 75.10, 40.24, 23.64 ms. +P1 MAC_ABK_MV V = 26: 18.69, 12.29, 9.27 ms` … `16.27, 9.31, 5.87 ms` … `13.96, 8.15, 5.29 ms` | `paper_ablation.csv` tiers `baseline`, `p1_v26`, `p1p4sw_v26_c8d` at c8 / c16 / c32, N 4, 5.0 ns / 800 MHz sim (and 2.5 ns / 1000 MHz sim for the hollow curve) `.step_ms` |
+| (new) Part IV §5 ablation alt | `stock AiM 40.24 ms (28.55 at 2.5 ns); +P1 MAC_ABK_MV V = 26: 12.29 (11.13); +P4 LOOP macros 10.45 (9.29); +dedup and token-parallel x2 with 64-column lines 11.97 (8.19); +8-column MV lines 9.45 (8.00); +drain-later accumulator file, the headline, 9.31 (8.11)` | the figure's own labels: `paper_ablation.csv` tiers `baseline, p1_v26, p1p4_v26, p1p4sw_v26, p1p4sw_v26_c8, p1p4sw_v26_c8d` at c16, sim, 5.0 ns / 800 MHz and 2.5 ns / 1000 MHz |
+| (new) Part III step-latency alt | `AiM Strategy-A at 8/16/32 channels: 75.1/40.2/23.6 ms, AiM hybrid Strategy-B at 8/16/32 channels: 91.2/48.7/28.4 ms` | `phase3_results_5ns.csv` (20 µs, N 4) |
+| (new) Part III crossover alt / cap | `crossing the XPU line at S around 7`, `Stock AiM wins the S &le; ~7 GEMV regime`, `the crossover moves out to S &asymp; 14 (28.55 ms measured)`; alt quotes the 2.5 ns full-design point as `about 8.2 ms` (the figure draws 8.19 — see the note for microarch-owner below) | A1 arithmetic; `c5_p1_2p5ns.S.step_ms` |
+| (new) energy alt (three copies) | `stock AiM 470 mJ`, `extended AiM at D = 4 (16 lanes at 800 MHz) 138 mJ` | `c5_p1_5ns.S.energy_mJ`, `c5_fd_5ns.FD-16x800.energy_mJ` |
+| (new) Part III-2 KPI — the string the commented `p3b kpi` check should match | `<div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM P1 alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div>` | `paper_ablation.csv` tier `p1_v26`, c16, N 4, sim: `aim_layer_ms` 0.5239 at 5.0 ns / 800 MHz vs `baseline` 2.0767 → 3.96; 0.4593 at 2.5 ns / 1000 MHz vs 1.4271 → 3.11 |
+| `p3b layer row` (still PASS) | the cell now reads `P1 alone: 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (P1 + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)`; row label `measured, 16 ch (2.5 ns column)` | as above; `p1p4sw_v26_c8d` c16 2.5 ns sim `aim_layer_ms` 0.3961 |
+| (new) Part IV §9 primary table rows | `<td class="num">1</td><td class="num">38.80</td><td class="num">1.04&times;</td><td class="num">462</td><td class="num">263,976</td><td class="num">120,360</td><td class="num">16</td><td class="num">1.24</td>` (CENT); `<td class="num">2</td><td class="num">25.61</td><td class="num">1.57&times;</td><td class="num">327</td><td class="num">158,376</td><td class="num">61,608</td><td class="num">16</td><td class="num">1.29</td>` (P3-LLM); `<td class="num">4</td><td class="num">19.36</td><td class="num">2.08&times;</td><td class="num">307</td><td class="num">103,464</td><td class="num">61,608</td><td class="num"><b>64</b></td><td class="num">3.90</td>` (LP-Spec) | `prior_art_5ns.csv` rows `t_col_ns` 5.0, `tag` cent / p3llm / lpspec: `step_ms`, `speedup_vs_stock`, `energy_mJ`, `mac16_per_ch`, `wrgb_per_ch`, `multipliers_per_bank`, `die_mm2` |
+| (new) Part IV §9 prose | `<b>P1 alone (18.21 ms) is faster than LP-Spec (19.36 ms) with a quarter of the multipliers</b>, where at the 2.5 ns column it was not (15.15 vs 14.81)`; `<b>Measured:</b> 38.80 ms, 1.04&times; at the primary point (27.09 ms, 1.05&times; at 2.5 ns / 1 GHz)`; `<b>Measured:</b> 25.61 ms, 1.57&times; at the primary point`; `<b>Measured:</b> 19.36 ms, 2.08&times; at the primary point`; `(CENT, 1.04&times; at the primary point; 1.05&times; at 2.5 ns / 1 GHz)`; `(LP-Spec, 2.08&times; at the primary point; 1.93&times; at 2.5 ns / 1 GHz`; `(P3-LLM, 1.57&times; at the primary point; 1.53&times; at 2.5 ns / 1 GHz)`; `(19.36 vs 18.21 ms)`; `(18.21 vs LP-Spec&rsquo;s 19.36 ms` | `prior_art_5ns.csv` at 5.0 and 2.5 (`ours` 18.205 / 15.152, `lpspec` 19.357 / 14.806, `cent` 38.800 / 27.094, `p3llm` 25.609 / 18.630) |
+
+For microarch-owner, figures (not page text): `crossover.png` labels the 2.5 ns full-design point "8.19 (2.5 ns)" (the
+64-column-lines tier) while `phase6_ablation.png` gives the headline 8.11 and `scaling.png` ≈ 8.15 at 16 ch; `platforms.png`'s
+legend overlaps the Thor bars' value labels.
+
 For microarch-owner: `microarch/03_tools/verify_claims.py` site blocks (`PART II`, `PART III`, `PART IV`,
 `PART I` at lines 315–397) still recompute the 2.5 ns / 1 GHz numbers from `phase12_results.csv`
 (tier `afree64_v26`, analytic composition) and `sim_cache.json`. The five pages now state the primary
@@ -122,17 +169,16 @@ Note on the auditor's variable names: `P2` = Part III (`02_stock_aim_offload`), 
 
 ## Not restated (numbers the ledger does not have) — kept on the pages under a "2.5 ns / 1 GHz" label
 
-- Orin NX (8 channels) and Thor (40 W) rows of the platform matrix and anchors (Parts II and IV §8): `afree64_v26`
-  8 ch step 14.01 ms / 124 mJ at 15 W, 16 ch energy at 40 W 162 mJ. For evaluation-owner / microarch-owner: an
-  8-channel primary-point run and 15 / 40 W energy rows of the full design would let these columns be restated.
+- Orin NX 15 W and Thor 40 W *energy* rows of the platform matrix and anchors (Parts II and IV §8): `afree64_v26`
+  8 ch 124 mJ at 15 W, 16 ch 162 mJ at 40 W (2.5 ns / 1 GHz, `†`-labelled). The NX *latency* is restated at the
+  primary point (16.27 ms, `paper_ablation.csv`, second pass above). For evaluation-owner / microarch-owner: 15 / 40 W
+  energy rows of the full design at 5 ns would let the last sensitivity cells go.
 - Part IV §2 V sweep table with its command-count columns, the "Where the time goes as V grows" table, the
-  earlier tier ladder (P7 and GB-size tiers, 8 ch) and the two-fixes table (§5, §6); Part IV §9 CENT / P3-LLM /
-  LP-Spec transplant rows (prior_art.csv exists only at 2.5 ns / 1 GHz).
+  earlier tier ladder (P7 and GB-size tiers, 8 ch) and the two-fixes table (§5, §6); Part IV §9's second table
+  (the 2.5 ns transplant set, kept as the labelled sensitivity — the 5 ns rows are now in the primary table).
 - The 15 / 30 W energy ratios (1.22× / 1.74×) are quoted from the paper's `paper_energy.csv` rows (paper check
   `paper sens`); the ledger holds only the 20 W rows.
 - Part III-2 is entirely at the 2.5 ns column (Samsung model not re-run at 5 ns); its AiM cross-references are
-  labelled. Its "AiM: 2.70×" KPI is untouched (open issue, pending microarch-owner's number).
-- PNG assets are all at the 2.5 ns / 1 GHz point and captioned so: `03_extended_isa/assets/{phase6_ablation,
-  scaling, energy}.png`, `02_stock_aim_offload/assets/{phase3_step_latency, phase3_layer_breakdown, energy,
-  crossover}.png`, `01_deployment_platforms/assets/{platforms, energy}.png` — for microarch-owner:
-  `plot_web_figs.py` at the primary point + `sync_site_figs.py`.
+  labelled. Its KPI now quotes P1 alone at V = 26 (4.0× at 5 ns, 3.1× at 2.5 ns; second pass above).
+- PNG assets are at the primary point since the second pass (9 files regenerated by microarch; the 2.5 ns point is drawn
+  hollow / dashed beside it).
