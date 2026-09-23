@@ -1,5 +1,5 @@
 # HANDOFF — site
-*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-23 (Part III aside `Peek: our AiM P1 design` pushed as `7710ac3`, `a512bc8`; auditor green on the mirror)*
+*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-23 (Part III aside `Peek: our AiM P1 design` + its 5 ns elaboration pushed, `9650131..c74855b`; auditor green on the mirror)*
 
 > **Server paths moved.** This root is now `/home/yanggon/versel_distribute/08_VLA`, the workspace is
 > `/home/yanggon/05_VLA_LPDDR` (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix
@@ -35,7 +35,7 @@ No Rockchip / systemverilog.io rendering exists on this page, so nothing had to 
 HTML well-formed on all five pages, only the known duplicate `arrF` id; no inline SVG changed, so no PNG render
 was needed. No numbers were wanted that the page or the primer did not already carry.
 
-**2026-09-23, second aside pass — unpushed commit `b5d9be5`:** the `#peek` aside gained an h4 block
+**2026-09-23, second aside pass — `b5d9be5` (pushed; user approved):** the `#peek` aside gained an h4 block
 “Why that period is 5 ns and not 2.5 ns — and why the longer period is not a loss”, inserted after the D
 table (not between the introducing sentence and its own table). It answers the user's follow-up: one burst
 comes from one bank, while 32 B *every* 2.5 ns needs two bank groups taking turns; `MAC_ABK` hits every group
@@ -48,8 +48,9 @@ bank-architecture change); 5 ns is per bank in parallel — 512 B / 5 ns = 102.4
 (`00_doc/02_refs/lpddr_pim` notes, F4 and the bandwidth bullet); and the asymmetry — stock still uses one beat,
 so utilisation falls 40 % → 25 % [A2] and the ISA fix is worth more at the honest period (3.60× vs 4.5× on the
 layer). 11 lines, 0 deletions: nothing reworded, nothing for microarch-owner. Auditor 408 / 0 FAIL / 0 WAIT
-against both the working tree and the mirror at `a512bc8`. **Three commits now await one approved push:**
-`a041371`, `bd24019` (bookkeeping) and `b5d9be5` (this block).
+against both the working tree and the mirror, now at `c74855b`. Pushed 2026-09-23 as part of
+`a512bc8..c74855b` (`a041371`, `bd24019` bookkeeping, `b5d9be5` this block, `c74855b` its HANDOFF note);
+only this closing HANDOFF edit is local and unpushed.
 
 ### Previous status
 Five pages live and in sync with `origin/main` at `7be5ecf` (pushed 2026-09-22; mirror checkout pulled). **Claim auditor: 398 PASS, 0 FAIL, 0 WAIT** — the third pass committed microarch's corrected PNGs (`platforms.png` legend below the axes, `crossover.png` 2.5 ns point 8.15, `scaling.png` hollow curve 13.96 / 8.15 / 5.29), rounded the NX latency ratio once (12.6055 / 16.272 = 0.7747 → 0.77×, six sentences on Parts II and IV) and re-worded the Part III Fig. 4 alt text (8.15 ms at 2.5 ns). The seven `wait=` flags in `verify_claims.py` now PASS and can be dropped by microarch-owner (strings in `AUDITOR_STRINGS.md`, "Third pass").
@@ -121,7 +122,7 @@ Stock 40.24 ms / 470 mJ (32 ch 23.64 / 535); 6.4× the 6.30 ms optimistic bound 
    0 WAIT. **Queued as its own task (do not fold into other work):** rewrite the stale `0007_26summer/` path
    prefix in `ONBOARDING.md` (11 places) and `HANDOFF.md` (2) — `relocate.sh` missed this root's own two
    files and `check_setup.py` does not read them, so no gate caught it (main, 2026-09-23).
-   One bookkeeping commit for this HANDOFF update is local and unpushed; it rides the next approved push.
+   Follow-up pushed too: `a512bc8..c74855b` (2026-09-23), mirror pulled, auditor 408 / 0 FAIL / 0 WAIT.
 1. ~~Auditor green~~ done (`7be5ecf`: 398 PASS, 0 FAIL, 0 WAIT). After microarch drops the `wait=` flags, re-run once to confirm nothing changed.
 2. ~~Corrected PNGs + crossover alt~~ done `3380b81` / `7be5ecf`.
 3. Issues 4–5 (rename markers `arrF1…4`; qualify cross-page figure refs as "Part III Fig. 6b").
