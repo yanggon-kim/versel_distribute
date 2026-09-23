@@ -35,6 +35,22 @@ No Rockchip / systemverilog.io rendering exists on this page, so nothing had to 
 HTML well-formed on all five pages, only the known duplicate `arrF` id; no inline SVG changed, so no PNG render
 was needed. No numbers were wanted that the page or the primer did not already carry.
 
+**2026-09-23, second aside pass — unpushed commit `b5d9be5`:** the `#peek` aside gained an h4 block
+“Why that period is 5 ns and not 2.5 ns — and why the longer period is not a loss”, inserted after the D
+table (not between the introducing sentence and its own table). It answers the user's follow-up: one burst
+comes from one bank, while 32 B *every* 2.5 ns needs two bank groups taking turns; `MAC_ABK` hits every group
+at once so consecutive MAC columns pay the same-bank-group 4 tCK = 5 ns (`nCCDMAC`, optional rank-level timing
+param on `vla-aim-ext-d1`, `src/dram/impl/LPDDR5.cpp:661`; 8 cycles of 0.625 ns [A0] while RD/WR keep 4); that
+5 ns is reasoned, not quoted [A1], which is why the 2.5 ns column stays as the optimistic sensitivity, and the
+one citable escape is spatial (CD-PIM's split GBL/BLSA, 2 × 32 B per 5 ns, 400 MHz CUs, at the cost of a
+bank-architecture change); 5 ns is per bank in parallel — 512 B / 5 ns = 102.4 GB/s per die, 8× external, with
+6.4 GB/s per bank and 409.6 GB/s per x64 rank from the primer's published-figures list
+(`00_doc/02_refs/lpddr_pim` notes, F4 and the bandwidth bullet); and the asymmetry — stock still uses one beat,
+so utilisation falls 40 % → 25 % [A2] and the ISA fix is worth more at the honest period (3.60× vs 4.5× on the
+layer). 11 lines, 0 deletions: nothing reworded, nothing for microarch-owner. Auditor 408 / 0 FAIL / 0 WAIT
+against both the working tree and the mirror at `a512bc8`. **Three commits now await one approved push:**
+`a041371`, `bd24019` (bookkeeping) and `b5d9be5` (this block).
+
 ### Previous status
 Five pages live and in sync with `origin/main` at `7be5ecf` (pushed 2026-09-22; mirror checkout pulled). **Claim auditor: 398 PASS, 0 FAIL, 0 WAIT** — the third pass committed microarch's corrected PNGs (`platforms.png` legend below the axes, `crossover.png` 2.5 ns point 8.15, `scaling.png` hollow curve 13.96 / 8.15 / 5.29), rounded the NX latency ratio once (12.6055 / 16.272 = 0.7747 → 0.77×, six sentences on Parts II and IV) and re-worded the Part III Fig. 4 alt text (8.15 ms at 2.5 ns). The seven `wait=` flags in `verify_claims.py` now PASS and can be dropped by microarch-owner (strings in `AUDITOR_STRINGS.md`, "Third pass").
 Previous state (second pass, `8f13a75`): **The site is restated at the primary design point** (user decision 2026-09-21: 5 ns all-bank column, PU rate D = 4 realised as fast-narrow 16 @ 800 MHz on CK or slow-wide 32 @ 400 MHz, 1.05 V / 0.9 V; D = 2 = 15.32 ms and D = 1 = 27.44 ms beside; the 2.5 ns column / 1 GHz PU = 8.15 ms is a sensitivity). Numbers come from `evaluation/p1/numbers.md` (+ `paper_ablation.csv` for the V sweep and the Orin NX 8-ch point, `prior_art_5ns.csv` for CENT / P3-LLM / LP-Spec at 5 ns, the paper for the 15/30 W ratios). **Second pass done 2026-09-22:** the nine PNGs are at the primary point and captioned so (no "pending" label left), the seven rounding WAITs are fixed (55 mJ, 0.86×, ≈6.7×, 7 %), Orin NX is restated at the primary point (16.27 ms; only its 15 W energy and Thor's 40 W energy stay at 2.5 ns, `†`-labelled), Part IV §9's primary table holds all seven mechanisms at 5 ns, Part III-2's KPI is P1 alone at V = 26 (4.0× / 3.1×). **Claim auditor after the push: 11 FAIL, 1 WAIT** — every one is a check whose sentence the task restated on purpose (the NX column / scale-down / partition sentences, the breakdown-figure alt text) or whose `wait=` should now be dropped; the exact new strings and CSV selectors are in `AUDITOR_STRINGS.md` ("Second pass"). The pre-push validation used a scratch copy of `verify_claims.py` with `V` pointed at the working tree (never edit the script itself).
