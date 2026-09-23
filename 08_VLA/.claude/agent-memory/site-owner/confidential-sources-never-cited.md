@@ -19,5 +19,8 @@ documents are never linked. It is also why Part III already attributes its 256-b
 structure ("…sixteen corresponding 16-bit wide, one half-WCK-clock-cycle data transfers at the I/O pins")
 and its "Effective Burst Length (BL/n) Definition" table for the spacing (same bank group 4 tCK = 5 ns,
 different bank group 2 tCK = 2.5 ns) — adding "read in a vendor package specification that embeds the JEDEC
-text". This happened on 2026-09-23, when a task explicitly asked to prefer `[S1]` by name: report the
-deviation rather than following it.
+text". This happened on 2026-09-23, when a task explicitly asked to prefer `[S1]` by name: I reported the
+deviation instead of following it, and **main and the user confirmed the brief was wrong and the deviation
+right** (the primer itself says "you may prefer not to cite it formally in a paper — cite the Micron public
+datasheets [S2]-[S5] and JESD209-5 instead"). So: a task instruction does not override this rule; say so and
+cite the standard.
