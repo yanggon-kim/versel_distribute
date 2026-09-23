@@ -1,12 +1,12 @@
 # HANDOFF — site
-*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-23 (Part III aside `Peek: our AiM P1 design` committed as `7710ac3`, **unpushed**)*
+*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-23 (Part III aside `Peek: our AiM P1 design` pushed as `7710ac3`, `a512bc8`; auditor green on the mirror)*
 
 > **Server paths moved.** This root is now `/home/yanggon/versel_distribute/08_VLA`, the workspace is
 > `/home/yanggon/05_VLA_LPDDR` (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix
 > throughout — read every path there with the new prefix.
 
 ## Current status
-**2026-09-23 — one unpushed commit `7710ac3`:** Part III (`02_stock_aim_offload/report.html`) gained an
+**2026-09-23 — pushed `7710ac3` + `a512bc8` (user approved; mirror pulled, auditor 408 / 0 FAIL / 0 WAIT at `a512bc8`):** Part III (`02_stock_aim_offload/report.html`) gained an
 **unnumbered** section `#peek` “Peek: our AiM P1 design” between §2 and §3 (48 lines added, 1 line
 reworded-by-append). It answers the two questions the user asked while reading §2 (what toggles the DQ pins
 16 times inside one burst — WCK 3.2 GHz, one beat per edge, 8 periods × 2 edges × 2 B = 32 B, with the
@@ -21,7 +21,7 @@ fast-narrow) and the warn callout on the unit trap (“4-cycle BL” = 4 × 0.62
 number) and one appended sentence in the Overview's “How this page is organised” paragraph.
 **Deliberately unnumbered** — §3/§7/§10/§11 are cited as text from Parts II and IV and carried by auditor
 strings; renumbering would ripple into `verify_claims.py`, which is microarch-owner's.
-**Deviation from the task, on purpose:** the task asked to cite the burst/BL-n facts to “[S1] the publicly
+**Deviation from the task, accepted by main and the user (2026-09-23) — keep it as written:** the task asked to cite the burst/BL-n facts to “[S1] the publicly
 posted SK hynix 12 GB LPDDR5 spec H58GG6MK6GX037 Rev 1.1” by name. That document is stamped “SK hynix
 Confidential” (primer `research_lpddr5_interface.md:13`, `research_lpddr5_core.md:11`), and the standing rule
 is that confidential-stamped documents are neither named nor linked — which is also why the page already
@@ -60,7 +60,7 @@ HTML well-formed on all pages (the known duplicate `arrF` marker in Part III rem
 Stock 40.24 ms / 470 mJ (32 ch 23.64 / 535); 6.4× the 6.30 ms optimistic bound (2× floor), 12.8× the 3.15 ms floor. Full design 9.31 ms (4.32×; 1.48× above the bound; 14.6× vs the 136 ms measured stack), 5.87 ms at 32 ch (4.02×; 1.07× under the bound). Ladder 40.24 → 12.29 → 10.45 → (11.97 with 64-col lines) → 9.45 → 9.31; 32 ch 23.64 → 9.27 → 7.43 → 7.21 → 5.94 → 5.87. D = 2 15.32 (8.93), D = 1 27.44 (15.10), 2.5 ns / 1 GHz 8.15 (5.29). Energy fast-narrow / slow-wide 1.05 V / 0.9 V: 138 / 130 / 117 mJ (0.71 / 0.67 / 0.60× of 194; PIM-GPT 227 / 200 / 168 = 1.17 / 1.03 / 0.87×); 32 ch 168 / 161 / 148. Sweep power 558 / 434 / 322 mW (2.89 / 2.25 / 1.67× stock 193); area 2.30 / 2.96 / 2.96 mm² (3.8 / 4.9 %), +1.07 over stock 1.22, +0.66 slow-wide over fast-narrow. e2e N = 4: serial 414 ms 2.41 Hz (16 ch), 401 ms 2.50 Hz (32); overlapped 387 ms 2.59 Hz, 380 ms 2.63 Hz; bound 402 ms 2.49 Hz; N = 10 2.41 / 2.52 vs 2.27 Hz. P1-only 18.21 ms (2.21×; 2.37× / 1.71× vs DOTS-26 charged 43.06 / hidden 31.21); full design 4.63× / 3.35× (cross-scope). cmdbreak at 5 ns: 64 / 11 / 14 / 6 / 5 % (MAC / TMOD / GB / blocking / row) of 2.08 ms. Never 8.19 ms, never 295 mJ, never "realistic".
 
 ## Recent decisions
-- 2026-09-23 `7710ac3` (main's task; **push not yet approved**): Part III unnumbered aside `#peek` “Peek: our
+- 2026-09-23 `7710ac3` `a512bc8` (main's task; push approved by the user the same day): Part III unnumbered aside `#peek` “Peek: our
   AiM P1 design” after §2. Purely additive text (plus one appended Overview sentence and a TOC line), so no
   audited string moved; nothing for microarch-owner. Provenance cited to the JEDEC text and its BL/n table
   rather than to the confidential-stamped vendor spec (see Current status).
@@ -101,8 +101,11 @@ Stock 40.24 ms / 470 mJ (32 ch 23.64 / 535); 6.4× the 6.30 ms optimistic bound 
 8. **P3** — A0/A1/A2 labels exist only in Part III; Parts III-2 and IV depend on A1 without naming it (paper-side caveat also pending, per microarch).
 
 ## Next steps
-0. **Push `7710ac3` once the user approves** (site-owner is this repo's pusher), then pull the mirror and
-   re-run the auditor from cwd = `/home/yanggon/05_VLA_LPDDR/microarch` (expect 408 checks, 0 FAIL).
+0. ~~Push `7710ac3`~~ done: `9650131..a512bc8` pushed 2026-09-23, mirror pulled, auditor 408 checks, 0 FAIL,
+   0 WAIT. **Queued as its own task (do not fold into other work):** rewrite the stale `0007_26summer/` path
+   prefix in `ONBOARDING.md` (11 places) and `HANDOFF.md` (2) — `relocate.sh` missed this root's own two
+   files and `check_setup.py` does not read them, so no gate caught it (main, 2026-09-23).
+   One bookkeeping commit for this HANDOFF update is local and unpushed; it rides the next approved push.
 1. ~~Auditor green~~ done (`7be5ecf`: 398 PASS, 0 FAIL, 0 WAIT). After microarch drops the `wait=` flags, re-run once to confirm nothing changed.
 2. ~~Corrected PNGs + crossover alt~~ done `3380b81` / `7be5ecf`.
 3. Issues 4–5 (rename markers `arrF1…4`; qualify cross-page figure refs as "Part III Fig. 6b").
