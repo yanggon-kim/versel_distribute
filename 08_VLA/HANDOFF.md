@@ -1,7 +1,41 @@
 # HANDOFF — site
-*Root: /home/yanggon/0007_26summer/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-22 (third pass pushed as `3380b81`, `7be5ecf`; auditor fully green)*
+*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-23 (Part III aside `Peek: our AiM P1 design` committed as `7710ac3`, **unpushed**)*
+
+> **Server paths moved.** This root is now `/home/yanggon/versel_distribute/08_VLA`, the workspace is
+> `/home/yanggon/05_VLA_LPDDR` (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix
+> throughout — read every path there with the new prefix.
 
 ## Current status
+**2026-09-23 — one unpushed commit `7710ac3`:** Part III (`02_stock_aim_offload/report.html`) gained an
+**unnumbered** section `#peek` “Peek: our AiM P1 design” between §2 and §3 (48 lines added, 1 line
+reworded-by-append). It answers the two questions the user asked while reading §2 (what toggles the DQ pins
+16 times inside one burst — WCK 3.2 GHz, one beat per edge, 8 periods × 2 edges × 2 B = 32 B, with the
+CA-sampled-every-0.625 ns command side as contrast; and how many PU cycles fit the same window — beat =
+16 / (lanes × clk_GHz), D table at the 5 ns column: 200 MHz/16 lanes D = 1, 400/32 and 800/16 D = 4,
+1 GHz/16 D = 5), then lands on D: stock `MAC_ABK` can use one beat per column (50 / 40 / 25 / 20 % from
+§7 and Fig. 6c), P1 `MAC_ABK_MV` V = 26 uses all D (§7's 2.077 → 0.460 ms, 4.5×). Keeps the fairness
+callout (stock rows carry the column-matched 200 MHz PU at 100 %; 25 % is headroom, not waste), the
+why-800-MHz callout (edges coincide with CK → no new clock domain; hence “no arithmetic added” only for
+fast-narrow) and the warn callout on the unit trap (“4-cycle BL” = 4 × 0.625 ns [A0] = 2 tCK real, vs
+4 tCK = 5 ns = the same-bank-group spacing [A1]). A0/A1/A2 tagged. Also added: a TOC link (italic, no
+number) and one appended sentence in the Overview's “How this page is organised” paragraph.
+**Deliberately unnumbered** — §3/§7/§10/§11 are cited as text from Parts II and IV and carried by auditor
+strings; renumbering would ripple into `verify_claims.py`, which is microarch-owner's.
+**Deviation from the task, on purpose:** the task asked to cite the burst/BL-n facts to “[S1] the publicly
+posted SK hynix 12 GB LPDDR5 spec H58GG6MK6GX037 Rev 1.1” by name. That document is stamped “SK hynix
+Confidential” (primer `research_lpddr5_interface.md:13`, `research_lpddr5_core.md:11`), and the standing rule
+is that confidential-stamped documents are neither named nor linked — which is also why the page already
+attributes the quote to “a vendor package datasheet that reproduces the JESD209-5 text”. The aside therefore
+cites the **standard's own text** (JESD209-5 bank-architecture §2.2 verbatim, incl. “one half-WCK-clock-cycle
+data transfers at the I/O pins”) and its **“Effective Burst Length (BL/n) Definition” table** (4 tCK = 5 ns
+same BG, 2 tCK = 2.5 ns different BG), read “in a vendor package specification that embeds the JEDEC text”.
+No Rockchip / systemverilog.io rendering exists on this page, so nothing had to be displaced.
+**Auditor:** 408 checks, 0 FAIL, 0 WAIT — both against the mirror at `9650131` and against this working tree
+(scratch copy of `verify_claims.py` with `V` repointed; never edit the script). Re-run after the push.
+HTML well-formed on all five pages, only the known duplicate `arrF` id; no inline SVG changed, so no PNG render
+was needed. No numbers were wanted that the page or the primer did not already carry.
+
+### Previous status
 Five pages live and in sync with `origin/main` at `7be5ecf` (pushed 2026-09-22; mirror checkout pulled). **Claim auditor: 398 PASS, 0 FAIL, 0 WAIT** — the third pass committed microarch's corrected PNGs (`platforms.png` legend below the axes, `crossover.png` 2.5 ns point 8.15, `scaling.png` hollow curve 13.96 / 8.15 / 5.29), rounded the NX latency ratio once (12.6055 / 16.272 = 0.7747 → 0.77×, six sentences on Parts II and IV) and re-worded the Part III Fig. 4 alt text (8.15 ms at 2.5 ns). The seven `wait=` flags in `verify_claims.py` now PASS and can be dropped by microarch-owner (strings in `AUDITOR_STRINGS.md`, "Third pass").
 Previous state (second pass, `8f13a75`): **The site is restated at the primary design point** (user decision 2026-09-21: 5 ns all-bank column, PU rate D = 4 realised as fast-narrow 16 @ 800 MHz on CK or slow-wide 32 @ 400 MHz, 1.05 V / 0.9 V; D = 2 = 15.32 ms and D = 1 = 27.44 ms beside; the 2.5 ns column / 1 GHz PU = 8.15 ms is a sensitivity). Numbers come from `evaluation/p1/numbers.md` (+ `paper_ablation.csv` for the V sweep and the Orin NX 8-ch point, `prior_art_5ns.csv` for CENT / P3-LLM / LP-Spec at 5 ns, the paper for the 15/30 W ratios). **Second pass done 2026-09-22:** the nine PNGs are at the primary point and captioned so (no "pending" label left), the seven rounding WAITs are fixed (55 mJ, 0.86×, ≈6.7×, 7 %), Orin NX is restated at the primary point (16.27 ms; only its 15 W energy and Thor's 40 W energy stay at 2.5 ns, `†`-labelled), Part IV §9's primary table holds all seven mechanisms at 5 ns, Part III-2's KPI is P1 alone at V = 26 (4.0× / 3.1×). **Claim auditor after the push: 11 FAIL, 1 WAIT** — every one is a check whose sentence the task restated on purpose (the NX column / scale-down / partition sentences, the breakdown-figure alt text) or whose `wait=` should now be dropped; the exact new strings and CSV selectors are in `AUDITOR_STRINGS.md` ("Second pass"). The pre-push validation used a scratch copy of `verify_claims.py` with `V` pointed at the working tree (never edit the script itself).
 HTML well-formed on all pages (the known duplicate `arrF` marker in Part III remains); every href, `#anchor`, `<img src>` and `url(#…)` resolves; `realistic` 0 hits. Working tree clean. The site carries no PDFs.
@@ -26,6 +60,10 @@ HTML well-formed on all pages (the known duplicate `arrF` marker in Part III rem
 Stock 40.24 ms / 470 mJ (32 ch 23.64 / 535); 6.4× the 6.30 ms optimistic bound (2× floor), 12.8× the 3.15 ms floor. Full design 9.31 ms (4.32×; 1.48× above the bound; 14.6× vs the 136 ms measured stack), 5.87 ms at 32 ch (4.02×; 1.07× under the bound). Ladder 40.24 → 12.29 → 10.45 → (11.97 with 64-col lines) → 9.45 → 9.31; 32 ch 23.64 → 9.27 → 7.43 → 7.21 → 5.94 → 5.87. D = 2 15.32 (8.93), D = 1 27.44 (15.10), 2.5 ns / 1 GHz 8.15 (5.29). Energy fast-narrow / slow-wide 1.05 V / 0.9 V: 138 / 130 / 117 mJ (0.71 / 0.67 / 0.60× of 194; PIM-GPT 227 / 200 / 168 = 1.17 / 1.03 / 0.87×); 32 ch 168 / 161 / 148. Sweep power 558 / 434 / 322 mW (2.89 / 2.25 / 1.67× stock 193); area 2.30 / 2.96 / 2.96 mm² (3.8 / 4.9 %), +1.07 over stock 1.22, +0.66 slow-wide over fast-narrow. e2e N = 4: serial 414 ms 2.41 Hz (16 ch), 401 ms 2.50 Hz (32); overlapped 387 ms 2.59 Hz, 380 ms 2.63 Hz; bound 402 ms 2.49 Hz; N = 10 2.41 / 2.52 vs 2.27 Hz. P1-only 18.21 ms (2.21×; 2.37× / 1.71× vs DOTS-26 charged 43.06 / hidden 31.21); full design 4.63× / 3.35× (cross-scope). cmdbreak at 5 ns: 64 / 11 / 14 / 6 / 5 % (MAC / TMOD / GB / blocking / row) of 2.08 ms. Never 8.19 ms, never 295 mJ, never "realistic".
 
 ## Recent decisions
+- 2026-09-23 `7710ac3` (main's task; **push not yet approved**): Part III unnumbered aside `#peek` “Peek: our
+  AiM P1 design” after §2. Purely additive text (plus one appended Overview sentence and a TOC line), so no
+  audited string moved; nothing for microarch-owner. Provenance cited to the JEDEC text and its BL/n table
+  rather than to the confidential-stamped vendor spec (see Current status).
 - 2026-09-22 `3380b81` `7be5ecf` (main's task; push approved): **third pass — auditor fully green.** Three corrected PNGs from microarch committed (looked at each: legends and labels clear; cosmetic only: in `crossover.png` the "8.15 (2.5 ns)" label touches the green staircase, in `scaling.png` the "XPU optimistic 2× (6.30)" label crosses the green curve). NX ratio 0.78 → 0.77× (rounded once from the CSV: 12.6055 / 16.272) in Part IV §8 NX best / matrix 2× NX cell / callout and Part II Fig. 1 caption / matrix 2× NX cell / anchors NX; the `0.78×` left on Part IV (§8 trade-off notes, MAC-sweep power) is a different ratio. Part III Fig. 4 alt: "about 8.2 ms" → "8.15 ms at 2.5 ns". Auditor on the mirror at `7be5ecf`: 398 PASS, 0 FAIL, 0 WAIT.
 - 2026-09-22 `d3b8199` `b7e82eb` `d2973c6` `cffc606` `dc09c3a` `8f13a75` (main's task; push approved): **second primary-point pass** — PNGs committed, captions / alt texts rewritten, seven rounding slips fixed, NX at 16.27 ms, prior art at 5 ns, III-2 KPI. For microarch-owner (figures): `crossover.png` labels the 2.5 ns full-design point "8.19" (the 64-column tier) while `phase6_ablation.png` says 8.11 and `scaling.png` ≈ 8.15; `platforms.png`'s legend overlaps the Thor bars' value labels.
 - 2026-09-22 `ccc96cf` `8281ca2` `045359a` `9cc4f0b` (user: "Do it"; push approved): **site restated at the primary design point** — see "What each page says now" above and `AUDITOR_STRINGS.md`. Auditor 35 site FAILs pending microarch-owner's re-pointing; paper checks 0 FAIL.
@@ -63,6 +101,8 @@ Stock 40.24 ms / 470 mJ (32 ch 23.64 / 535); 6.4× the 6.30 ms optimistic bound 
 8. **P3** — A0/A1/A2 labels exist only in Part III; Parts III-2 and IV depend on A1 without naming it (paper-side caveat also pending, per microarch).
 
 ## Next steps
+0. **Push `7710ac3` once the user approves** (site-owner is this repo's pusher), then pull the mirror and
+   re-run the auditor from cwd = `/home/yanggon/05_VLA_LPDDR/microarch` (expect 408 checks, 0 FAIL).
 1. ~~Auditor green~~ done (`7be5ecf`: 398 PASS, 0 FAIL, 0 WAIT). After microarch drops the `wait=` flags, re-run once to confirm nothing changed.
 2. ~~Corrected PNGs + crossover alt~~ done `3380b81` / `7be5ecf`.
 3. Issues 4–5 (rename markers `arrF1…4`; qualify cross-page figure refs as "Part III Fig. 6b").
