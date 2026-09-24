@@ -52,6 +52,27 @@ against both the working tree and the mirror, now at `c74855b`. Pushed 2026-09-2
 `a512bc8..c74855b` (`a041371`, `bd24019` bookkeeping, `b5d9be5` this block, `c74855b` its HANDOFF note);
 only this closing HANDOFF edit is local and unpushed.
 
+**2026-09-23, third aside pass — unpushed commit `4e6e853`:** the `#peek` aside gained a third h4 block,
+“Where the PU clock comes from: CK, and a divider [assumption A2]”, after the 5 ns block (20 insertions,
+0 deletions). Two clock inputs only (CK always on, WCK gated, no die oscillator); the die can divide but not
+multiply (the standard's clocking figure puts oscillator/PLL on the controller side; LPDDR drops even the DLL —
+Graham Allan / Synopsys 2012 and Malladi et al. ISCA'12, both named); **why CK and not WCK, written as the
+correction it is** — the MAC datapath never touches the DQ pins, so no design needs WCK for the MAC and AiM
+mode does **not** force WCK always-on; P1 does *less* pin traffic per unit of compute (1,925,760 GB refills vs
+4,223,616 MAC columns, ~1 per 2.2 commands, §7); derivation table (800 = CK × 1 with no divider, 400 = CK ÷ 2,
+200 = CK ÷ 4, all edge-aligned → no CDC; 1 GHz reachable from neither input: × 5/4, WCK ÷ 3 = 1.067 GHz,
+WCK ÷ 4 = 800 MHz); divider vs PLL as a difference in kind (PIM-GPT's 1.5× DRAM routing factor); a warn callout
+that **no CK divider exists today** (LPDDR5's ÷ 2 is in the WCK tree, whose initial state is “unpredictable” —
+hence WCK2CK sync), so it is new but trivially cheap logic against 2.30 / 1.22 mm² of PIM block; and a win
+callout closing on both realisations being CK-derivable while 1 GHz fails twice (no clock source, no rail;
+CK-native only on GDDR6, where the fabbed preset's tCK = 1.0 ns). This is now where [A2] gets its rationale.
+Included the WCK-restart observation, explicitly flagged “not modelled … an observation rather than a measured
+cost”. **Dropped** the 0.10 / 0.14 mm² per-bank PU areas (not on any page; used the published 2.30 / 1.22 mm²
+instead) — no new quantitative claim anywhere in the block. Sources read:
+`00_doc/02_refs/lpddr5_primer/research_lpddr5_interface.md` §A5 + the WCK-divider bullet,
+`research_lpddr_pim.md` (rail/frequency ceiling, PIM-GPT routing). Auditor 408 / 0 FAIL / 0 WAIT against both
+the working tree and the mirror at `c74855b`. **Unpushed:** `927a45a`, `cdb5516` (bookkeeping) and `4e6e853`.
+
 ### Previous status
 Five pages live and in sync with `origin/main` at `7be5ecf` (pushed 2026-09-22; mirror checkout pulled). **Claim auditor: 398 PASS, 0 FAIL, 0 WAIT** — the third pass committed microarch's corrected PNGs (`platforms.png` legend below the axes, `crossover.png` 2.5 ns point 8.15, `scaling.png` hollow curve 13.96 / 8.15 / 5.29), rounded the NX latency ratio once (12.6055 / 16.272 = 0.7747 → 0.77×, six sentences on Parts II and IV) and re-worded the Part III Fig. 4 alt text (8.15 ms at 2.5 ns). The seven `wait=` flags in `verify_claims.py` now PASS and can be dropped by microarch-owner (strings in `AUDITOR_STRINGS.md`, "Third pass").
 Previous state (second pass, `8f13a75`): **The site is restated at the primary design point** (user decision 2026-09-21: 5 ns all-bank column, PU rate D = 4 realised as fast-narrow 16 @ 800 MHz on CK or slow-wide 32 @ 400 MHz, 1.05 V / 0.9 V; D = 2 = 15.32 ms and D = 1 = 27.44 ms beside; the 2.5 ns column / 1 GHz PU = 8.15 ms is a sensitivity). Numbers come from `evaluation/p1/numbers.md` (+ `paper_ablation.csv` for the V sweep and the Orin NX 8-ch point, `prior_art_5ns.csv` for CENT / P3-LLM / LP-Spec at 5 ns, the paper for the 15/30 W ratios). **Second pass done 2026-09-22:** the nine PNGs are at the primary point and captioned so (no "pending" label left), the seven rounding WAITs are fixed (55 mJ, 0.86×, ≈6.7×, 7 %), Orin NX is restated at the primary point (16.27 ms; only its 15 W energy and Thor's 40 W energy stay at 2.5 ns, `†`-labelled), Part IV §9's primary table holds all seven mechanisms at 5 ns, Part III-2's KPI is P1 alone at V = 26 (4.0× / 3.1×). **Claim auditor after the push: 11 FAIL, 1 WAIT** — every one is a check whose sentence the task restated on purpose (the NX column / scale-down / partition sentences, the breakdown-figure alt text) or whose `wait=` should now be dropped; the exact new strings and CSV selectors are in `AUDITOR_STRINGS.md` ("Second pass"). The pre-push validation used a scratch copy of `verify_claims.py` with `V` pointed at the working tree (never edit the script itself).
