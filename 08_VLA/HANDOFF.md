@@ -1,14 +1,22 @@
 # HANDOFF — site
-*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-25 (rename P1 → CoRe committed, **unpushed**: waits for microarch-owner's `verify_claims.py` update and the three PNG relabels)*
+*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-25 (`c74855b..93d186a` pushed incl. the P1 → CoRe rename; auditor knowingly red: 14 FAIL = the renamed strings, until microarch-owner repoints them)*
 
 > **Server paths moved.** This root is now `/home/yanggon/versel_distribute/08_VLA`, the workspace is
 > `/home/yanggon/05_VLA_LPDDR` (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix
 > throughout — read every path there with the new prefix.
 
 ## Current status
-**2026-09-25 — rename "P1" → "CoRe" (Column Reuse), committed, NOT pushed (main's task; user's decision 2026-09-25).**
-Push only when main says so: first microarch-owner must (a) repoint the 14 auditor checks below and (b) relabel
-the three PNGs that still bake in "P1". Definition used (from `microarch/00_doc/02_refs/related_work/README.md`,
+**2026-09-25 — PUSHED `c74855b..93d186a` (user approved via main, knowingly ahead of the auditor update).** Carried
+`927a45a`, `cdb5516`, `4e6e853` (PU clock-source aside), `8db3dac` and `93d186a` (the rename below). Mirror pulled to
+`93d186a`; auditor from cwd = microarch: **408 checks, 14 FAIL, 0 WAIT — exactly the 14 renamed strings listed below
+(FAIL set identical to the pre-push working-tree run); no other FAIL.** Expected red until microarch-owner repoints
+them (wave 3); then re-run and expect 0 FAIL. The three PNGs (`phase6_ablation.png`, `scaling.png`,
+`vendor_compare.png`) still say "P1" on the live site — accepted as temporary; commit microarch's regenerated ones when
+they arrive (look at each, then push on approval).
+
+**2026-09-25 — rename "P1" → "CoRe" (Column Reuse), `93d186a` (main's task; user's decision 2026-09-25).**
+The push was originally to wait for microarch-owner to (a) repoint the 14 auditor checks below and (b) relabel
+the three PNGs that still bake in "P1"; the user chose to push first (above). Definition used (from `microarch/00_doc/02_refs/related_work/README.md`,
 "how P1 differs from DOTS"): one column access per column, shared across the V-vector activation tile resident in
 the GB, one command; weights stay latched in the PU while only the activation changes each beat.
 - **Renamed, by meaning:** Part III 24 (3 hand-worded + 21 plain; incl. the `#peek` title / TOC / Overview, SVG
