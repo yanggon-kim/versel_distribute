@@ -96,7 +96,7 @@
         <div class="kpi"><div class="v">52.27 ms</div><div class="l">stock Samsung AE step @ 16 ch (AiM at the same 2.5 ns column: 28.55; 40.24 at its 5 ns primary point)</div></div>
         <div class="kpi"><div class="v">1.32&times;</div><div class="l">arithmetic wasted on output-tile padding (AiM: 1.03&times;)</div></div>
         <div class="kpi"><div class="v">1.62&times;</div><div class="l">how far stock sits above its own compute floor (AiM: 5.4&times;)</div></div>
-        <div class="kpi"><div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM P1 alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div></div>
+        <div class="kpi"><div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM CoRe alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div></div>
       </div>
       <div class="callout"><b>The one-line answer.</b> The diagnosis transfers exactly, the fix transfers exactly, and <b>the payoff does not</b> &mdash; because the payoff is gated by how much MAC throughput each vendor put behind the bank, not by the ISA. Samsung&rsquo;s problem is smaller because Samsung left less on the table.</div>
     </section>
@@ -253,25 +253,25 @@ GRF_B index = ((row &amp; 1) &lt;&lt; 2) | ((column &gt;&gt; 3) &amp; 0x3)</pre>
       <p><b>AiM over-provisioned its compute unit by about 2.5&times; relative to its own command bus; Samsung sized its unit exactly to the column rate.</b> That single choice explains both observations. On AiM the stock ISA leaves 5.4&times; of latent MAC throughput on the floor, and an ISA fix that stops re-fetching harvests it. On Samsung there is almost nothing latent: the unit is already busy every column slot, so removing redundant fetches converts a command-bound design into a compute-bound one and then stops.</p>
       <div class="callout"><b>The useful way to say it.</b> The <i>bug</i> is identical on both machines &mdash; an ISA that cannot express token reuse. The <i>bug&rsquo;s cost</i> is proportional to the throughput the machine cannot reach because of it. Samsung has a smaller problem because Samsung built a smaller engine: 5&times; less MAC throughput per channel, and correspondingly less of it stranded. Being harder to improve is not the same as being better &mdash; Samsung is 1.92&times; slower than AiM on the identical layer, before and after the fix.</div>
       <figure>
-        <img src="assets/vendor_compare.png" alt="Two bar charts comparing SK hynix AiM and Samsung at 8, 16 and 32 channels. Left panel, PIM time per layer: AiM stock 2.7, 1.4 and 0.8 milliseconds falling to 0.9, 0.5 and 0.3 with the P1 fix; Samsung stock 4.6, 2.7 and 2.2 milliseconds falling only to 4.2, 2.5 and 2.0 with the MACV fix. Right panel, in-bank weight fetches per layer on a log scale: both vendors start near 70 to 140 million, AiM drops about thirteen times and Samsung about seven times. The fix removes the traffic it targets on both machines, but converts into time only on AiM.">
+        <img src="assets/vendor_compare.png" alt="Two bar charts comparing SK hynix AiM and Samsung at 8, 16 and 32 channels. Left panel, PIM time per layer: AiM stock 2.7, 1.4 and 0.8 milliseconds falling to 0.9, 0.5 and 0.3 with the CoRe fix; Samsung stock 4.6, 2.7 and 2.2 milliseconds falling only to 4.2, 2.5 and 2.0 with the MACV fix. Right panel, in-bank weight fetches per layer on a log scale: both vendors start near 70 to 140 million, AiM drops about thirteen times and Samsung about seven times. The fix removes the traffic it targets on both machines, but converts into time only on AiM.">
         <figcaption class="cap">Fig. 2 &mdash; The same fix on two machines. <b>(b)</b> it removes the traffic it was designed to remove on both. <b>(a)</b> it converts into time only on the machine that had idle compute waiting. Samsung&rsquo;s fetch reduction is 7.29&times; (V = 8 divided by the 1.098 tile-tail padding) and buys 1.11&times;.</figcaption>
       </figure>
     </section>
 
     <section class="card" id="fix">
       <h2><span class="num">7</span>What the fix is worth, and the Samsung-specific ceiling</h2>
-      <p class="lead">We implemented the Part IV fix in Samsung&rsquo;s idiom &mdash; a new opcode <code class="k">MACV</code> in the first reserved ALU slot, plus the two storage additions it needs &mdash; and measured it.</p>
+      <p class="lead">We implemented the Part IV fix &mdash; CoRe (column reuse): one column access shared across the whole resident tile &mdash; in Samsung&rsquo;s idiom &mdash; a new opcode <code class="k">MACV</code> in the first reserved ALU slot, plus the two storage additions it needs &mdash; and measured it.</p>
       <pre class="cmd">MACV   w = BANK[col];  i = col &amp; 7;  j = (col &gt;&gt; 3) &amp; 7
        for v in 0..V-1:   acc[v][j] += trf[v][i] * w      <span class="c">// one fetch, V tokens</span></pre>
       <div class="scroll">
       <table>
-        <thead><tr><th>&nbsp;</th><th>AiM P1</th><th>Samsung MACV</th></tr></thead>
+        <thead><tr><th>&nbsp;</th><th>AiM CoRe</th><th>Samsung MACV</th></tr></thead>
         <tbody>
           <tr><td class="rowlabel">resident activations</td><td>16-vector Global-Buffer tile, 32 KB/channel</td><td><b>TRF</b>, V &times; 8 bursts per unit = 16 KB/channel</td></tr>
           <tr><td class="rowlabel">accumulators</td><td>16-slot per-bank file, 512 B/channel</td><td><b>acc</b>, V &times; 8 bursts per unit = 16 KB/channel</td></tr>
           <tr><td class="rowlabel">added multipliers</td><td><b>none</b></td><td><b>none</b></td></tr>
           <tr><td class="rowlabel">depth V</td><td>26</td><td>8 (= GRF_B depth)</td></tr>
-          <tr><td class="rowlabel">measured, 16 ch (2.5 ns column)</td><td>P1 alone: 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (P1 + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)</td><td>2.745 &rarr; 2.463 ms/layer (<b>1.11&times;</b>)</td></tr>
+          <tr><td class="rowlabel">measured, 16 ch (2.5 ns column)</td><td>CoRe alone: 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (CoRe + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)</td><td>2.745 &rarr; 2.463 ms/layer (<b>1.11&times;</b>)</td></tr>
         </tbody>
       </table>
       </div>

@@ -1,11 +1,87 @@
 # HANDOFF — site
-*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-23 (Part III aside `Peek: our AiM P1 design` + its 5 ns elaboration pushed, `9650131..c74855b`; auditor green on the mirror)*
+*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-25 (rename P1 → CoRe committed, **unpushed**: waits for microarch-owner's `verify_claims.py` update and the three PNG relabels)*
 
 > **Server paths moved.** This root is now `/home/yanggon/versel_distribute/08_VLA`, the workspace is
 > `/home/yanggon/05_VLA_LPDDR` (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix
 > throughout — read every path there with the new prefix.
 
 ## Current status
+**2026-09-25 — rename "P1" → "CoRe" (Column Reuse), committed, NOT pushed (main's task; user's decision 2026-09-25).**
+Push only when main says so: first microarch-owner must (a) repoint the 14 auditor checks below and (b) relabel
+the three PNGs that still bake in "P1". Definition used (from `microarch/00_doc/02_refs/related_work/README.md`,
+"how P1 differs from DOTS"): one column access per column, shared across the V-vector activation tile resident in
+the GB, one command; weights stay latched in the PU while only the activation changes each beat.
+- **Renamed, by meaning:** Part III 24 (3 hand-worded + 21 plain; incl. the `#peek` title / TOC / Overview, SVG
+  text in the §2 die figure (GB note) and in Fig. 6b (panel title, aria-label, caption)), Part III-2 5 (+ definition added to the §5 lead), Part IV 73 of 75
+  (TOC, §2 h2 + lead, table heads, SVG labels in Figs. 1b/1c/6a/6b, alt texts, prior-art rows "Ours (CoRe)", all
+  "CoRe alone", "CoRe + P4 + SW", "+CoRe+P4+SW"); Parts I and II, root `README.md` / `index.html`: 0 occurrences.
+- **First definition with "access":** Part III Overview sentence + `#peek` paragraph ("Our CoRe (column reuse;
+  `MAC_ABK_MV`, V = 26) changes which operand moves: one column access shared across the whole resident tile");
+  Part III-2 §5 lead; Part IV §2 lead (+ "the column's weights stay latched in the PU while only the activation
+  changes each beat"). Part IV DOTS callout now reads "DOTS reuses the row; CoRe reuses each column access across
+  the whole resident tile. What DOTS saves is the row activation and the drain." (replaced "we reuse the fetch").
+- **Scope trap fixed:** Part III `#peek` credited P1 with "the layer figure … 2.077 → 0.460 ms, 4.5×", which §7's
+  table labels *full design*; now "the mechanism at the core of the full design (CoRe plus `LOOP` and the software
+  fixes of Part IV) whose layer figure is …" (audited substring untouched). Full-design sentences stay full design.
+- **Left as "P1" on purpose (problem id, not the mechanism):** Part IV §1 row label `P1` and "P1&ndash;P6 refine the
+  classic AiM gaps" — the problem table numbers problems P1–P8; the Fix cell now says "**CoRe** (column reuse):
+  `MAC_ABK_MV` + …". Ids `#p1`, `#p1-toy`, `#fig-frames-p1` kept (inbound anchors from Part III).
+- **Observation, not changed:** Part IV quotes two "CoRe alone" D = 4 steps — 12.29 ms (ablation tier `p1_v26`,
+  `paper_ablation.csv`, §2 table / §5 / scaling alt) and 18.21 ms (§9 prior-art rows, `c5_p1_5ns`, "stock attention
+  path and no P4/SW" per that caption). Pre-existing; main's brief says 18.21. For evaluation-owner if it matters.
+- **For microarch-owner (before the push):** relabel "P1" → "CoRe" in `phase6_ablation.png` ("+P1 MAC_ABK_MV (V = 26)",
+  `plot_results.py` tiers list), `scaling.png` (same label, `plot_web_figs.py:200`) and `vendor_compare.png`
+  ("AiM, +P1", `make_vendor_fig.py:67,76`); the alt texts / captions already say CoRe.
+- Checks: HTML well-formed on all five pages (only the known `arrF` duplicate); `git diff --check` clean; the six
+  changed inline SVGs rendered — no new collisions (pre-existing overflow in Part IV Fig. 6a's right panel noted).
+- **Auditor against the working tree (scratch copy, `V` repointed; script untouched): 408 checks, 14 FAIL, 0 WAIT —
+  all 14 are the renamed strings below; every "new" string was verified present in the normalised page.**
+  For microarch-owner, old → new, verbatim (labels as the script prints them):
+
+1. `p2 vendor callout` (Part III)
+   - old: `the full design is worth 4.32&times; per step (P1 alone 2.21&times;)`
+   - new: `the full design is worth 4.32&times; per step (CoRe alone 2.21&times;)`
+2. `(unlabelled, after "p2 vendor callout")` (Part III)
+   - old: `1.47&times; (P1 alone 1.22&times;)`
+   - new: `1.47&times; (CoRe alone 1.22&times;)`
+3. `p3 toy table` (Part IV)
+   - old: `40.24 &rarr; 12.29 ms/step (3.3&times;, P1 alone; 5 ns column, D = 4)`
+   - new: `40.24 &rarr; 12.29 ms/step (3.3&times;, CoRe alone; 5 ns column, D = 4)`
+4. `p3 P4 measured` (Part IV)
+   - old: `12.29 &rarr; 10.45 ms per step at 16 channels when P4 is added on top of P1 (&sect;5, primary point) &mdash; 1.18&times;`
+   - new: `12.29 &rarr; 10.45 ms per step at 16 channels when P4 is added on top of CoRe (&sect;5, primary point) &mdash; 1.18&times;`
+5. `p3 scaling alt` (Part IV)
+   - old: `Stock AiM: 75.10, 40.24, 23.64 ms. +P1 MAC_ABK_MV V = 26: 18.69, 12.29, 9.27 ms`
+   - new: `Stock AiM: 75.10, 40.24, 23.64 ms. +CoRe MAC_ABK_MV V = 26: 18.69, 12.29, 9.27 ms`
+6. `p3 ablation alt` (Part IV)
+   - old: `stock AiM 40.24 ms (28.55 at 2.5 ns); +P1 MAC_ABK_MV V = 26: 12.29 (11.13); +P4 LOOP macros 10.45 (9.29); +dedup and token-parallel x2 with 64-column lines 11.97 (8.19); +8-column MV lines 9.45 (8.00); +drain-later accumulator file, the headline, 9.31 (8.11)`
+   - new: `stock AiM 40.24 ms (28.55 at 2.5 ns); +CoRe MAC_ABK_MV V = 26: 12.29 (11.13); +P4 LOOP macros 10.45 (9.29); +dedup and token-parallel x2 with 64-column lines 11.97 (8.19); +8-column MV lines 9.45 (8.00); +drain-later accumulator file, the headline, 9.31 (8.11)`
+7. `p3 DOTS fetches` (Part IV)
+   - old: `26 tokens against one column cost DOTS 26 fetches = 208 cycles, and cost P1 one fetch plus 26 PU beats = 52 cycles at D = 4`
+   - new: `26 tokens against one column cost DOTS 26 fetches = 208 cycles, and cost CoRe one fetch plus 26 PU beats = 52 cycles at D = 4`
+8. `p3 P1 vs DOTS D=2/4` (Part IV)
+   - old: `At D = 2 (16 lanes @ 400 MHz, 23.15 ms) P1 is 1.35&times; ahead of the hidden row; at the D = 4 design point (18.21 ms) it is 1.71&times; ahead of the hidden row and 2.37&times; ahead of the charged one`
+   - new: `At D = 2 (16 lanes @ 400 MHz, 23.15 ms) CoRe is 1.35&times; ahead of the hidden row; at the D = 4 design point (18.21 ms) it is 1.71&times; ahead of the hidden row and 2.37&times; ahead of the charged one`
+9. `p3 prior order` (Part IV)
+   - old: `<b>P1 alone (18.21 ms) is faster than LP-Spec (19.36 ms) with a quarter of the multipliers</b>, where at the 2.5 ns column it was not (15.15 vs 14.81)`
+   - new: `<b>CoRe alone (18.21 ms) is faster than LP-Spec (19.36 ms) with a quarter of the multipliers</b>, where at the 2.5 ns column it was not (15.15 vs 14.81)`
+10. `p3 prior LP-Spec measured` (Part IV)
+   - old: `<b>Measured:</b> 19.36 ms, 2.08&times; at the primary point (four ALUs at the column rate, 64 lanes @ 200 MHz) &mdash; <b>behind P1 alone (18.21 ms) with four times the multipliers</b>; at the 2.5 ns / 1 GHz point it was the only row that beat P1 alone (14.81 vs our 15.15 ms)`
+   - new: `<b>Measured:</b> 19.36 ms, 2.08&times; at the primary point (four ALUs at the column rate, 64 lanes @ 200 MHz) &mdash; <b>behind CoRe alone (18.21 ms) with four times the multipliers</b>; at the 2.5 ns / 1 GHz point it was the only row that beat CoRe alone (14.81 vs our 15.15 ms)`
+11. `(unlabelled, after "p3 prior verdicts")` (Part IV)
+   - old: `(LP-Spec, 2.08&times; at the primary point; 1.93&times; at 2.5 ns / 1 GHz, where it was the only row that beat P1 alone)`
+   - new: `(LP-Spec, 2.08&times; at the primary point; 1.93&times; at 2.5 ns / 1 GHz, where it was the only row that beat CoRe alone)`
+12. `(unlabelled, after "p3 prior verdicts")` (Part IV)
+   - old: `(ours, 2.21&times; at the primary point, P1 alone at D = 4; 1.88&times; at the 2.5 ns / 1 GHz transplant point)`
+   - new: `(ours, 2.21&times; at the primary point, CoRe alone at D = 4; 1.88&times; at the 2.5 ns / 1 GHz transplant point)`
+13. `p3b layer row` (Part III-2)
+   - old: `P1 alone: 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (P1 + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)`
+   - new: `CoRe alone: 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (CoRe + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)`
+14. `p3b kpi` (Part III-2)
+   - old: `<div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM P1 alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div>`
+   - new: `<div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM CoRe alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div>`
+
+### Earlier status (2026-09-23)
 **2026-09-23 — pushed `7710ac3` + `a512bc8` (user approved; mirror pulled, auditor 408 / 0 FAIL / 0 WAIT at `a512bc8`):** Part III (`02_stock_aim_offload/report.html`) gained an
 **unnumbered** section `#peek` “Peek: our AiM P1 design” between §2 and §3 (48 lines added, 1 line
 reworded-by-append). It answers the two questions the user asked while reading §2 (what toggles the DQ pins
