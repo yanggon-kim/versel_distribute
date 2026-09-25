@@ -1,11 +1,30 @@
 # HANDOFF — site
-*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-25 (`c74855b..93d186a` pushed incl. the P1 → CoRe rename; auditor knowingly red: 14 FAIL = the renamed strings, until microarch-owner repoints them)*
+*Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-25 (scope relabel committed, NOT pushed; `c74855b..93d186a` pushed earlier incl. the P1 → CoRe rename; auditor knowingly red until microarch-owner's wave 3)*
 
 > **Server paths moved.** This root is now `/home/yanggon/versel_distribute/08_VLA`, the workspace is
 > `/home/yanggon/05_VLA_LPDDR` (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix
 > throughout — read every path there with the new prefix.
 
 ## Current status
+**2026-09-25 — scope labels matched to the paper (`41e3425`), committed, NOT pushed (main's task).** Three scopes, one label
+each, as in `paper/main.tex` (configurations + DOTS paragraphs): **"CoRe alone" / "mechanism only" = 18.21 ms** (prior-art
+rows, stock attention path, §9); **"the +CoRe rung" (attention included) = 12.29 ms** (tier `p1_v26`; every rung above the
+strawman maps attention onto `MAC_ABK_MV`); **full design = 9.31 ms** (unchanged wording). Edits:
+- Part IV: §2 toy table "(3.3&times;, CoRe alone; …)" → "(3.3&times;, the +CoRe rung, attention included; …)"; §3 "left after
+  CoRe" and "added on top of CoRe" → "+CoRe rung"; §5 table caption gains one sentence (+CoRe rung 12.29 ms ≠ mechanism-only
+  "CoRe alone" of §9, 18.21 ms, which keeps the stock attention path); Fig. 2 (scaling) caption "CoRe-only curve" → "+CoRe
+  rung's curve (yellow; attention included, no P4/SW)"; §8 "CoRe-only energies" → "mechanism-only (CoRe alone) energies"
+  (paper wording); §9 caption: 3.35&times; now says "our full design against DOTS's mechanism alone"; §9 D = 1: "the two
+  mechanisms tie" → "at most tie" (0.94&times;, i.e. slower — audited substring kept); "CoRe is 1.35&times;" → "CoRe alone is".
+- Part III-2 (the 0.459 ms/layer and the 4.0&times; / 3.1&times; KPI are tier `p1_v26` — checked in `paper_ablation.csv`: 1.427 /
+  0.4597 at 2.5 ns, 2.0767 / 0.5239 at 5 ns): §7 row and KPI "CoRe alone" → "+CoRe rung (attention included)"; Fig. 2 alt
+  "with the CoRe fix" → "with the +CoRe rung (attention included)" (the figure's AiM bars are tier `p1`, `phase12_results.csv`).
+- Part III: nothing to change — its "CoRe alone" 2.21&times; / 1.22&times; are 40.24 / 18.21 and 40.24 / 33.07 (mechanism only), and
+  `#peek` already credits 0.460 ms/layer to the full design. No "always beats" anywhere.
+- Checks: well-formed (only the known `arrF`); `git diff --check` clean; no SVG touched. Auditor on the working tree (scratch
+  copy): **408 checks, 18 FAIL, 0 WAIT — FAIL set identical to before the edit** (14 site + 4 paper); no new check breaks,
+  but five of the 14 "new" strings below changed — see the **delta** after item 14.
+
 **2026-09-25 — PUSHED `c74855b..93d186a` (user approved via main, knowingly ahead of the auditor update).** Carried
 `927a45a`, `cdb5516`, `4e6e853` (PU clock-source aside), `8db3dac` and `93d186a` (the rename below). Mirror pulled to
 `93d186a`; auditor from cwd = microarch: **408 checks, 14 FAIL, 0 WAIT — exactly the 14 renamed strings listed below
@@ -88,6 +107,16 @@ the GB, one command; weights stay latched in the PU while only the activation ch
 14. `p3b kpi` (Part III-2)
    - old: `<div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM P1 alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div>`
    - new: `<div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM CoRe alone at V = 26: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div>`
+
+**DELTA (2026-09-25, scope relabel; supersedes the "new" strings of items 3, 4, 8, 13, 14 above; no other check affected;
+all verified present in the normalised page):**
+- 3. `p3 toy table` new: `40.24 &rarr; 12.29 ms/step (3.3&times;, the +CoRe rung, attention included; 5 ns column, D = 4)`
+- 4. `p3 P4 measured` new: `12.29 &rarr; 10.45 ms per step at 16 channels when P4 is added on top of the +CoRe rung (&sect;5, primary point) &mdash; 1.18&times;`
+- 8. `p3 P1 vs DOTS D=2/4` new: `At D = 2 (16 lanes @ 400 MHz, 23.15 ms) CoRe alone is 1.35&times; ahead of the hidden row; at the D = 4 design point (18.21 ms) it is 1.71&times; ahead of the hidden row and 2.37&times; ahead of the charged one`
+- 13. `p3b layer row` new: `+CoRe rung (attention included): 1.427 &rarr; 0.459 ms/layer (<b>3.1&times;</b>); full design (CoRe + P4 + SW): 1.427 &rarr; 0.396 ms/layer (<b>3.6&times;</b>)`
+- 14. `p3b kpi` new: `<div class="v">1.11&times;</div><div class="l">what the same ISA fix buys here (AiM&rsquo;s +CoRe rung at V = 26, attention included: 4.0&times; at its 5 ns primary point, 3.1&times; at this page&rsquo;s 2.5 ns column)</div>`
+- Still passing and untouched (edits made around them): `p3 prior cap` (…3.35&times; faster than the two DOTS rows), `p3 P1 vs DOTS D=1` (ours 33.07 ms … (0.94&times;, i.e. slower) …).
+- Optional for microarch-owner: the three PNGs' "+P1" labels become "+CoRe" (rung label, as in the paper's ablation), not "CoRe alone".
 
 ### Earlier status (2026-09-23)
 **2026-09-23 — pushed `7710ac3` + `a512bc8` (user approved; mirror pulled, auditor 408 / 0 FAIL / 0 WAIT at `a512bc8`):** Part III (`02_stock_aim_offload/report.html`) gained an
