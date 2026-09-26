@@ -2,9 +2,6 @@
 *Root: /home/yanggon/versel_distribute/08_VLA · Owner: site-owner · Last updated: 2026-09-25 · State only; superseded
 and per-task notes are in `HANDOFF.history.md`.*
 
-> **Server paths moved.** Root `/home/yanggon/versel_distribute/08_VLA`, workspace `/home/yanggon/05_VLA_LPDDR`
-> (no `0007_26summer` prefix). `ONBOARDING.md` still spells the old prefix — read its paths with the new one.
-
 ## Current status
 - **Pages:** five pages live (Parts I, II, III, III-2, IV), all at the primary design point (5 ns column, D = 4; 2.5 ns /
   1 GHz kept as labelled sensitivity). Mechanism named **CoRe** (column reuse; formerly "P1") on Parts III, III-2, IV; scope
@@ -106,10 +103,9 @@ Never 8.19 ms, never 295 mJ, never "realistic". (Longer list: `HANDOFF.history.m
 ## Next steps
 1. Wave 3: when microarch-owner reports the auditor repointed and the PNGs regenerated → commit the PNGs, then (on
    approval) push, pull the mirror, run the auditor from cwd = microarch, expect 0 FAIL.
-2. **Own task, do not fold into other work:** rewrite the stale `0007_26summer/` prefix in `ONBOARDING.md` (main, 2026-09-23).
-3. Issue 2 (rename markers `arrF1…4`; qualify cross-page figure refs as "Part III Fig. 6b").
-4. For microarch-owner (cosmetic): drop the passing `wait=` arguments in `verify_claims.py`; re-run once after.
-5. If evaluation-owner collects the V sweep and the 15 / 30 W rows into the ledger, swap the paper-sourced citations in
+2. Issue 2 (rename markers `arrF1…4`; qualify cross-page figure refs as "Part III Fig. 6b").
+3. For microarch-owner (cosmetic): drop the passing `wait=` arguments in `verify_claims.py`; re-run once after.
+4. If evaluation-owner collects the V sweep and the 15 / 30 W rows into the ledger, swap the paper-sourced citations in
    `AUDITOR_STRINGS.md` for ledger ids.
 
 ## Interfaces with other sub-projects
