@@ -5,9 +5,11 @@
 - **Pages:** five pages live (Parts I, II, III, III-2, IV), all at the primary design point (5 ns column, D = 4; 2.5 ns /
   1 GHz kept as labelled sensitivity). Mechanism named **CoRe** everywhere, PNGs included ("+CoRe"). Scope labels match
   the paper: CoRe alone 18.21 ms, +CoRe rung (attention included) 12.29 ms, full design 9.31 ms.
-- **Git:** everything committed is pushed; `origin/main` and the auditor mirror are in step.
-- **Auditor** (mirror pulled, cwd = microarch): 416 checks, 0 FAIL, 0 WAIT, 125 PARKED (paper sections awaiting the ISCA
-  template migration; not the site's). No open site hand-off in `AUDITOR_STRINGS.md`.
+- **Areas restated to EV-35** (GB priced as flip-flops, user 2026-10-11) on Parts III and IV: one local commit, **not
+  pushed** — the user approves the push after seeing the diff. Scratch-copy auditor on the working tree: 423 checks,
+  0 FAIL, 22 WAIT (all paper-side), 103 PARKED; every site `AREA_WAIT` check now matches.
+- **Auditor hand-off open** in `AUDITOR_STRINGS.md`: after the push, microarch-owner drops `wait=AREA_WAIT` from the 20
+  site checks and adds three new ones (LP-Spec area ratio, GB 5.15 mm², Part III CK-divider callout).
 - The site carries no PDFs. Markdown in this root: `ONBOARDING.md`, `HANDOFF.md`, `AUDITOR_STRINGS.md` only.
 
 ## Key numbers (primary point, 16 ch unless said; ledger `evaluation/p1/numbers.md`)
@@ -16,6 +18,10 @@ at 32 ch (1.07× under the bound), Orin NX (8 ch) 16.27 ms. Ladder 40.24 → 12.
 9.31. D = 2 15.32, D = 1 27.44, 2.5 ns / 1 GHz 8.15. Energy 138 / 130 / 117 mJ vs 194. e2e overlapped 387 ms, 2.59 Hz.
 CoRe alone 18.21 ms (2.21×; 1.71× / 2.37× vs DOTS-26 hidden / charged); full design vs DOTS 3.35× is cross-scope (say
 so). Never 8.19 ms, never 295 mJ, never "realistic".
+Area (EV-35, microarch `6efa2b6`; GB 52 KB at 12.08 µm²/bit = 5.15 mm²): fast-narrow 7.75 mm² (12.7 %), slow-wide 8.30
+(13.6 %), +0.56 (0.9 pp); stock 1.24; over stock +6.51. Prior art: CoRe D = 4 7.66 vs LP-Spec-like 3.80 (2.02×; PU logic
+0.84×), CENT 1.33, P3-LLM-like 1.57, DOTS-26 1.51. 1.6 µm²/bit is only a named sensitivity (3.28 mm², 5.4 %). CoRe is
+faster than LP-Spec, never "smaller".
 
 ## Standing decisions (not reopened)
 - User 2026-09-25: CoRe naming; "P1" only as the Part IV §1 problem id and ids `#p1`, `#p1-toy`, `#fig-frames-p1`;
@@ -26,6 +32,8 @@ so). Never 8.19 ms, never 295 mJ, never "realistic".
 - Reader questions go to Part III §13 `#qa`; PDFs are not regenerated unless asked.
 - A0/A1/A2 labels; "optimistic bound (2× floor)"; vendor correspondence never cited; confidential documents not linked.
 - site-owner runs the auditor after a push and owns the 08_VLA block of the root `README.md` / `index.html`.
+- User 2026-10-11: GB priced as flip-flops; every area caption says so; the area argument against LP-Spec reverses
+  (speed and energy claims stay, no "smaller than LP-Spec").
 - Markdown is kept lean (user, 2026-10-08): no history files; superseded HANDOFF text is deleted, not moved.
 
 ## Open issues
@@ -36,9 +44,13 @@ so). Never 8.19 ms, never 295 mJ, never "realistic".
    "Fig. 11a", "Fig. 3a/3b" vs "Fig. 3" confusing.
 3. **P3** — Part II "10 of 12 cells" predates the extra columns (16 energy cells, 13 favourable); unaudited. A0/A1/A2 named
    only in Part III. Orphan `phase3_overhead_sensitivity.png`; `vendor_compare.png` absent from `sync_site_figs.py` MAP.
-4. **P3** — Cosmetic: text overflow in Part IV Fig. 6a right panel; label touches in `crossover.png` / `scaling.png`.
+4. **P3** — GB still called "SRAM" in Part III (Fig. 1 labels "52 KB of SRAM" lines 666–667; §13 GB-rate answer "52 KB
+   of SRAM in a DRAM process") while the area model prices it as flip-flops; ask the user whether to reword.
+5. **P3** — Cosmetic: text overflow in Part IV Fig. 6a right panel; label touches in `crossover.png` / `scaling.png`.
 
 ## Next steps
+0. On the user's approval: push, pull the mirror, run the auditor (expect 0 FAIL), hand `AUDITOR_STRINGS.md` rows to
+   microarch-owner.
 1. Issue 2: rename markers `arrF1…4`; qualify cross-page figure refs as "Part III Fig. 6b".
 2. For microarch-owner (cosmetic): drop the passing `wait=` arguments in `verify_claims.py`; add `vendor_compare.png` to
    the `sync_site_figs.py` MAP (source `06_figures/fig_vendor_compare.png`).
